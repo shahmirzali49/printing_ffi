@@ -347,42 +347,151 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8
 #endif
 }
 
-FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_path, const char* doc_name, int num_options, const char** option_keys, const char** option_values) {
+FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_path, const char* doc_name, int scaling_mode, int num_options, const char** option_keys, const char** option_values) {
     LOG("print_pdf called for printer: '%s', path: '%s', doc: '%s'", printer_name, pdf_file_path, doc_name);
 #ifdef _WIN32
-    // On Windows, we use ShellExecute with the "printto" verb.
-    // This requires a PDF reader to be installed and associated with .pdf files
-    // that handles the "printto" verb. The doc_name and options are not used in this case.
-    (void)doc_name;
+    // One-time initialization of the Pdfium library.
+    static bool s_pdfium_initialized = false;
+    if (!s_pdfium_initialized) {
+        FPDF_LIBRARY_CONFIG config;
+        memset(&config, 0, sizeof(config));
+        config.version = 2;
+        FPDF_InitLibraryWithConfig(&config);
+        s_pdfium_initialized = true;
+        LOG("Pdfium library initialized for the first time.");
+    }
+
+    // Ignore CUPS options on Windows.
     (void)num_options;
     (void)option_keys;
     (void)option_values;
 
-    // The 'printto' verb requires the printer name to be passed in quotes.
-    // We allocate a new string to hold the quoted name.
-    size_t printer_len = strlen(printer_name);
-    char* quoted_printer_name = (char*)malloc(printer_len + 3); // for "" and \0
-    if (!quoted_printer_name) return false;
-    sprintf_s(quoted_printer_name, printer_len + 3, "\"%s\"", printer_name);
-    LOG("Executing ShellExecuteA with verb 'printto' for printer: %s", quoted_printer_name);
-
-    HINSTANCE result = ShellExecuteA(
-        NULL,          // No parent window
-        "printto",     // Verb
-        pdf_file_path, // File to print
-        quoted_printer_name,  // Printer name (must be quoted)
-        NULL,          // No working directory
-        SW_HIDE        // Don't show the application window
-    );
-
-    free(quoted_printer_name);
-
-    bool success = ((intptr_t)result > 32);
-    if (!success) {
-        LOG("ShellExecuteA failed with result code: %p", result);
+    FPDF_DOCUMENT doc = FPDF_LoadDocument(pdf_file_path, NULL);
+    if (!doc) {
+        LOG("FPDF_LoadDocument failed for path: %s. Error: %ld", pdf_file_path, FPDF_GetLastError());
+        return false;
     }
-    LOG("print_pdf finished with result: %d", success);
-    // According to MSDN, if the function succeeds, it returns a value greater than 32.
+
+    HDC hdc = CreateDCA("WINSPOOL", printer_name, NULL, NULL);
+    if (!hdc) {
+        LOG("CreateDCA failed for printer '%s' with error %lu", printer_name, GetLastError());
+        FPDF_CloseDocument(doc);
+        return false;
+    }
+
+    DOCINFOA di = { sizeof(DOCINFOA), doc_name, NULL, NULL, 0 };
+    if (StartDocA(hdc, &di) <= 0) {
+        LOG("StartDocA failed with error %lu", GetLastError());
+        DeleteDC(hdc);
+        FPDF_CloseDocument(doc);
+        return false;
+    }
+
+    int page_count = FPDF_GetPageCount(doc);
+    bool success = true;
+    for (int i = 0; i < page_count; ++i) {
+        if (StartPage(hdc) <= 0) {
+            LOG("StartPage failed for page %d with error %lu", i, GetLastError());
+            success = false;
+            break;
+        }
+
+        FPDF_PAGE page = FPDF_LoadPage(doc, i);
+        if (!page) {
+            LOG("FPDF_LoadPage failed for page %d", i);
+            EndPage(hdc);
+            success = false;
+            break;
+        }
+
+        // Get printer DPI for scaling
+        int dpi_x = GetDeviceCaps(hdc, LOGPIXELSX);
+        int dpi_y = GetDeviceCaps(hdc, LOGPIXELSY);
+
+        // Render page to a bitmap at printer's resolution
+        int width = (int)(FPDF_GetPageWidthF(page) / 72.0 * dpi_x);
+        int height = (int)(FPDF_GetPageHeightF(page) / 72.0 * dpi_y);
+
+        BITMAPINFO bmi;
+        memset(&bmi, 0, sizeof(bmi));
+        bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        bmi.bmiHeader.biWidth = width;
+        bmi.bmiHeader.biHeight = height; // Positive for bottom-up DIB
+        bmi.bmiHeader.biPlanes = 1;
+        bmi.bmiHeader.biBitCount = 32; // BGRA format
+        bmi.bmiHeader.biCompression = BI_RGB;
+
+        void* pBitmapData = NULL;
+        HBITMAP hBitmap = CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS, &pBitmapData, NULL, 0);
+        if (!hBitmap || !pBitmapData) {
+            LOG("CreateDIBSection failed for page %d", i);
+            FPDF_ClosePage(page);
+            EndPage(hdc);
+            success = false;
+            break;
+        }
+
+        // Fill with white background (Pdfium renders with transparency)
+        memset(pBitmapData, 0xFF, width * height * 4);
+
+        // Render the page
+        FPDF_RenderPageBitmap(hBitmap, page, 0, 0, width, height, 0, FPDF_ANNOT);
+
+        // Get printable area of the printer
+        int printable_width = GetDeviceCaps(hdc, HORZRES);
+        int printable_height = GetDeviceCaps(hdc, VERTRES);
+
+        // Calculate destination rectangle based on scaling mode
+        int dest_x = 0;
+        int dest_y = 0;
+        int dest_width = width;
+        int dest_height = height;
+
+        if (scaling_mode == 0) { // 0 = Fit Page
+            float page_aspect = (float)width / (float)height;
+            float printable_aspect = (float)printable_width / (float)printable_height;
+
+            if (page_aspect > printable_aspect) {
+                dest_width = printable_width;
+                dest_height = (int)(printable_width / page_aspect);
+            } else {
+                dest_height = printable_height;
+                dest_width = (int)(printable_height * page_aspect);
+            }
+            dest_x = (printable_width - dest_width) / 2;
+            dest_y = (printable_height - dest_height) / 2;
+        } else { // 1 = Actual Size
+            dest_x = (printable_width - dest_width) / 2;
+            dest_y = (printable_height - dest_height) / 2;
+        }
+
+        int result = StretchDIBits(hdc, dest_x, dest_y, dest_width, dest_height, 0, 0, width, height, pBitmapData, &bmi, DIB_RGB_COLORS, SRCCOPY);
+        if (result == GDI_ERROR) {
+            LOG("StretchDIBits failed for page %d with error %lu", i, GetLastError());
+            success = false;
+        }
+
+        DeleteObject(hBitmap);
+        FPDF_ClosePage(page);
+
+        if (EndPage(hdc) <= 0) {
+            LOG("EndPage failed for page %d with error %lu", i, GetLastError());
+            success = false;
+        }
+
+        if (!success) break;
+    }
+
+    if (success) {
+        EndDoc(hdc);
+    } else {
+        AbortDoc(hdc);
+    }
+
+    DeleteDC(hdc);
+    FPDF_CloseDocument(doc);
+
+    LOG("print_pdf (Pdfium/GDI) finished with result: %d", success);
     return success;
 #else // macOS / Linux
     cups_option_t* options = NULL;

@@ -125,6 +125,15 @@ class PrintJob {
   String get statusDescription => status.description;
 }
 
+/// Defines the scaling behavior for PDF printing on Windows.
+enum PdfPrintScaling {
+  /// Scale the page to fit the printable area of the paper, maintaining aspect ratio.
+  fitPage,
+
+  /// Print the page at its actual size (100% scale), centered on the paper.
+  actualSize,
+}
+
 class CupsOptionChoice {
   /// The value to be sent to CUPS (e.g., "A4", "4").
   final String choice;
@@ -186,9 +195,16 @@ class _PrintPdfRequest {
   final String pdfFilePath;
   final String docName;
   final Map<String, String>? cupsOptions;
+  final PdfPrintScaling scaling;
 
   const _PrintPdfRequest(
-      this.id, this.printerName, this.pdfFilePath, this.docName, this.cupsOptions);
+    this.id,
+    this.printerName,
+    this.pdfFilePath,
+    this.docName,
+    this.cupsOptions,
+    this.scaling,
+  );
 }
 
 class _GetCupsOptionsRequest {
@@ -332,9 +348,8 @@ Future<bool> rawDataToPrinter(
 
 /// Prints a PDF file to the specified printer.
 ///
-/// On Windows, this requires a default application associated with PDFs that
-/// supports the 'printto' verb. This method is high-level and does not support
-/// passing specific print job settings.
+/// On Windows, this uses the bundled `pdfium` library to render the PDF and
+/// print it directly, offering robust and self-contained functionality.
 ///
 /// On macOS and Linux, CUPS handles PDF printing natively. You can pass
 /// CUPS-specific options via the [cupsOptions] map.
@@ -342,12 +357,14 @@ Future<bool> rawDataToPrinter(
 /// - [printerName]: The name of the target printer.
 /// - [pdfFilePath]: The local path to the PDF file.
 /// - [docName]: The name of the document to be shown in the print queue.
+/// - [scaling]: The scaling mode for Windows printing (defaults to [PdfPrintScaling.fitPage]).
 /// - [cupsOptions]: A map of CUPS options (e.g., `{'media': 'A4', 'orientation-requested': '4'}`).
 ///   This is only used on macOS and Linux.
 Future<bool> printPdf(
   String printerName,
   String pdfFilePath, {
   String docName = 'Flutter PDF Document',
+  PdfPrintScaling scaling = PdfPrintScaling.fitPage,
   Map<String, String>? cupsOptions,
 }) async {
   final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
@@ -358,6 +375,7 @@ Future<bool> printPdf(
     pdfFilePath,
     docName,
     cupsOptions,
+    scaling,
   );
   final Completer<bool> completer = Completer<bool>();
   _printPdfRequests[requestId] = completer;
@@ -592,6 +610,7 @@ Future<SendPort> _helperIsolateSendPort = () async {
               namePtr.cast(),
               pathPtr.cast(),
               docNamePtr.cast(),
+              data.scaling.index,
               numOptions,
               keysPtr.cast(),
               valuesPtr.cast(),

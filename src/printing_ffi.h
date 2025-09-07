@@ -74,7 +74,7 @@ FFI_PLUGIN_EXPORT void free_printer_list(PrinterList* printer_list);
 FFI_PLUGIN_EXPORT PrinterInfo* get_default_printer(void);
 FFI_PLUGIN_EXPORT void free_printer_info(PrinterInfo* printer_info);
 FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8_t* data, int length, const char* doc_name);
-FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_path, const char* doc_name, int num_options, const char** option_keys, const char** option_values);
+FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_path, const char* doc_name, int scaling_mode, int num_options, const char** option_keys, const char** option_values);
 FFI_PLUGIN_EXPORT JobList* get_print_jobs(const char* printer_name);
 FFI_PLUGIN_EXPORT void free_job_list(JobList* job_list);
 FFI_PLUGIN_EXPORT bool pause_print_job(const char* printer_name, uint32_t job_id);
