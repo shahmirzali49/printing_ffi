@@ -42,6 +42,31 @@ typedef struct {
     JobInfo* jobs;
 } JobList;
 
+// Struct for a single CUPS option choice
+typedef struct {
+    char* choice;
+    char* text;
+} CupsOptionChoice;
+
+// Struct for a list of CUPS option choices
+typedef struct {
+    int count;
+    CupsOptionChoice* choices;
+} CupsOptionChoiceList;
+
+// Struct for a single CUPS printer option
+typedef struct {
+    char* name;
+    char* default_value;
+    CupsOptionChoiceList supported_values;
+} CupsOption;
+
+// Struct for a list of CUPS printer options
+typedef struct {
+    int count;
+    CupsOption* options;
+} CupsOptionList;
+
 FFI_PLUGIN_EXPORT int sum(int a, int b);
 FFI_PLUGIN_EXPORT int sum_long_running(int a, int b);
 FFI_PLUGIN_EXPORT PrinterList* get_printers(void);
@@ -49,10 +74,13 @@ FFI_PLUGIN_EXPORT void free_printer_list(PrinterList* printer_list);
 FFI_PLUGIN_EXPORT PrinterInfo* get_default_printer(void);
 FFI_PLUGIN_EXPORT void free_printer_info(PrinterInfo* printer_info);
 FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8_t* data, int length, const char* doc_name);
+FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_path, const char* doc_name, int num_options, const char** option_keys, const char** option_values);
 FFI_PLUGIN_EXPORT JobList* get_print_jobs(const char* printer_name);
 FFI_PLUGIN_EXPORT void free_job_list(JobList* job_list);
 FFI_PLUGIN_EXPORT bool pause_print_job(const char* printer_name, uint32_t job_id);
 FFI_PLUGIN_EXPORT bool resume_print_job(const char* printer_name, uint32_t job_id);
 FFI_PLUGIN_EXPORT bool cancel_print_job(const char* printer_name, uint32_t job_id);
+FFI_PLUGIN_EXPORT CupsOptionList* get_supported_cups_options(const char* printer_name);
+FFI_PLUGIN_EXPORT void free_cups_option_list(CupsOptionList* option_list);
 
 #endif

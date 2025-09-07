@@ -1,422 +1,515 @@
-import 'package:flutter/material.dart';
-import 'package:printing_ffi/printing_ffi.dart';
+import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/material.dart';
+import 'package:printing_ffi/printing_ffi.dart';
+
 void main() {
-  runApp(const MyApp());
+  runApp(const PrintingFfiExampleApp());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class PrintingFfiExampleApp extends StatelessWidget {
+  const PrintingFfiExampleApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Printing Plugin Demo',
+      title: 'Printing FFI Example',
       theme: ThemeData(
-        primarySwatch: Colors.blue,
-        visualDensity: VisualDensity.adaptivePlatformDensity,
+        primarySwatch: Colors.blueGrey,
+        useMaterial3: true,
+        brightness: Brightness.light,
         cardTheme: CardThemeData(
           elevation: 2,
-          margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        ),
-        elevatedButtonTheme: ElevatedButtonThemeData(
-          style: ElevatedButton.styleFrom(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(8),
-            ),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
           ),
         ),
       ),
-      home: const PrinterScreen(),
+      home: const PrintingScreen(),
     );
   }
 }
 
-class PrinterScreen extends StatefulWidget {
-  const PrinterScreen({super.key});
+class PrintingScreen extends StatefulWidget {
+  const PrintingScreen({super.key});
 
   @override
-  State<PrinterScreen> createState() => _PrinterScreenState();
+  State<PrintingScreen> createState() => _PrintingScreenState();
 }
 
-class _PrinterScreenState extends State<PrinterScreen> {
-  Printer? selectedPrinter;
-  List<PrintJob> jobs = [];
-  List<Printer> printers = [];
-  bool isLoading = false;
+class _PrintingScreenState extends State<PrintingScreen> {
+  List<Printer> _printers = [];
+  Printer? _selectedPrinter;
+  List<PrintJob> _jobs = [];
+  List<CupsOption>? _cupsOptions;
+  Map<String, String> _selectedCupsOptions = {};
+
+  bool _isLoadingPrinters = false;
+  bool _isLoadingJobs = false;
+  bool _isLoadingCupsOptions = false;
+  final TextEditingController _rawDataController = TextEditingController(
+    text: 'Hello, FFI!',
+  );
+  int _tabIndex = 0;
 
   @override
   void initState() {
     super.initState();
-    _loadPrinters();
+    _refreshPrinters();
   }
 
-  Future<void> _loadPrinters() async {
-    setState(() => isLoading = true);
-    try {
-      final printerList = listPrinters();
-      setState(() {
-        printers = printerList;
-        selectedPrinter = printers.isNotEmpty ? printers.first : null;
-        isLoading = false;
-        if (selectedPrinter != null) {
-          _loadJobs();
-        } else {
-          jobs = [];
-        }
-      });
-    } catch (e) {
-      setState(() => isLoading = false);
-      _showSnackBar('Error loading printers: $e', isError: true);
-    }
+  @override
+  void dispose() {
+    _rawDataController.dispose();
+    super.dispose();
   }
 
-  Future<void> _loadJobs() async {
-    if (selectedPrinter == null) return;
-    setState(() => isLoading = true);
-    try {
-      final jobList = await listPrintJobs(selectedPrinter!.name);
-      setState(() {
-        jobs = jobList;
-        isLoading = false;
-      });
-    } catch (e) {
-      setState(() => isLoading = false);
-      _showSnackBar('Error loading print jobs: $e', isError: true);
-    }
-  }
-
-  Future<void> _printTest() async {
-    if (selectedPrinter == null) {
-      _showSnackBar('No printer selected', isError: true);
-      return;
-    }
-    if (!selectedPrinter!.isAvailable) {
-      _showSnackBar('Cannot print: Printer is offline', isError: true);
-      return;
-    }
-    setState(() => isLoading = true);
-    try {
-      final rawData = Uint8List.fromList([
-        0x1B,
-        0x40,
-        0x48,
-        0x65,
-        0x6C,
-        0x6C,
-        0x6F,
-        0x0A,
-      ]); // "Hello\n" in ASCII
-      final success = await rawDataToPrinter(selectedPrinter!.name, rawData);
-      setState(() => isLoading = false);
-      _showSnackBar(
-        success ? 'Print job sent successfully' : 'Failed to send print job',
-        isError: !success,
-      );
-      await _loadJobs();
-    } catch (e) {
-      setState(() => isLoading = false);
-      _showSnackBar('Error printing: $e', isError: true);
-    }
-  }
-
-  Future<void> _pausePrintJob(int jobId) async {
-    if (selectedPrinter == null) return;
-    setState(() => isLoading = true);
-    try {
-      final success = await pausePrintJob(selectedPrinter!.name, jobId);
-      setState(() => isLoading = false);
-      _showSnackBar(
-        success ? 'Job paused successfully' : 'Failed to pause job',
-        isError: !success,
-      );
-      await _loadJobs();
-    } catch (e) {
-      setState(() => isLoading = false);
-      _showSnackBar('Error pausing job: $e', isError: true);
-    }
-  }
-
-  Future<void> _resumePrintJob(int jobId) async {
-    if (selectedPrinter == null) return;
-    setState(() => isLoading = true);
-    try {
-      final success = await resumePrintJob(selectedPrinter!.name, jobId);
-      setState(() => isLoading = false);
-      _showSnackBar(
-        success ? 'Job resumed successfully' : 'Failed to resume job',
-        isError: !success,
-      );
-      await _loadJobs();
-    } catch (e) {
-      setState(() => isLoading = false);
-      _showSnackBar('Error resuming job: $e', isError: true);
-    }
-  }
-
-  Future<void> _cancelPrintJob(int jobId) async {
-    if (selectedPrinter == null) return;
-    setState(() => isLoading = true);
-    try {
-      final success = await cancelPrintJob(selectedPrinter!.name, jobId);
-      setState(() => isLoading = false);
-      _showSnackBar(
-        success ? 'Job canceled successfully' : 'Failed to cancel job',
-        isError: !success,
-      );
-      await _loadJobs();
-    } catch (e) {
-      setState(() => isLoading = false);
-      _showSnackBar('Error canceling job: $e', isError: true);
-    }
-  }
-
-  void _showSnackBar(String message, {bool isError = false}) {
+  void _showSnackbar(String message, {bool isError = false}) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
-        backgroundColor: isError ? Colors.red : Colors.green,
-        duration: const Duration(seconds: 3),
+        backgroundColor: isError ? Colors.redAccent : Colors.green,
       ),
     );
   }
 
-  void _selectDefaultPrinter() {
-    final defaultPrinter = getDefaultPrinter();
-    if (defaultPrinter != null) {
-      // Find the corresponding printer object in our state list to ensure
-      // we're using the same instance for the DropdownButton.
-      final printerInList = printers.cast<Printer?>().firstWhere(
-        (p) => p!.name == defaultPrinter.name,
-        orElse: () => null,
-      );
+  Future<void> _refreshPrinters() async {
+    setState(() {
+      _isLoadingPrinters = true;
+      _printers = [];
+      _selectedPrinter = null;
+      _jobs = [];
+      _cupsOptions = null;
+      _selectedCupsOptions = {};
+    });
+    try {
+      final printers = listPrinters();
+      setState(() {
+        _printers = printers;
+        if (printers.isNotEmpty) {
+          _selectedPrinter = printers.firstWhere(
+            (p) => p.isDefault,
+            orElse: () => printers.first,
+          );
+          _onPrinterSelected(_selectedPrinter);
+        }
+      });
+    } catch (e) {
+      _showSnackbar('Failed to get printers: $e', isError: true);
+    } finally {
+      setState(() {
+        _isLoadingPrinters = false;
+      });
+    }
+  }
 
-      if (printerInList != null) {
-        setState(() {
-          selectedPrinter = printerInList;
-          _loadJobs();
-          _showSnackBar('Selected default printer: ${printerInList.name}');
-        });
-      } else {
-        _showSnackBar(
-          'Default printer "${defaultPrinter.name}" not in list. Try refreshing.',
-          isError: true,
-        );
+  void _onPrinterSelected(Printer? printer) {
+    if (printer == null) return;
+    setState(() {
+      _selectedPrinter = printer;
+      _refreshJobs();
+      _fetchCupsOptions();
+    });
+  }
+
+  Future<void> _refreshJobs() async {
+    if (_selectedPrinter == null) return;
+    setState(() => _isLoadingJobs = true);
+    try {
+      final jobs = await listPrintJobs(_selectedPrinter!.name);
+      setState(() => _jobs = jobs);
+    } catch (e) {
+      _showSnackbar('Failed to get jobs: $e', isError: true);
+    } finally {
+      setState(() => _isLoadingJobs = false);
+    }
+  }
+
+  Future<void> _fetchCupsOptions() async {
+    if (_selectedPrinter == null) return;
+    setState(() {
+      _isLoadingCupsOptions = true;
+      _cupsOptions = null;
+    });
+
+    try {
+      final options = await getSupportedCupsOptions(_selectedPrinter!.name);
+      final defaultOptions = <String, String>{};
+      for (final option in options) {
+        defaultOptions[option.name] = option.defaultValue;
       }
-    } else {
-      _showSnackBar('No default printer found.', isError: true);
+      setState(() {
+        _cupsOptions = options;
+        _selectedCupsOptions = defaultOptions;
+      });
+    } catch (e) {
+      _showSnackbar('Failed to get CUPS options: $e', isError: true);
+    } finally {
+      setState(() => _isLoadingCupsOptions = false);
     }
   }
 
-  Widget _buildDetailRow(String label, String? value) {
-    if (value == null || value.isEmpty) {
-      return const SizedBox.shrink();
+  Future<void> _printPdf({Map<String, String>? cupsOptions}) async {
+    if (_selectedPrinter == null) {
+      _showSnackbar('No printer selected!', isError: true);
+      return;
     }
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4.0),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text('$label: ', style: const TextStyle(fontWeight: FontWeight.bold)),
-          Expanded(child: Text(value)),
-        ],
-      ),
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['pdf'],
     );
+
+    if (result != null && result.files.single.path != null) {
+      final path = result.files.single.path!;
+      _showSnackbar('Printing PDF...');
+      final success = await printPdf(
+        _selectedPrinter!.name,
+        path,
+        docName: 'My Flutter PDF',
+        cupsOptions: cupsOptions,
+      );
+      if (success) {
+        _showSnackbar('PDF sent to printer successfully!');
+        await Future.delayed(const Duration(seconds: 2), _refreshJobs);
+      } else {
+        _showSnackbar('Failed to print PDF.', isError: true);
+      }
+    }
+  }
+
+  Future<void> _printRawData() async {
+    if (_selectedPrinter == null) {
+      _showSnackbar('No printer selected!', isError: true);
+      return;
+    }
+    // Construct ZPL data with the text from the input field.
+    final textToPrint = _rawDataController.text;
+    if (textToPrint.isEmpty) {
+      _showSnackbar('Please enter some text to print.', isError: true);
+      return;
+    }
+    final zplData = '^XA^FO50,50^A0N,50,50^FD$textToPrint^FS^XZ';
+    final data = Uint8List.fromList(zplData.codeUnits);
+
+    _showSnackbar('Sending raw ZPL data...');
+    final success = await rawDataToPrinter(
+      _selectedPrinter!.name,
+      data,
+      docName: 'My ZPL Label',
+    );
+    if (success) {
+      _showSnackbar('Raw data sent successfully!');
+      await Future.delayed(const Duration(seconds: 2), _refreshJobs);
+    } else {
+      _showSnackbar('Failed to send raw data.', isError: true);
+    }
+  }
+
+  Future<void> _manageJob(int jobId, String action) async {
+    if (_selectedPrinter == null) return;
+    bool success = false;
+    try {
+      switch (action) {
+        case 'pause':
+          success = await pausePrintJob(_selectedPrinter!.name, jobId);
+          break;
+        case 'resume':
+          success = await resumePrintJob(_selectedPrinter!.name, jobId);
+          break;
+        case 'cancel':
+          success = await cancelPrintJob(_selectedPrinter!.name, jobId);
+          break;
+      }
+      _showSnackbar(
+        'Job $action ${success ? 'succeeded' : 'failed'}.',
+        isError: !success,
+      );
+      await Future.delayed(const Duration(seconds: 2), _refreshJobs);
+    } catch (e) {
+      _showSnackbar('Error managing job: $e', isError: true);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: Padding(
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Printing FFI Example'),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.refresh),
+              onPressed: _refreshPrinters,
+            ),
+          ],
+          bottom: _selectedPrinter != null
+              ? TabBar(
+                  onTap: (index) => setState(() => _tabIndex = index),
+                  tabs: const [
+                    Tab(icon: Icon(Icons.print_outlined), text: 'Standard'),
+                    Tab(
+                      icon: Icon(Icons.settings_applications),
+                      text: 'Advanced (CUPS)',
+                    ),
+                  ],
+                )
+              : null,
+        ),
+        body: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildPrinterSelector(),
+              const SizedBox(height: 20),
+              if (_selectedPrinter != null)
+                Expanded(
+                  child: TabBarView(
+                    physics: const NeverScrollableScrollPhysics(),
+                    children: [_buildSimpleTab(), _buildAdvancedTab()],
+                  ),
+                ),
+              if (_isLoadingPrinters)
+                const Center(child: CircularProgressIndicator()),
+              if (!_isLoadingPrinters && _printers.isEmpty)
+                const Center(
+                  child: Text('No printers found. Press refresh to try again.'),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSimpleTab() {
+    return ListView(
+      children: [
+        _buildStandardActions(),
+        const SizedBox(height: 20),
+        _buildJobsList(),
+      ],
+    );
+  }
+
+  Widget _buildPrinterSelector() {
+    return Row(
+      children: [
+        const Text('Printer:', style: TextStyle(fontSize: 16)),
+        const SizedBox(width: 10),
+        Expanded(
+          child: DropdownButton<Printer>(
+            value: _selectedPrinter,
+            isExpanded: true,
+            items: _printers
+                .map((p) => DropdownMenuItem(value: p, child: Text(p.name)))
+                .toList(),
+            onChanged: _onPrinterSelected,
+            hint: const Text('Select a printer'),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildStandardActions() {
+    return Card(
+      child: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              children: [
-                const Text(
-                  'Select Printer: ',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(width: 8),
-                DropdownButton<Printer>(
-                  value: selectedPrinter,
-                  hint: const Text('No printers found'),
-                  items: printers.map((printer) {
-                    return DropdownMenuItem<Printer>(
-                      value: printer,
-                      child: Text(
-                        '${printer.name} ${!printer.isAvailable ? '(Offline)' : ''}',
-                      ),
-                    );
-                  }).toList(),
-                  onChanged: (value) {
-                    setState(() {
-                      selectedPrinter = value;
-                      if (value != null) {
-                        _loadJobs();
-                      } else {
-                        jobs = [];
-                      }
-                    });
-                  },
-                ),
-                const Spacer(),
-                IconButton(
-                  icon: const Icon(Icons.refresh),
-                  tooltip: 'Refresh Printers',
-                  onPressed: _loadPrinters,
-                ),
-              ],
-            ),
-            if (selectedPrinter != null)
-              Card(
-                margin: const EdgeInsets.only(top: 16),
-                child: Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Printer Details',
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                      const Divider(height: 16),
-                      _buildDetailRow('Model', selectedPrinter!.model),
-                      _buildDetailRow('Location', selectedPrinter!.location),
-                      _buildDetailRow('Comment', selectedPrinter!.comment),
-                      _buildDetailRow('URL', selectedPrinter!.url),
-                      _buildDetailRow(
-                        'Default',
-                        selectedPrinter!.isDefault.toString(),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            const SizedBox(height: 16),
-            Wrap(
-              spacing: 8,
-              children: [
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.print),
-                  label: const Text('Print Test'),
-                  onPressed: isLoading || selectedPrinter == null
-                      ? null
-                      : _printTest,
-                ),
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.refresh),
-                  label: const Text('Refresh Jobs'),
-                  onPressed: isLoading || selectedPrinter == null
-                      ? null
-                      : _loadJobs,
-                ),
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.star_border),
-                  label: const Text('Select Default'),
-                  onPressed: isLoading ? null : _selectDefaultPrinter,
-                ),
-              ],
+            Text(
+              'Standard Actions',
+              style: Theme.of(context).textTheme.titleLarge,
             ),
             const SizedBox(height: 16),
-            if (isLoading)
-              const Center(child: CircularProgressIndicator())
-            else if (printers.isEmpty)
-              const Expanded(
-                child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.print_disabled, size: 64, color: Colors.grey),
-                      SizedBox(height: 16),
-                      Text(
-                        'No printers found',
-                        style: TextStyle(fontSize: 18, color: Colors.grey),
-                      ),
-                      Text(
-                        'Please connect a printer and refresh',
-                        style: TextStyle(color: Colors.grey),
-                      ),
-                    ],
-                  ),
-                ),
-              )
-            else if (jobs.isEmpty)
-              const Expanded(
-                child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.description, size: 64, color: Colors.grey),
-                      SizedBox(height: 16),
-                      Text(
-                        'No print jobs found',
-                        style: TextStyle(fontSize: 18, color: Colors.grey),
-                      ),
-                      Text(
-                        'Try printing a test document',
-                        style: TextStyle(color: Colors.grey),
-                      ),
-                    ],
-                  ),
-                ),
-              )
-            else
-              Expanded(
-                child: ListView.builder(
-                  itemCount: jobs.length,
-                  itemBuilder: (context, index) {
-                    final job = jobs[index];
-                    return Card(
-                      child: ListTile(
-                        title: Text(
-                          job.title,
-                          style: const TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                        subtitle: Text(
-                          'ID: ${job.id}, Status: ${job.statusDescription}',
-                        ),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              icon: const Icon(Icons.pause, color: Colors.blue),
-                              tooltip: 'Pause Job',
-                              onPressed: isLoading
-                                  ? null
-                                  : () => _pausePrintJob(job.id),
-                            ),
-                            IconButton(
-                              icon: const Icon(
-                                Icons.play_arrow,
-                                color: Colors.green,
-                              ),
-                              tooltip: 'Resume Job',
-                              onPressed: isLoading
-                                  ? null
-                                  : () => _resumePrintJob(job.id),
-                            ),
-                            IconButton(
-                              icon: const Icon(Icons.cancel, color: Colors.red),
-                              tooltip: 'Cancel Job',
-                              onPressed: isLoading
-                                  ? null
-                                  : () => _cancelPrintJob(job.id),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
-                ),
+            Center(
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.picture_as_pdf),
+                label: const Text('Print a PDF File'),
+                onPressed: () => _printPdf(),
               ),
+            ),
+            const Divider(height: 32),
+            Text(
+              'Raw Data (ZPL Example)',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _rawDataController,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                labelText: 'Text to print',
+              ),
+            ),
+            const SizedBox(height: 12),
+            Center(
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.data_object),
+                label: const Text('Print Raw Data'),
+                onPressed: _printRawData,
+              ),
+            ),
           ],
         ),
       ),
     );
+  }
+
+  Widget _buildJobsList() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Text(
+              'Print Queue',
+              style: Theme.of(context).textTheme.headlineSmall,
+            ),
+            IconButton(
+              icon: const Icon(Icons.refresh),
+              onPressed: _refreshJobs,
+            ),
+          ],
+        ),
+        if (_isLoadingJobs) const Center(child: CircularProgressIndicator()),
+        if (!_isLoadingJobs && _jobs.isEmpty)
+          const Text('No active print jobs.'),
+        if (!_isLoadingJobs && _jobs.isNotEmpty)
+          SizedBox(
+            height: 200,
+            child: ListView.builder(
+              itemCount: _jobs.length,
+              itemBuilder: (context, index) {
+                final job = _jobs[index];
+                return Card(
+                  child: ListTile(
+                    title: Text(job.title),
+                    subtitle: Text(
+                      'ID: ${job.id} - Status: ${job.statusDescription}',
+                    ),
+                    trailing: Wrap(
+                      spacing: 0,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.pause),
+                          onPressed: () => _manageJob(job.id, 'pause'),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.play_arrow),
+                          onPressed: () => _manageJob(job.id, 'resume'),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.cancel),
+                          onPressed: () => _manageJob(job.id, 'cancel'),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildAdvancedTab() {
+    if (!Platform.isMacOS && !Platform.isLinux) {
+      return const Center(
+        child: Text(
+          'Advanced CUPS options are only available on macOS and Linux.',
+        ),
+      );
+    }
+    return ListView(
+      children: [
+        Text('CUPS Options', style: Theme.of(context).textTheme.headlineSmall),
+        const SizedBox(height: 10),
+        if (_isLoadingCupsOptions)
+          const Center(child: CircularProgressIndicator()),
+        if (!_isLoadingCupsOptions &&
+            (_cupsOptions == null || _cupsOptions!.isEmpty))
+          const Text('No CUPS options found for this printer.'),
+        if (!_isLoadingCupsOptions &&
+            _cupsOptions != null &&
+            _cupsOptions!.isNotEmpty) ...[
+          ..._buildCupsOptionWidgets(),
+          const SizedBox(height: 20),
+          Center(
+            child: ElevatedButton.icon(
+              icon: const Icon(Icons.picture_as_pdf_outlined),
+              label: const Text('Print PDF with Selected Options'),
+              onPressed: () => _printPdf(cupsOptions: _selectedCupsOptions),
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 12,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  List<Widget> _buildCupsOptionWidgets() {
+    if (_cupsOptions == null) return [];
+    return _cupsOptions!.map((option) {
+      final currentValue = _selectedCupsOptions[option.name];
+      return Card(
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Expanded(
+                flex: 2,
+                child: Text(
+                  option.name,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                flex: 3,
+                child: DropdownButton<String>(
+                  value: currentValue,
+                  isExpanded: true,
+                  underline: const SizedBox.shrink(),
+                  items: option.supportedValues.map((choice) {
+                    return DropdownMenuItem<String>(
+                      value: choice.choice,
+                      child: Tooltip(
+                        message: choice.text,
+                        child: Text(
+                          choice.text,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                  onChanged: (newValue) {
+                    if (newValue != null) {
+                      setState(
+                        () => _selectedCupsOptions[option.name] = newValue,
+                      );
+                    }
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }).toList();
   }
 }

@@ -1,3 +1,7 @@
+## 0.0.2
+
+* **FEAT**: Added `printPdf` function to print PDF files directly to a specified printer.
+
 ## 0.0.1
 
 * **Initial Release**

@@ -3,9 +3,11 @@
 
 #ifdef _WIN32
 #include <winspool.h>
+#include <shellapi.h>
 #define strdup _strdup
 #else
 #include <cups/cups.h>
+#include <cups/ppd.h>
 #include <stdio.h>
 #include <stdlib.h>
 #endif
@@ -263,6 +265,7 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8
     FILE* fp = fdopen(fd, "wb");
     if (!fp) {
         close(fd);
+        unlink(temp_file);
         return false;
     }
 
@@ -274,8 +277,49 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8
         return false;
     }
 
-    int job_id = cupsPrintFile(printer_name, temp_file, doc_name, 0, NULL);
+    // Add the "raw" option to tell CUPS not to filter the data.
+    cups_option_t* options = NULL;
+    int num_options = 0;
+    num_options = cupsAddOption("raw", "true", num_options, &options);
+
+    int job_id = cupsPrintFile(printer_name, temp_file, doc_name, num_options, options);
+    cupsFreeOptions(num_options, options);
     unlink(temp_file);
+    return job_id > 0;
+#endif
+}
+
+FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_path, const char* doc_name, int num_options, const char** option_keys, const char** option_values) {
+#ifdef _WIN32
+    // On Windows, we use ShellExecute with the "printto" verb.
+    // This requires a PDF reader to be installed and associated with .pdf files
+    // that handles the "printto" verb. The doc_name and options are not used in this case.
+    (void)doc_name;
+    (void)num_options;
+    (void)option_keys;
+    (void)option_values;
+
+    HINSTANCE result = ShellExecuteA(
+        NULL,          // No parent window
+        "printto",     // Verb
+        pdf_file_path, // File to print
+        printer_name,  // Printer name
+        NULL,          // No working directory
+        SW_HIDE        // Don't show the application window
+    );
+
+    // According to MSDN, if the function succeeds, it returns a value greater than 32.
+    return ((intptr_t)result > 32);
+#else // macOS / Linux
+    cups_option_t* options = NULL;
+    int num_cups_options = 0;
+
+    for (int i = 0; i < num_options; i++) {
+        num_cups_options = cupsAddOption(option_keys[i], option_values[i], num_cups_options, &options);
+    }
+
+    int job_id = cupsPrintFile(printer_name, pdf_file_path, doc_name, num_cups_options, options);
+    cupsFreeOptions(num_cups_options, options);
     return job_id > 0;
 #endif
 }
@@ -397,4 +441,89 @@ FFI_PLUGIN_EXPORT bool cancel_print_job(const char* printer_name, uint32_t job_i
 #else
     return cupsCancelJob(printer_name, job_id) == 1;
 #endif
+}
+
+FFI_PLUGIN_EXPORT CupsOptionList* get_supported_cups_options(const char* printer_name) {
+    CupsOptionList* list = (CupsOptionList*)malloc(sizeof(CupsOptionList));
+    if (!list) return NULL;
+    list->count = 0;
+    list->options = NULL;
+
+#ifdef _WIN32
+    // Not supported on Windows
+    (void)printer_name;
+    return list;
+#else // macOS / Linux
+    const char* ppd_filename = cupsGetPPD(printer_name);
+    if (!ppd_filename) {
+        return list;
+    }
+
+    ppd_file_t* ppd = ppdOpenFile(ppd_filename);
+    if (!ppd) {
+        return list;
+    }
+
+    ppdMarkDefaults(ppd);
+
+    int num_ui_options = 0;
+    for (int i = 0; i < ppd->num_groups; i++) {
+        num_ui_options += ppd->groups[i].num_options;
+    }
+
+    if (num_ui_options == 0) {
+        ppdClose(ppd);
+        return list;
+    }
+
+    list->count = num_ui_options;
+    list->options = (CupsOption*)malloc(num_ui_options * sizeof(CupsOption));
+    if (!list->options) {
+        ppdClose(ppd);
+        free(list);
+        return NULL;
+    }
+
+    int current_option_index = 0;
+    ppd_option_t* option;
+    for (int i = 0; i < ppd->num_groups; i++) {
+        ppd_group_t* group = ppd->groups + i;
+        for (int j = 0; j < group->num_options; j++) {
+            option = group->options + j;
+
+            list->options[current_option_index].name = strdup(option->keyword);
+            list->options[current_option_index].default_value = strdup(option->defchoice);
+
+            list->options[current_option_index].supported_values.count = option->num_choices;
+            list->options[current_option_index].supported_values.choices = (CupsOptionChoice*)malloc(option->num_choices * sizeof(CupsOptionChoice));
+            for (int k = 0; k < option->num_choices; k++) {
+                list->options[current_option_index].supported_values.choices[k].choice = strdup(option->choices[k].choice);
+                list->options[current_option_index].supported_values.choices[k].text = strdup(option->choices[k].text);
+            }
+            current_option_index++;
+        }
+    }
+
+    ppdClose(ppd);
+    return list;
+#endif
+}
+
+FFI_PLUGIN_EXPORT void free_cups_option_list(CupsOptionList* option_list) {
+    if (!option_list) return;
+    if (option_list->options) {
+        for (int i = 0; i < option_list->count; i++) {
+            free(option_list->options[i].name);
+            free(option_list->options[i].default_value);
+            if (option_list->options[i].supported_values.choices) {
+                for (int j = 0; j < option_list->options[i].supported_values.count; j++) {
+                    free(option_list->options[i].supported_values.choices[j].choice);
+                    free(option_list->options[i].supported_values.choices[j].text);
+                }
+                free(option_list->options[i].supported_values.choices);
+            }
+        }
+        free(option_list->options);
+    }
+    free(option_list);
 }

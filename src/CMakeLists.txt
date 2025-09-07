@@ -20,3 +20,16 @@ if (ANDROID)
   # Support Android 15 16k page size
   target_link_options(printing_ffi PRIVATE "-Wl,-z,max-page-size=16384")
 endif()
+
+if(APPLE)
+    # On macOS, find CUPS framework
+    find_library(CUPS_LIBRARY cups)
+    if(CUPS_LIBRARY)
+        target_link_libraries(printing_ffi PUBLIC ${CUPS_LIBRARY})
+    endif()
+elseif(UNIX AND NOT ANDROID)
+    # On Linux, find CUPS using pkg-config
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(CUPS REQUIRED cups)
+    target_link_libraries(printing_ffi PUBLIC PkgConfig::CUPS)
+endif()

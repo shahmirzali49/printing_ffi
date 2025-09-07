@@ -125,6 +125,30 @@ class PrintJob {
   String get statusDescription => status.description;
 }
 
+class CupsOptionChoice {
+  /// The value to be sent to CUPS (e.g., "A4", "4").
+  final String choice;
+  /// The human-readable text for the choice (e.g., "A4", "Landscape").
+  final String text;
+
+  CupsOptionChoice({required this.choice, required this.text});
+}
+
+class CupsOption {
+  /// The name of the option (e.g., "media", "orientation-requested").
+  final String name;
+  /// The default value for this option.
+  final String defaultValue;
+  /// A list of supported values for this option.
+  final List<CupsOptionChoice> supportedValues;
+
+  CupsOption({
+    required this.name,
+    required this.defaultValue,
+    required this.supportedValues,
+  });
+}
+
 // Request classes for printing operations
 class _PrintRequest {
   final int id;
@@ -156,6 +180,24 @@ class _PrintJobActionRequest {
   );
 }
 
+class _PrintPdfRequest {
+  final int id;
+  final String printerName;
+  final String pdfFilePath;
+  final String docName;
+  final Map<String, String>? cupsOptions;
+
+  const _PrintPdfRequest(
+      this.id, this.printerName, this.pdfFilePath, this.docName, this.cupsOptions);
+}
+
+class _GetCupsOptionsRequest {
+  final int id;
+  final String printerName;
+
+  const _GetCupsOptionsRequest(this.id, this.printerName);
+}
+
 // Response classes
 class _PrintResponse {
   final int id;
@@ -176,6 +218,20 @@ class _PrintJobActionResponse {
   final bool result;
 
   const _PrintJobActionResponse(this.id, this.result);
+}
+
+class _PrintPdfResponse {
+  final int id;
+  final bool result;
+
+  const _PrintPdfResponse(this.id, this.result);
+}
+
+class _GetCupsOptionsResponse {
+  final int id;
+  final List<CupsOption> options;
+
+  const _GetCupsOptionsResponse(this.id, this.options);
 }
 
 const String _libName = 'printing_ffi'; // Updated library name
@@ -274,6 +330,65 @@ Future<bool> rawDataToPrinter(
   return completer.future;
 }
 
+/// Prints a PDF file to the specified printer.
+///
+/// On Windows, this requires a default application associated with PDFs that
+/// supports the 'printto' verb. This method is high-level and does not support
+/// passing specific print job settings.
+///
+/// On macOS and Linux, CUPS handles PDF printing natively. You can pass
+/// CUPS-specific options via the [cupsOptions] map.
+///
+/// - [printerName]: The name of the target printer.
+/// - [pdfFilePath]: The local path to the PDF file.
+/// - [docName]: The name of the document to be shown in the print queue.
+/// - [cupsOptions]: A map of CUPS options (e.g., `{'media': 'A4', 'orientation-requested': '4'}`).
+///   This is only used on macOS and Linux.
+Future<bool> printPdf(
+  String printerName,
+  String pdfFilePath, {
+  String docName = 'Flutter PDF Document',
+  Map<String, String>? cupsOptions,
+}) async {
+  final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
+  final int requestId = _nextPrintPdfRequestId++;
+  final _PrintPdfRequest request = _PrintPdfRequest(
+    requestId,
+    printerName,
+    pdfFilePath,
+    docName,
+    cupsOptions,
+  );
+  final Completer<bool> completer = Completer<bool>();
+  _printPdfRequests[requestId] = completer;
+  helperIsolateSendPort.send(request);
+  return completer.future;
+}
+
+/// Fetches the list of supported CUPS options for a given printer.
+///
+/// This function is only effective on macOS and Linux. On Windows, it will
+/// return an empty list.
+///
+/// - [printerName]: The name of the target printer.
+///
+/// Returns a list of [CupsOption] objects, each describing a configurable
+/// setting for the printer.
+Future<List<CupsOption>> getSupportedCupsOptions(String printerName) async {
+  // This function is only supported on CUPS-based systems.
+  if (!Platform.isMacOS && !Platform.isLinux) {
+    return [];
+  }
+
+  final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
+  final int requestId = _nextGetCupsOptionsRequestId++;
+  final _GetCupsOptionsRequest request = _GetCupsOptionsRequest(requestId, printerName);
+  final Completer<List<CupsOption>> completer = Completer<List<CupsOption>>();
+  _getCupsOptionsRequests[requestId] = completer;
+  helperIsolateSendPort.send(request);
+  return completer.future;
+}
+
 Future<List<PrintJob>> listPrintJobs(String printerName) async {
   final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
   final int requestId = _nextPrintJobsRequestId++;
@@ -334,10 +449,14 @@ Future<bool> cancelPrintJob(String printerName, int jobId) async {
 int _nextPrintRequestId = 0;
 int _nextPrintJobsRequestId = 0;
 int _nextPrintJobActionRequestId = 0;
+int _nextPrintPdfRequestId = 0;
+int _nextGetCupsOptionsRequestId = 0;
 
 final Map<int, Completer<bool>> _printRequests = <int, Completer<bool>>{};
 final Map<int, Completer<List<PrintJob>>> _printJobsRequests = <int, Completer<List<PrintJob>>>{};
 final Map<int, Completer<bool>> _printJobActionRequests = <int, Completer<bool>>{};
+final Map<int, Completer<bool>> _printPdfRequests = <int, Completer<bool>>{};
+final Map<int, Completer<List<CupsOption>>> _getCupsOptionsRequests = <int, Completer<List<CupsOption>>>{};
 
 Future<SendPort> _helperIsolateSendPort = () async {
   final Completer<SendPort> completer = Completer<SendPort>();
@@ -364,6 +483,19 @@ Future<SendPort> _helperIsolateSendPort = () async {
         final Completer<bool> completer = _printJobActionRequests[data.id]!;
         _printJobActionRequests.remove(data.id);
         completer.complete(data.result);
+        return;
+      }
+      if (data is _PrintPdfResponse) {
+        final Completer<bool> completer = _printPdfRequests[data.id]!;
+        _printPdfRequests.remove(data.id);
+        completer.complete(data.result);
+        return;
+      }
+      if (data is _GetCupsOptionsResponse) {
+        final Completer<List<CupsOption>> completer =
+            _getCupsOptionsRequests[data.id]!;
+        _getCupsOptionsRequests.remove(data.id);
+        completer.complete(data.options);
         return;
       }
       throw UnsupportedError('Unsupported message type: ${data.runtimeType}');
@@ -431,6 +563,89 @@ Future<SendPort> _helperIsolateSendPort = () async {
               result = _bindings.cancel_print_job(namePtr.cast(), data.jobId);
             }
             sendPort.send(_PrintJobActionResponse(data.id, result));
+          } finally {
+            malloc.free(namePtr);
+          }
+        } else if (data is _PrintPdfRequest) {
+          final namePtr = data.printerName.toNativeUtf8();
+          final pathPtr = data.pdfFilePath.toNativeUtf8();
+          final docNamePtr = data.docName.toNativeUtf8();
+          try {
+            // Handle cupsOptions for native call
+            final int numOptions =
+                (Platform.isMacOS || Platform.isLinux) ? data.cupsOptions?.length ?? 0 : 0;
+            Pointer<Pointer<Utf8>> keysPtr = nullptr;
+            Pointer<Pointer<Utf8>> valuesPtr = nullptr;
+
+            if (numOptions > 0) {
+              keysPtr = malloc<Pointer<Utf8>>(numOptions);
+              valuesPtr = malloc<Pointer<Utf8>>(numOptions);
+              int i = 0;
+              for (var entry in data.cupsOptions!.entries) {
+                keysPtr[i] = entry.key.toNativeUtf8();
+                valuesPtr[i] = entry.value.toNativeUtf8();
+                i++;
+              }
+            }
+
+            final bool result = _bindings.print_pdf(
+              namePtr.cast(),
+              pathPtr.cast(),
+              docNamePtr.cast(),
+              numOptions,
+              keysPtr.cast(),
+              valuesPtr.cast(),
+            );
+            sendPort.send(_PrintPdfResponse(data.id, result));
+
+            if (numOptions > 0) {
+              for (var i = 0; i < numOptions; i++) {
+                malloc.free(keysPtr[i]);
+                malloc.free(valuesPtr[i]);
+              }
+              malloc.free(keysPtr);
+              malloc.free(valuesPtr);
+            }
+          } finally {
+            malloc.free(namePtr);
+            malloc.free(pathPtr);
+            malloc.free(docNamePtr);
+          }
+        } else if (data is _GetCupsOptionsRequest) {
+          final namePtr = data.printerName.toNativeUtf8();
+          try {
+            final optionListPtr =
+                _bindings.get_supported_cups_options(namePtr.cast());
+            final options = <CupsOption>[];
+            if (optionListPtr != nullptr) {
+              try {
+                final optionList = optionListPtr.ref;
+                for (var i = 0; i < optionList.count; i++) {
+                  final optionInfo = optionList.options[i];
+                  final supportedValues = <CupsOptionChoice>[];
+                  final choiceList = optionInfo.supported_values;
+                  for (var j = 0; j < choiceList.count; j++) {
+                    final choiceInfo = choiceList.choices[j];
+                    supportedValues.add(
+                      CupsOptionChoice(
+                        choice: choiceInfo.choice.cast<Utf8>().toDartString(),
+                        text: choiceInfo.text.cast<Utf8>().toDartString(),
+                      ),
+                    );
+                  }
+                  options.add(
+                    CupsOption(
+                      name: optionInfo.name.cast<Utf8>().toDartString(),
+                      defaultValue: optionInfo.default_value.cast<Utf8>().toDartString(),
+                      supportedValues: supportedValues,
+                    ),
+                  );
+                }
+              } finally {
+                _bindings.free_cups_option_list(optionListPtr);
+              }
+            }
+            sendPort.send(_GetCupsOptionsResponse(data.id, options));
           } finally {
             malloc.free(namePtr);
           }
