@@ -309,14 +309,23 @@ FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_
     (void)option_keys;
     (void)option_values;
 
+    // The 'printto' verb requires the printer name to be passed in quotes.
+    // We allocate a new string to hold the quoted name.
+    size_t printer_len = strlen(printer_name);
+    char* quoted_printer_name = (char*)malloc(printer_len + 3); // for "" and \0
+    if (!quoted_printer_name) return false;
+    snprintf(quoted_printer_name, printer_len + 3, "\"%s\"", printer_name);
+
     HINSTANCE result = ShellExecuteA(
         NULL,          // No parent window
         "printto",     // Verb
         pdf_file_path, // File to print
-        printer_name,  // Printer name
+        quoted_printer_name,  // Printer name (must be quoted)
         NULL,          // No working directory
         SW_HIDE        // Don't show the application window
     );
+
+    free(quoted_printer_name);
 
     // According to MSDN, if the function succeeds, it returns a value greater than 32.
     return ((intptr_t)result > 32);
