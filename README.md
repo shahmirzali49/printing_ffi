@@ -7,7 +7,7 @@ A Flutter plugin for direct printer communication using native FFI (Foreign Func
 - **List Printers** 📋: Retrieve all available printers, including offline ones, with their current status (e.g., `Idle`, `Printing`, `Offline`).
 - **Raw Data Printing** 📦: Send raw print data (e.g., ZPL, ESC/POS) directly to printers, bypassing document rendering.
 - **Print Job Management** ⚙️: List, pause, resume, and cancel print jobs for a selected printer.
-- **PDF Printing** 📄: Print PDF files directly to a specified printer (requires a default PDF application on Windows).
+- **PDF Printing** 📄: Print PDF files directly to a specified printer. On Windows, this uses a bundled version of the `pdfium` library for robust, self-contained rendering.
 - **Cross-Platform** 🌐: Supports macOS (CUPS) and Windows (winspool), with Linux support planned.
 - **Offline Printer Support** 🔌: Lists offline printers on macOS using `cupsGetDests`, addressing a key limitation of other plugins.
 - **Native Performance** ⚡: Uses FFI to interface directly with native printing APIs, reducing overhead and improving speed.
@@ -124,7 +124,7 @@ No additional setup is required, as the plugin uses the native `winspool` API in
 
 -   Linux support is planned but not yet implemented.
 -   Requires manual setup for macOS (CUPS installation, Podfile configuration).
--   PDF printing on Windows relies on an installed application that handles the "printto" verb for PDF files.
+-   The Windows implementation automatically downloads and bundles the `pdfium` library for PDF rendering.
 
 ## Troubleshooting 🛠️
 

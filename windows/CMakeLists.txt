@@ -4,6 +4,32 @@
 # customers of the plugin.
 cmake_minimum_required(VERSION 3.14)
 
+# --- Pdfium Dependency ---
+# Use FetchContent to download and extract Pdfium binaries. This is a robust
+# way to manage the dependency without requiring manual setup.
+include(FetchContent)
+
+# You can override these in the example/windows/CMakeLists.txt for testing
+set(PDFIUM_VERSION "5790" CACHE STRING "Version of pdfium used")
+set(PDFIUM_ARCH "x64" CACHE STRING "Architecture of pdfium used")
+
+FetchContent_Declare(
+  pdfium
+  URL "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/${PDFIUM_VERSION}/pdfium-win-${PDFIUM_ARCH}.tgz"
+  URL_HASH SHA256=1520d8a07a113f360b372223c68393a0e69b61e5a52f28353f38b8d418293dc3
+)
+
+FetchContent_GetProperties(pdfium)
+if(NOT pdfium_POPULATED)
+  FetchContent_Populate(pdfium)
+  message(STATUS "pdfium downloaded to ${pdfium_SOURCE_DIR}")
+endif()
+
+# Set variables for the src/CMakeLists.txt to use.
+set(PDFIUM_INCLUDE_DIR "${pdfium_SOURCE_DIR}/include" CACHE PATH "Pdfium include directory")
+set(PDFIUM_LIBRARY "${pdfium_SOURCE_DIR}/lib/pdfium.dll.lib" CACHE FILEPATH "Pdfium library")
+set(PDFIUM_RUNTIME_LIBRARY "${pdfium_SOURCE_DIR}/bin/pdfium.dll" CACHE FILEPATH "Pdfium runtime DLL")
+
 # Project-level configuration.
 set(PROJECT_NAME "printing_ffi")
 project(${PROJECT_NAME} LANGUAGES CXX)
@@ -18,6 +44,7 @@ add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../src" "${CMAKE_CURRENT_BINARY_DI
 set(printing_ffi_bundled_libraries
   # Defined in ../src/CMakeLists.txt.
   # This can be changed to accommodate different builds.
-  $<TARGET_FILE:printing_ffi>
+  $<TARGET_FILE:printing_ffi> # The plugin's own DLL
+  "${PDFIUM_RUNTIME_LIBRARY}" # The pdfium DLL to bundle with the app
   PARENT_SCOPE
 )

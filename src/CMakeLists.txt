@@ -24,6 +24,11 @@ endif()
 if (ANDROID)
   # Support Android 15 16k page size
   target_link_options(printing_ffi PRIVATE "-Wl,-z,max-page-size=16384")
+elseif(WIN32)
+  # On Windows, link against Pdfium and the Graphics Device Interface library.
+  target_include_directories(printing_ffi PUBLIC "${PDFIUM_INCLUDE_DIR}")
+  target_link_libraries(printing_ffi PUBLIC "${PDFIUM_LIBRARY}")
+  target_link_libraries(printing_ffi PUBLIC "gdi32.lib")
 endif()
 
 if(APPLE)

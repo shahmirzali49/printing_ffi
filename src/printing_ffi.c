@@ -5,6 +5,7 @@
 #include <winspool.h>
 #include <stdio.h>
 #include <shellapi.h>
+#include <wingdi.h>
 #define strdup _strdup
 #else
 #include <cups/cups.h>
@@ -12,6 +13,11 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <limits.h>
+#endif
+
+#ifdef _WIN32
+// Include the main Pdfium header. Ensure this is in your src/ directory.
+#include "fpdfview.h"
 #endif
 
 // Logging macro - enabled when DEBUG_LOGGING is defined (e.g., in debug builds)
