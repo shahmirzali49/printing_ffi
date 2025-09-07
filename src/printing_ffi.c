@@ -3,6 +3,7 @@
 
 #ifdef _WIN32
 #include <winspool.h>
+#include <stdio.h>
 #include <shellapi.h>
 #define strdup _strdup
 #else
@@ -11,6 +12,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <limits.h>
+#endif
+
+// Logging macro - enabled when DEBUG_LOGGING is defined (e.g., in debug builds)
+#ifdef DEBUG_LOGGING
+#define LOG(format, ...) fprintf(stderr, "[printing_ffi] " format "\n", ##__VA_ARGS__)
+#else
+#define LOG(...)
 #endif
 
 FFI_PLUGIN_EXPORT int sum(int a, int b) {
@@ -27,6 +35,7 @@ FFI_PLUGIN_EXPORT int sum_long_running(int a, int b) {
 }
 
 FFI_PLUGIN_EXPORT PrinterList* get_printers(void) {
+    LOG("get_printers called");
     PrinterList* list = (PrinterList*)malloc(sizeof(PrinterList));
     if (!list) return NULL;
     list->count = 0;
@@ -35,6 +44,7 @@ FFI_PLUGIN_EXPORT PrinterList* get_printers(void) {
 #ifdef _WIN32
     DWORD needed, returned;
     EnumPrintersA(PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS, NULL, 2, NULL, 0, &needed, &returned);
+    LOG("EnumPrintersA needed %lu bytes for printer list", needed);
     if (needed == 0) {
         return list; // Return empty list
     }
@@ -45,6 +55,7 @@ FFI_PLUGIN_EXPORT PrinterList* get_printers(void) {
     }
 
     if (EnumPrintersA(PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS, NULL, 2, buffer, needed, &needed, &returned)) {
+        LOG("Found %lu printers on Windows", returned);
         list->count = returned;
         list->printers = (PrinterInfo*)malloc(returned * sizeof(PrinterInfo));
         if (!list->printers) {
@@ -63,17 +74,21 @@ FFI_PLUGIN_EXPORT PrinterList* get_printers(void) {
             list->printers[i].is_default = (printers[i].Attributes & PRINTER_ATTRIBUTE_DEFAULT) != 0;
             list->printers[i].is_available = (printers[i].Status & PRINTER_STATUS_OFFLINE) == 0;
         }
+    } else {
+        LOG("EnumPrintersA failed with error %lu", GetLastError());
     }
     free(buffer);
     return list;
 #else // macOS
     cups_dest_t* dests = NULL;
+    LOG("Calling cupsGetDests to find printers");
     int num_dests = cupsGetDests(&dests);
     if (num_dests <= 0) {
         cupsFreeDests(num_dests, dests);
         return list; // Return empty list
     }
 
+    LOG("Found %d printers on macOS/Linux", num_dests);
     list->count = num_dests;
     list->printers = (PrinterInfo*)malloc(num_dests * sizeof(PrinterInfo));
     if (!list->printers) {
@@ -123,6 +138,7 @@ FFI_PLUGIN_EXPORT void free_printer_list(PrinterList* printer_list) {
 }
 
 FFI_PLUGIN_EXPORT PrinterInfo* get_default_printer(void) {
+    LOG("get_default_printer called");
 #ifdef _WIN32
     DWORD len = 0;
     GetDefaultPrinterA(NULL, &len);
@@ -134,12 +150,14 @@ FFI_PLUGIN_EXPORT PrinterInfo* get_default_printer(void) {
     if (!default_printer_name) return NULL;
 
     if (!GetDefaultPrinterA(default_printer_name, &len)) {
+        LOG("GetDefaultPrinterA failed with error %lu", GetLastError());
         free(default_printer_name);
         return NULL;
     }
 
     HANDLE hPrinter;
     if (!OpenPrinterA(default_printer_name, &hPrinter, NULL)) {
+        LOG("OpenPrinterA for default printer failed with error %lu", GetLastError());
         free(default_printer_name);
         return NULL;
     }
@@ -148,6 +166,7 @@ FFI_PLUGIN_EXPORT PrinterInfo* get_default_printer(void) {
     DWORD needed = 0;
     GetPrinterA(hPrinter, 2, NULL, 0, &needed);
     if (needed == 0) {
+        LOG("GetPrinterA (to get size) failed with error %lu", GetLastError());
         ClosePrinter(hPrinter);
         return NULL;
     }
@@ -159,6 +178,7 @@ FFI_PLUGIN_EXPORT PrinterInfo* get_default_printer(void) {
     }
 
     if (!GetPrinterA(hPrinter, 2, (LPBYTE)pinfo2, needed, &needed)) {
+        LOG("GetPrinterA (to get data) failed with error %lu", GetLastError());
         free(pinfo2);
         ClosePrinter(hPrinter);
         return NULL;
@@ -184,7 +204,11 @@ FFI_PLUGIN_EXPORT PrinterInfo* get_default_printer(void) {
     return printer_info;
 #else // macOS
     const char* default_printer_name = cupsGetDefault();
-    if (!default_printer_name) return NULL;
+    if (!default_printer_name) {
+        LOG("cupsGetDefault returned null, no default printer found.");
+        return NULL;
+    }
+    LOG("macOS/Linux default printer name: %s", default_printer_name);
 
     cups_dest_t* dests = NULL;
     int num_dests = cupsGetDests(&dests);
@@ -231,12 +255,16 @@ FFI_PLUGIN_EXPORT void free_printer_info(PrinterInfo* printer_info) {
 }
 
 FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8_t* data, int length, const char* doc_name) {
+    LOG("raw_data_to_printer called for printer: '%s', doc: '%s', length: %d", printer_name, doc_name, length);
 #ifdef _WIN32
     HANDLE hPrinter;
     DOC_INFO_1A docInfo;
     DWORD written;
 
-    if (!OpenPrinterA((LPSTR)printer_name, &hPrinter, NULL)) return false;
+    if (!OpenPrinterA((LPSTR)printer_name, &hPrinter, NULL)) {
+        LOG("OpenPrinterA failed with error %lu", GetLastError());
+        return false;
+    }
 
     docInfo.pDocName = (LPSTR)doc_name;
     docInfo.pOutputFile = NULL;
@@ -244,11 +272,13 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8
 
     if (StartDocPrinterA(hPrinter, 1, (LPBYTE)&docInfo) == 0) {
         ClosePrinter(hPrinter);
+        LOG("StartDocPrinterA failed with error %lu", GetLastError());
         return false;
     }
 
     if (!StartPagePrinter(hPrinter)) {
         EndDocPrinter(hPrinter);
+        LOG("StartPagePrinter failed with error %lu", GetLastError());
         ClosePrinter(hPrinter);
         return false;
     }
@@ -257,7 +287,11 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8
     EndPagePrinter(hPrinter);
     EndDocPrinter(hPrinter);
     ClosePrinter(hPrinter);
-    return result && written == length;
+    bool success = result && written == length;
+    if (!success) {
+        LOG("WritePrinter failed. Result: %d, Bytes written: %lu, Expected: %d", result, written, length);
+    }
+    return success;
 #else
     // Use getenv("TMPDIR") to get the correct temporary directory,
     // especially important for sandboxed macOS apps where /tmp is not writable.
@@ -268,9 +302,13 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8
 
     char temp_file[PATH_MAX];
     snprintf(temp_file, sizeof(temp_file), "%s/printing_ffi_XXXXXX", tmpdir);
+    LOG("Creating temporary file at: %s", temp_file);
 
     int fd = mkstemp(temp_file);
-    if (fd == -1) return false;
+    if (fd == -1) {
+        LOG("mkstemp failed to create temporary file");
+        return false;
+    }
 
     FILE* fp = fdopen(fd, "wb");
     if (!fp) {
@@ -293,13 +331,18 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8
     num_options = cupsAddOption("raw", "true", num_options, &options);
 
     int job_id = cupsPrintFile(printer_name, temp_file, doc_name, num_options, options);
+    if (job_id <= 0) {
+        LOG("cupsPrintFile failed, error: %s", cupsLastErrorString());
+    }
     cupsFreeOptions(num_options, options);
     unlink(temp_file);
+    LOG("raw_data_to_printer finished with job_id: %d", job_id);
     return job_id > 0;
 #endif
 }
 
 FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_path, const char* doc_name, int num_options, const char** option_keys, const char** option_values) {
+    LOG("print_pdf called for printer: '%s', path: '%s', doc: '%s'", printer_name, pdf_file_path, doc_name);
 #ifdef _WIN32
     // On Windows, we use ShellExecute with the "printto" verb.
     // This requires a PDF reader to be installed and associated with .pdf files
@@ -314,7 +357,8 @@ FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_
     size_t printer_len = strlen(printer_name);
     char* quoted_printer_name = (char*)malloc(printer_len + 3); // for "" and \0
     if (!quoted_printer_name) return false;
-    snprintf(quoted_printer_name, printer_len + 3, "\"%s\"", printer_name);
+    sprintf_s(quoted_printer_name, printer_len + 3, "\"%s\"", printer_name);
+    LOG("Executing ShellExecuteA with verb 'printto' for printer: %s", quoted_printer_name);
 
     HINSTANCE result = ShellExecuteA(
         NULL,          // No parent window
@@ -327,18 +371,28 @@ FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_
 
     free(quoted_printer_name);
 
+    bool success = ((intptr_t)result > 32);
+    if (!success) {
+        LOG("ShellExecuteA failed with result code: %p", result);
+    }
+    LOG("print_pdf finished with result: %d", success);
     // According to MSDN, if the function succeeds, it returns a value greater than 32.
-    return ((intptr_t)result > 32);
+    return success;
 #else // macOS / Linux
     cups_option_t* options = NULL;
     int num_cups_options = 0;
 
     for (int i = 0; i < num_options; i++) {
+        LOG("Adding CUPS option: %s=%s", option_keys[i], option_values[i]);
         num_cups_options = cupsAddOption(option_keys[i], option_values[i], num_cups_options, &options);
     }
 
     int job_id = cupsPrintFile(printer_name, pdf_file_path, doc_name, num_cups_options, options);
+    if (job_id <= 0) {
+        LOG("cupsPrintFile failed, error: %s", cupsLastErrorString());
+    }
     cupsFreeOptions(num_cups_options, options);
+    LOG("print_pdf finished with job_id: %d", job_id);
     return job_id > 0;
 #endif
 }
@@ -349,12 +403,14 @@ FFI_PLUGIN_EXPORT JobList* get_print_jobs(const char* printer_name) {
     list->count = 0;
     list->jobs = NULL;
 
+    LOG("get_print_jobs called for printer: '%s'", printer_name);
 #ifdef _WIN32
     HANDLE hPrinter;
     DWORD needed, returned;
 
     if (!OpenPrinterA((LPSTR)printer_name, &hPrinter, NULL)) {
         free(list);
+        LOG("OpenPrinterA failed with error %lu", GetLastError());
         return NULL;
     }
 
@@ -371,6 +427,7 @@ FFI_PLUGIN_EXPORT JobList* get_print_jobs(const char* printer_name) {
     }
 
     if (EnumJobsA(hPrinter, 0, 0xFFFFFFFF, 2, buffer, needed, &needed, &returned)) {
+        LOG("Found %lu jobs on Windows", returned);
         list->count = returned;
         list->jobs = (JobInfo*)malloc(returned * sizeof(JobInfo));
         if (!list->jobs) {
@@ -385,18 +442,22 @@ FFI_PLUGIN_EXPORT JobList* get_print_jobs(const char* printer_name) {
             list->jobs[i].title = strdup(jobs[i].pDocument ? jobs[i].pDocument : "Unknown");
             list->jobs[i].status = jobs[i].Status;
         }
+    } else {
+        LOG("EnumJobsA failed with error %lu", GetLastError());
     }
     free(buffer);
     ClosePrinter(hPrinter);
     return list;
 #else // macOS
     cups_job_t* jobs;
+    LOG("Calling cupsGetJobs for active jobs");
     int num_jobs = cupsGetJobs(&jobs, printer_name, 1, CUPS_WHICHJOBS_ACTIVE);
     if (num_jobs <= 0) {
         cupsFreeJobs(num_jobs, jobs);
         return list;
     }
 
+    LOG("Found %d active jobs on macOS/Linux", num_jobs);
     list->count = num_jobs;
     list->jobs = (JobInfo*)malloc(num_jobs * sizeof(JobInfo));
     if (!list->jobs) {
@@ -427,42 +488,55 @@ FFI_PLUGIN_EXPORT void free_job_list(JobList* job_list) {
 }
 
 FFI_PLUGIN_EXPORT bool pause_print_job(const char* printer_name, uint32_t job_id) {
+    LOG("pause_print_job called for printer: '%s', job_id: %u", printer_name, job_id);
 #ifdef _WIN32
     HANDLE hPrinter;
     if (!OpenPrinterA((LPSTR)printer_name, &hPrinter, NULL)) return false;
     bool result = SetJobA(hPrinter, job_id, 0, NULL, JOB_CONTROL_PAUSE);
+    if (!result) LOG("SetJobA(PAUSE) failed with error %lu", GetLastError());
     ClosePrinter(hPrinter);
     return result;
 #else
-    return cupsCancelJob2(CUPS_HTTP_DEFAULT, printer_name, job_id, IPP_HOLD_JOB) == 1;
+    bool result = cupsCancelJob2(CUPS_HTTP_DEFAULT, printer_name, job_id, IPP_HOLD_JOB) == 1;
+    if (!result) LOG("cupsCancelJob2(IPP_HOLD_JOB) failed, error: %s", cupsLastErrorString());
+    return result;
 #endif
 }
 
 FFI_PLUGIN_EXPORT bool resume_print_job(const char* printer_name, uint32_t job_id) {
+    LOG("resume_print_job called for printer: '%s', job_id: %u", printer_name, job_id);
 #ifdef _WIN32
     HANDLE hPrinter;
     if (!OpenPrinterA((LPSTR)printer_name, &hPrinter, NULL)) return false;
     bool result = SetJobA(hPrinter, job_id, 0, NULL, JOB_CONTROL_RESUME);
+    if (!result) LOG("SetJobA(RESUME) failed with error %lu", GetLastError());
     ClosePrinter(hPrinter);
     return result;
 #else
-    return cupsCancelJob2(CUPS_HTTP_DEFAULT, printer_name, job_id, IPP_RELEASE_JOB) == 1;
+    bool result = cupsCancelJob2(CUPS_HTTP_DEFAULT, printer_name, job_id, IPP_RELEASE_JOB) == 1;
+    if (!result) LOG("cupsCancelJob2(IPP_RELEASE_JOB) failed, error: %s", cupsLastErrorString());
+    return result;
 #endif
 }
 
 FFI_PLUGIN_EXPORT bool cancel_print_job(const char* printer_name, uint32_t job_id) {
+    LOG("cancel_print_job called for printer: '%s', job_id: %u", printer_name, job_id);
 #ifdef _WIN32
     HANDLE hPrinter;
     if (!OpenPrinterA((LPSTR)printer_name, &hPrinter, NULL)) return false;
     bool result = SetJobA(hPrinter, job_id, 0, NULL, JOB_CONTROL_CANCEL);
+    if (!result) LOG("SetJobA(CANCEL) failed with error %lu", GetLastError());
     ClosePrinter(hPrinter);
     return result;
 #else
-    return cupsCancelJob(printer_name, job_id) == 1;
+    bool result = cupsCancelJob(printer_name, job_id) == 1;
+    if (!result) LOG("cupsCancelJob failed, error: %s", cupsLastErrorString());
+    return result;
 #endif
 }
 
 FFI_PLUGIN_EXPORT CupsOptionList* get_supported_cups_options(const char* printer_name) {
+    LOG("get_supported_cups_options called for printer: '%s'", printer_name);
     CupsOptionList* list = (CupsOptionList*)malloc(sizeof(CupsOptionList));
     if (!list) return NULL;
     list->count = 0;
@@ -475,11 +549,14 @@ FFI_PLUGIN_EXPORT CupsOptionList* get_supported_cups_options(const char* printer
 #else // macOS / Linux
     const char* ppd_filename = cupsGetPPD(printer_name);
     if (!ppd_filename) {
+        LOG("cupsGetPPD failed for '%s', error: %s", printer_name, cupsLastErrorString());
         return list;
     }
+    LOG("Found PPD file: %s", ppd_filename);
 
     ppd_file_t* ppd = ppdOpenFile(ppd_filename);
     if (!ppd) {
+        LOG("ppdOpenFile failed for '%s'", ppd_filename);
         return list;
     }
 
@@ -492,10 +569,12 @@ FFI_PLUGIN_EXPORT CupsOptionList* get_supported_cups_options(const char* printer
 
     if (num_ui_options == 0) {
         ppdClose(ppd);
+        LOG("No UI options found in PPD");
         return list;
     }
 
     list->count = num_ui_options;
+    LOG("Found %d UI options in PPD", num_ui_options);
     list->options = (CupsOption*)malloc(num_ui_options * sizeof(CupsOption));
     if (!list->options) {
         ppdClose(ppd);
@@ -524,6 +603,7 @@ FFI_PLUGIN_EXPORT CupsOptionList* get_supported_cups_options(const char* printer
     }
 
     ppdClose(ppd);
+    LOG("get_supported_cups_options finished");
     return list;
 #endif
 }
