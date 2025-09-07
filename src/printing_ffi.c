@@ -10,6 +10,7 @@
 #include <cups/ppd.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <limits.h>
 #endif
 
 FFI_PLUGIN_EXPORT int sum(int a, int b) {
@@ -258,7 +259,16 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8
     ClosePrinter(hPrinter);
     return result && written == length;
 #else
-    char temp_file[] = "/tmp/printing_ffi_XXXXXX";
+    // Use getenv("TMPDIR") to get the correct temporary directory,
+    // especially important for sandboxed macOS apps where /tmp is not writable.
+    const char* tmpdir = getenv("TMPDIR");
+    if (!tmpdir) {
+        tmpdir = "/tmp"; // Fallback for Linux or non-sandboxed environments
+    }
+
+    char temp_file[PATH_MAX];
+    snprintf(temp_file, sizeof(temp_file), "%s/printing_ffi_XXXXXX", tmpdir);
+
     int fd = mkstemp(temp_file);
     if (fd == -1) return false;
 
