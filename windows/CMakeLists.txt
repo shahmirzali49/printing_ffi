@@ -10,13 +10,13 @@ cmake_minimum_required(VERSION 3.14)
 include(FetchContent)
 
 # You can override these in the example/windows/CMakeLists.txt for testing
-set(PDFIUM_VERSION "5790" CACHE STRING "Version of pdfium used")
+set(PDFIUM_VERSION "7390" CACHE STRING "Version of pdfium used")
 set(PDFIUM_ARCH "x64" CACHE STRING "Architecture of pdfium used")
 
 FetchContent_Declare(
   pdfium
-  URL "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium/${PDFIUM_VERSION}/pdfium-win-${PDFIUM_ARCH}.tgz"
-  URL_HASH SHA256=1520d8a07a113f360b372223c68393a0e69b61e5a52f28353f38b8d418293dc3
+  URL "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F${PDFIUM_VERSION}/pdfium-win-${PDFIUM_ARCH}.tgz"
+  URL_HASH SHA256=7ab3f91a3341b7cfdb3c3c039428e19ae26a095006870df25da4be40635e9198
 )
 
 FetchContent_GetProperties(pdfium)

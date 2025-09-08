@@ -1,6 +1,6 @@
 name: printing_ffi
 description: "A Flutter plugin for direct printer communication using native FFI bindings for macOS, Windows, and Linux."
-version: 0.0.2
+version: 0.0.3
 homepage: https://github.com/Shreemanarjun/printing_ffi
 
 environment:
