@@ -1,3 +1,7 @@
+## 0.0.4
+
+* **DOCS**: Updated `pubspec.yaml` with repository, homepage, issue tracker links,license and relevant topics for better discoverability on pub.dev.
+
 ## 0.0.3
 
 * **FEAT**: Added full support for Linux via CUPS. 🚀
