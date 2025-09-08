@@ -53,7 +53,8 @@ class _PrintingScreenState extends State<PrintingScreen> {
     text: 'Hello, FFI!',
   );
   PdfPrintScaling _selectedScaling = PdfPrintScaling.fitPage;
-  int _tabIndex = 0;
+
+  ///int _tabIndex = 0;
 
   @override
   void initState() {
@@ -253,7 +254,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
           ],
           bottom: _selectedPrinter != null
               ? TabBar(
-                  onTap: (index) => setState(() => _tabIndex = index),
+                  // onTap: (index) => setState(() => _tabIndex = index),
                   tabs: const [
                     Tab(icon: Icon(Icons.print_outlined), text: 'Standard'),
                     Tab(
@@ -334,34 +335,42 @@ class _PrintingScreenState extends State<PrintingScreen> {
             ),
             const SizedBox(height: 16),
             Center(
-              child: Column(children: [
-                if (Platform.isWindows) ...[
-                  SegmentedButton<PdfPrintScaling>(
-                    segments: const [
-                      ButtonSegment(value: PdfPrintScaling.fitPage, label: Text('Fit to Page')),
-                      ButtonSegment(value: PdfPrintScaling.actualSize, label: Text('Actual Size')),
-                    ],
-                    selected: {_selectedScaling},
-                    onSelectionChanged: (newSelection) {
-                      setState(() {
-                        _selectedScaling = newSelection.first;
-                      });
-                    },
-                  ),
-                  const SizedBox(height: 12),
-                ],
-                ElevatedButton.icon(
-                  icon: const Icon(Icons.picture_as_pdf),
-                  label: const Text('Print a PDF File'),
-                  onPressed: () => _printPdf(scaling: _selectedScaling),
-                  style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 24,
-                      vertical: 12,
+              child: Column(
+                children: [
+                  if (Platform.isWindows) ...[
+                    SegmentedButton<PdfPrintScaling>(
+                      segments: const [
+                        ButtonSegment(
+                          value: PdfPrintScaling.fitPage,
+                          label: Text('Fit to Page'),
+                        ),
+                        ButtonSegment(
+                          value: PdfPrintScaling.actualSize,
+                          label: Text('Actual Size'),
+                        ),
+                      ],
+                      selected: {_selectedScaling},
+                      onSelectionChanged: (newSelection) {
+                        setState(() {
+                          _selectedScaling = newSelection.first;
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.picture_as_pdf),
+                    label: const Text('Print a PDF File'),
+                    onPressed: () => _printPdf(scaling: _selectedScaling),
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 24,
+                        vertical: 12,
+                      ),
                     ),
                   ),
-                ),
-              ]),
+                ],
+              ),
             ),
             const Divider(height: 32),
             Text(
@@ -474,7 +483,10 @@ class _PrintingScreenState extends State<PrintingScreen> {
             child: ElevatedButton.icon(
               icon: const Icon(Icons.picture_as_pdf_outlined),
               label: const Text('Print PDF with Selected Options'),
-              onPressed: () => _printPdf(cupsOptions: _selectedCupsOptions, scaling: _selectedScaling),
+              onPressed: () => _printPdf(
+                cupsOptions: _selectedCupsOptions,
+                scaling: _selectedScaling,
+              ),
               style: ElevatedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(
                   horizontal: 24,
