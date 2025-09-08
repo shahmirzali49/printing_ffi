@@ -30,6 +30,39 @@ static bool s_pdfium_initialized = false;
 #endif
 
 #ifdef _WIN32
+// Helper to convert UTF-8 char* to wchar_t*
+// The caller is responsible for freeing the returned string.
+static wchar_t* to_utf16(const char* utf8_str) {
+    if (!utf8_str) return NULL;
+    int len = MultiByteToWideChar(CP_UTF8, 0, utf8_str, -1, NULL, 0);
+    if (len == 0) {
+        LOG("MultiByteToWideChar to get len failed with error %lu", GetLastError());
+        return NULL;
+    }
+    wchar_t* utf16_str = (wchar_t*)malloc(len * sizeof(wchar_t));
+    if (!utf16_str) return NULL;
+    if (MultiByteToWideChar(CP_UTF8, 0, utf8_str, -1, utf16_str, len) == 0) {
+        LOG("MultiByteToWideChar to convert failed with error %lu", GetLastError());
+        free(utf16_str);
+        return NULL;
+    }
+    return utf16_str;
+}
+
+// Helper to convert wchar_t* to UTF-8 char*
+// The caller is responsible for freeing the returned string.
+static char* to_utf8(const wchar_t* utf16_str) {
+    if (!utf16_str) return strdup("");
+    int len = WideCharToMultiByte(CP_UTF8, 0, utf16_str, -1, NULL, 0, NULL, NULL);
+    if (len == 0) return strdup("");
+    char* utf8_str = (char*)malloc(len);
+    if (!utf8_str) return strdup(""); // Should not happen
+    WideCharToMultiByte(CP_UTF8, 0, utf16_str, -1, utf8_str, len, NULL, NULL);
+    return utf8_str;
+}
+#endif
+
+#ifdef _WIN32
 BOOL WINAPI DllMain(
     HINSTANCE hinstDLL,
     DWORD fdwReason,
@@ -72,8 +105,8 @@ FFI_PLUGIN_EXPORT PrinterList* get_printers(void) {
 
 #ifdef _WIN32
     DWORD needed, returned;
-    EnumPrintersA(PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS, NULL, 2, NULL, 0, &needed, &returned);
-    LOG("EnumPrintersA needed %lu bytes for printer list", needed);
+    EnumPrintersW(PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS, NULL, 2, NULL, 0, &needed, &returned);
+    LOG("EnumPrintersW needed %lu bytes for printer list", needed);
     if (needed == 0) {
         return list; // Return empty list
     }
@@ -83,7 +116,7 @@ FFI_PLUGIN_EXPORT PrinterList* get_printers(void) {
         return NULL;
     }
 
-    if (EnumPrintersA(PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS, NULL, 2, buffer, needed, &needed, &returned)) {
+    if (EnumPrintersW(PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS, NULL, 2, buffer, needed, &needed, &returned)) {
         LOG("Found %lu printers on Windows", returned);
         list->count = returned;
         list->printers = (PrinterInfo*)malloc(returned * sizeof(PrinterInfo));
@@ -92,19 +125,19 @@ FFI_PLUGIN_EXPORT PrinterList* get_printers(void) {
             free(list);
             return NULL;
         }
-        PRINTER_INFO_2A* printers = (PRINTER_INFO_2A*)buffer;
+        PRINTER_INFO_2W* printers = (PRINTER_INFO_2W*)buffer;
         for (DWORD i = 0; i < returned; i++) {
-            list->printers[i].name = strdup(printers[i].pPrinterName ? printers[i].pPrinterName : "");
+            list->printers[i].name = to_utf8(printers[i].pPrinterName);
             list->printers[i].state = printers[i].Status;
-            list->printers[i].url = strdup(printers[i].pPrinterName ? printers[i].pPrinterName : "");
-            list->printers[i].model = strdup(printers[i].pDriverName ? printers[i].pDriverName : "");
-            list->printers[i].location = strdup(printers[i].pLocation ? printers[i].pLocation : "");
-            list->printers[i].comment = strdup(printers[i].pComment ? printers[i].pComment : "");
+            list->printers[i].url = to_utf8(printers[i].pPrinterName); // Use printer name as URL for Windows
+            list->printers[i].model = to_utf8(printers[i].pDriverName);
+            list->printers[i].location = to_utf8(printers[i].pLocation);
+            list->printers[i].comment = to_utf8(printers[i].pComment);
             list->printers[i].is_default = (printers[i].Attributes & PRINTER_ATTRIBUTE_DEFAULT) != 0;
             list->printers[i].is_available = (printers[i].Status & PRINTER_STATUS_OFFLINE) == 0;
         }
     } else {
-        LOG("EnumPrintersA failed with error %lu", GetLastError());
+        LOG("EnumPrintersW failed with error %lu", GetLastError());
     }
     free(buffer);
     return list;
@@ -170,62 +203,64 @@ FFI_PLUGIN_EXPORT PrinterInfo* get_default_printer(void) {
     LOG("get_default_printer called");
 #ifdef _WIN32
     DWORD len = 0;
-    GetDefaultPrinterA(NULL, &len);
+    GetDefaultPrinterW(NULL, &len);
     if (len == 0) {
         return NULL; // No default printer or an error occurred
     }
 
-    char* default_printer_name = (char*)malloc(len);
-    if (!default_printer_name) return NULL;
+    wchar_t* default_printer_name_w = (wchar_t*)malloc(len * sizeof(wchar_t));
+    if (!default_printer_name_w) return NULL;
 
-    if (!GetDefaultPrinterA(default_printer_name, &len)) {
-        LOG("GetDefaultPrinterA failed with error %lu", GetLastError());
-        free(default_printer_name);
+    if (!GetDefaultPrinterW(default_printer_name_w, &len)) {
+        LOG("GetDefaultPrinterW failed with error %lu", GetLastError());
+        free(default_printer_name_w);
         return NULL;
     }
 
     HANDLE hPrinter;
-    if (!OpenPrinterA(default_printer_name, &hPrinter, NULL)) {
-        LOG("OpenPrinterA for default printer failed with error %lu", GetLastError());
-        free(default_printer_name);
+    if (!OpenPrinterW(default_printer_name_w, &hPrinter, NULL)) {
+        LOG("OpenPrinterW for default printer failed with error %lu", GetLastError());
+        free(default_printer_name_w);
         return NULL;
     }
-    free(default_printer_name);
 
     DWORD needed = 0;
-    GetPrinterA(hPrinter, 2, NULL, 0, &needed);
+    GetPrinterW(hPrinter, 2, NULL, 0, &needed);
     if (needed == 0) {
-        LOG("GetPrinterA (to get size) failed with error %lu", GetLastError());
+        LOG("GetPrinterW (to get size) failed with error %lu", GetLastError());
         ClosePrinter(hPrinter);
+        free(default_printer_name_w);
         return NULL;
     }
 
-    PRINTER_INFO_2A* pinfo2 = (PRINTER_INFO_2A*)malloc(needed);
+    PRINTER_INFO_2W* pinfo2 = (PRINTER_INFO_2W*)malloc(needed);
     if (!pinfo2) {
         ClosePrinter(hPrinter);
+        free(default_printer_name_w);
         return NULL;
     }
 
-    if (!GetPrinterA(hPrinter, 2, (LPBYTE)pinfo2, needed, &needed)) {
-        LOG("GetPrinterA (to get data) failed with error %lu", GetLastError());
+    if (!GetPrinterW(hPrinter, 2, (LPBYTE)pinfo2, needed, &needed)) {
+        LOG("GetPrinterW (to get data) failed with error %lu", GetLastError());
         free(pinfo2);
         ClosePrinter(hPrinter);
+        free(default_printer_name_w);
         return NULL;
     }
     ClosePrinter(hPrinter);
+    free(default_printer_name_w); // We have the info in pinfo2 now
 
     PrinterInfo* printer_info = (PrinterInfo*)malloc(sizeof(PrinterInfo));
     if (!printer_info) {
         free(pinfo2);
         return NULL;
     }
-
-    printer_info->name = strdup(pinfo2->pPrinterName ? pinfo2->pPrinterName : "");
+    printer_info->name = to_utf8(pinfo2->pPrinterName);
     printer_info->state = pinfo2->Status;
-    printer_info->url = strdup(pinfo2->pPrinterName ? pinfo2->pPrinterName : "");
-    printer_info->model = strdup(pinfo2->pDriverName ? pinfo2->pDriverName : "");
-    printer_info->location = strdup(pinfo2->pLocation ? pinfo2->pLocation : "");
-    printer_info->comment = strdup(pinfo2->pComment ? pinfo2->pComment : "");
+    printer_info->url = to_utf8(pinfo2->pPrinterName);
+    printer_info->model = to_utf8(pinfo2->pDriverName);
+    printer_info->location = to_utf8(pinfo2->pLocation);
+    printer_info->comment = to_utf8(pinfo2->pComment);
     printer_info->is_default = (pinfo2->Attributes & PRINTER_ATTRIBUTE_DEFAULT) != 0;
     printer_info->is_available = (pinfo2->Status & PRINTER_STATUS_OFFLINE) == 0;
 
@@ -287,28 +322,35 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8
     LOG("raw_data_to_printer called for printer: '%s', doc: '%s', length: %d", printer_name, doc_name, length);
 #ifdef _WIN32
     HANDLE hPrinter;
-    DOC_INFO_1A docInfo;
+    DOC_INFO_1W docInfo;
     DWORD written;
+    wchar_t* printer_name_w = to_utf16(printer_name);
+    if (!printer_name_w) return false;
 
-    if (!OpenPrinterA((LPSTR)printer_name, &hPrinter, NULL)) {
-        LOG("OpenPrinterA failed with error %lu", GetLastError());
+    if (!OpenPrinterW(printer_name_w, &hPrinter, NULL)) {
+        LOG("OpenPrinterW failed with error %lu", GetLastError());
+        free(printer_name_w);
         return false;
     }
+    free(printer_name_w);
 
-    docInfo.pDocName = (LPSTR)doc_name;
+    wchar_t* doc_name_w = to_utf16(doc_name);
+    docInfo.pDocName = doc_name_w;
     docInfo.pOutputFile = NULL;
-    docInfo.pDatatype = "RAW";
+    docInfo.pDatatype = L"RAW";
 
-    if (StartDocPrinterA(hPrinter, 1, (LPBYTE)&docInfo) == 0) {
+    if (StartDocPrinterW(hPrinter, 1, (LPBYTE)&docInfo) == 0) {
         ClosePrinter(hPrinter);
-        LOG("StartDocPrinterA failed with error %lu", GetLastError());
+        LOG("StartDocPrinterW failed with error %lu", GetLastError());
+        if (doc_name_w) free(doc_name_w);
         return false;
     }
+    if (doc_name_w) free(doc_name_w);
 
     if (!StartPagePrinter(hPrinter)) {
         EndDocPrinter(hPrinter);
-        LOG("StartPagePrinter failed with error %lu", GetLastError());
         ClosePrinter(hPrinter);
+        LOG("StartPagePrinter failed with error %lu", GetLastError());
         return false;
     }
 
@@ -393,18 +435,27 @@ FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_
         return false;
     }
 
-    HDC hdc = CreateDCA("WINSPOOL", printer_name, NULL, NULL);
+    wchar_t* printer_name_w = to_utf16(printer_name);
+    if (!printer_name_w) {
+        LOG("Failed to convert printer name to UTF-16");
+        FPDF_CloseDocument(doc);
+        return false;
+    }
+    HDC hdc = CreateDCW(L"WINSPOOL", printer_name_w, NULL, NULL);
+    free(printer_name_w);
     if (!hdc) {
         LOG("CreateDCA failed for printer '%s' with error %lu", printer_name, GetLastError());
         FPDF_CloseDocument(doc);
         return false;
     }
 
-    DOCINFOA di = { sizeof(DOCINFOA), doc_name, NULL, NULL, 0 };
-    if (StartDocA(hdc, &di) <= 0) {
-        LOG("StartDocA failed with error %lu", GetLastError());
+    wchar_t* doc_name_w = to_utf16(doc_name);
+    DOCINFOW di = { sizeof(DOCINFOW), doc_name_w, NULL, 0 };
+    if (StartDocW(hdc, &di) <= 0) {
+        LOG("StartDocW failed with error %lu", GetLastError());
         DeleteDC(hdc);
         FPDF_CloseDocument(doc);
+        if (doc_name_w) free(doc_name_w);
         return false;
     }
 
@@ -558,13 +609,19 @@ FFI_PLUGIN_EXPORT JobList* get_print_jobs(const char* printer_name) {
     HANDLE hPrinter;
     DWORD needed, returned;
 
-    if (!OpenPrinterA((LPSTR)printer_name, &hPrinter, NULL)) {
+    wchar_t* printer_name_w = to_utf16(printer_name);
+    if (!printer_name_w) {
         free(list);
-        LOG("OpenPrinterA failed with error %lu", GetLastError());
+        return NULL;
+    }
+    if (!OpenPrinterW(printer_name_w, &hPrinter, NULL)) {
+        free(list);
+        LOG("OpenPrinterW failed with error %lu", GetLastError());
+        free(printer_name_w);
         return NULL;
     }
 
-    EnumJobsA(hPrinter, 0, 0xFFFFFFFF, 2, NULL, 0, &needed, &returned);
+    EnumJobsW(hPrinter, 0, 0xFFFFFFFF, 2, NULL, 0, &needed, &returned);
     if (needed == 0) {
         ClosePrinter(hPrinter);
         return list;
@@ -572,30 +629,33 @@ FFI_PLUGIN_EXPORT JobList* get_print_jobs(const char* printer_name) {
     BYTE* buffer = (BYTE*)malloc(needed);
     if (!buffer) {
         ClosePrinter(hPrinter);
+        free(printer_name_w);
         free(list);
         return NULL;
     }
 
-    if (EnumJobsA(hPrinter, 0, 0xFFFFFFFF, 2, buffer, needed, &needed, &returned)) {
+    if (EnumJobsW(hPrinter, 0, 0xFFFFFFFF, 2, buffer, needed, &needed, &returned)) {
         LOG("Found %lu jobs on Windows", returned);
         list->count = returned;
         list->jobs = (JobInfo*)malloc(returned * sizeof(JobInfo));
         if (!list->jobs) {
             free(buffer);
             ClosePrinter(hPrinter);
+            free(printer_name_w);
             free(list);
             return NULL;
         }
-        JOB_INFO_2A* jobs = (JOB_INFO_2A*)buffer;
+        JOB_INFO_2W* jobs = (JOB_INFO_2W*)buffer;
         for (DWORD i = 0; i < returned; i++) {
             list->jobs[i].id = jobs[i].JobId;
-            list->jobs[i].title = strdup(jobs[i].pDocument ? jobs[i].pDocument : "Unknown");
+            list->jobs[i].title = to_utf8(jobs[i].pDocument);
             list->jobs[i].status = jobs[i].Status;
         }
     } else {
-        LOG("EnumJobsA failed with error %lu", GetLastError());
+        LOG("EnumJobsW failed with error %lu", GetLastError());
     }
     free(buffer);
+    free(printer_name_w);
     ClosePrinter(hPrinter);
     return list;
 #else // macOS / Linux
@@ -641,9 +701,16 @@ FFI_PLUGIN_EXPORT bool pause_print_job(const char* printer_name, uint32_t job_id
     LOG("pause_print_job called for printer: '%s', job_id: %u", printer_name, job_id);
 #ifdef _WIN32
     HANDLE hPrinter;
-    if (!OpenPrinterA((LPSTR)printer_name, &hPrinter, NULL)) return false;
-    bool result = SetJobA(hPrinter, job_id, 0, NULL, JOB_CONTROL_PAUSE);
-    if (!result) LOG("SetJobA(PAUSE) failed with error %lu", GetLastError());
+    wchar_t* printer_name_w = to_utf16(printer_name);
+    if (!printer_name_w) return false;
+    if (!OpenPrinterW(printer_name_w, &hPrinter, NULL)) {
+        free(printer_name_w);
+        return false;
+    }
+    free(printer_name_w);
+
+    bool result = SetJobW(hPrinter, job_id, 0, NULL, JOB_CONTROL_PAUSE);
+    if (!result) LOG("SetJobW(PAUSE) failed with error %lu", GetLastError());
     ClosePrinter(hPrinter);
     return result;
 #else
@@ -657,9 +724,16 @@ FFI_PLUGIN_EXPORT bool resume_print_job(const char* printer_name, uint32_t job_i
     LOG("resume_print_job called for printer: '%s', job_id: %u", printer_name, job_id);
 #ifdef _WIN32
     HANDLE hPrinter;
-    if (!OpenPrinterA((LPSTR)printer_name, &hPrinter, NULL)) return false;
-    bool result = SetJobA(hPrinter, job_id, 0, NULL, JOB_CONTROL_RESUME);
-    if (!result) LOG("SetJobA(RESUME) failed with error %lu", GetLastError());
+    wchar_t* printer_name_w = to_utf16(printer_name);
+    if (!printer_name_w) return false;
+    if (!OpenPrinterW(printer_name_w, &hPrinter, NULL)) {
+        free(printer_name_w);
+        return false;
+    }
+    free(printer_name_w);
+
+    bool result = SetJobW(hPrinter, job_id, 0, NULL, JOB_CONTROL_RESUME);
+    if (!result) LOG("SetJobW(RESUME) failed with error %lu", GetLastError());
     ClosePrinter(hPrinter);
     return result;
 #else
@@ -673,9 +747,16 @@ FFI_PLUGIN_EXPORT bool cancel_print_job(const char* printer_name, uint32_t job_i
     LOG("cancel_print_job called for printer: '%s', job_id: %u", printer_name, job_id);
 #ifdef _WIN32
     HANDLE hPrinter;
-    if (!OpenPrinterA((LPSTR)printer_name, &hPrinter, NULL)) return false;
-    bool result = SetJobA(hPrinter, job_id, 0, NULL, JOB_CONTROL_CANCEL);
-    if (!result) LOG("SetJobA(CANCEL) failed with error %lu", GetLastError());
+    wchar_t* printer_name_w = to_utf16(printer_name);
+    if (!printer_name_w) return false;
+    if (!OpenPrinterW(printer_name_w, &hPrinter, NULL)) {
+        free(printer_name_w);
+        return false;
+    }
+    free(printer_name_w);
+
+    bool result = SetJobW(hPrinter, job_id, 0, NULL, JOB_CONTROL_CANCEL);
+    if (!result) LOG("SetJobW(CANCEL) failed with error %lu", GetLastError());
     ClosePrinter(hPrinter);
     return result;
 #else
@@ -784,17 +865,9 @@ FFI_PLUGIN_EXPORT WindowsPrinterCapabilities* get_windows_printer_capabilities(c
     WindowsPrinterCapabilities* caps = (WindowsPrinterCapabilities*)calloc(1, sizeof(WindowsPrinterCapabilities));
     return caps;
 #else
-    // Convert printer_name from UTF-8 to UTF-16 for Windows W-functions
-    int printer_name_w_len = MultiByteToWideChar(CP_UTF8, 0, printer_name, -1, NULL, 0);
-    if (printer_name_w_len == 0) {
-        LOG("MultiByteToWideChar (len) for printer_name failed with error %lu", GetLastError());
-        return NULL;
-    }
-    wchar_t* printer_name_w = (wchar_t*)malloc(printer_name_w_len * sizeof(wchar_t));
-    if (!printer_name_w) return NULL;
-    if (MultiByteToWideChar(CP_UTF8, 0, printer_name, -1, printer_name_w, printer_name_w_len) == 0) {
-        LOG("MultiByteToWideChar for printer_name failed with error %lu", GetLastError());
-        free(printer_name_w);
+    wchar_t* printer_name_w = to_utf16(printer_name);
+    if (!printer_name_w) {
+        LOG("Failed to convert printer name to UTF-16");
         return NULL;
     }
 
@@ -806,7 +879,7 @@ FFI_PLUGIN_EXPORT WindowsPrinterCapabilities* get_windows_printer_capabilities(c
     }
 
     // Get PRINTER_INFO_2 to find the port name required by DeviceCapabilities
-    DWORD needed;
+    DWORD needed = 0;
     GetPrinterW(hPrinter, 2, NULL, 0, &needed);
     if (needed == 0) { // Check if GetPrinterW failed to get needed size
         LOG("GetPrinterW (to get size) failed with error %lu", GetLastError());
@@ -815,7 +888,13 @@ FFI_PLUGIN_EXPORT WindowsPrinterCapabilities* get_windows_printer_capabilities(c
         return NULL;
     }
     PRINTER_INFO_2W* pinfo2 = (PRINTER_INFO_2W*)malloc(needed);
-    if (!pinfo2 || !GetPrinterW(hPrinter, 2, (LPBYTE)pinfo2, needed, &needed)) {
+    if (!pinfo2) {
+        LOG("Failed to allocate memory for PRINTER_INFO_2W");
+        ClosePrinter(hPrinter);
+        free(printer_name_w);
+        return NULL;
+    }
+    if (!GetPrinterW(hPrinter, 2, (LPBYTE)pinfo2, needed, &needed)) {
         LOG("GetPrinterW failed with error %lu", GetLastError());
         if (pinfo2) free(pinfo2);
         ClosePrinter(hPrinter);
@@ -824,6 +903,13 @@ FFI_PLUGIN_EXPORT WindowsPrinterCapabilities* get_windows_printer_capabilities(c
     }
 
     const wchar_t* port_w = pinfo2->pPortName;
+    if (!port_w) {
+        LOG("pPortName is NULL for printer '%s'. Cannot get capabilities.", printer_name);
+        free(pinfo2);
+        ClosePrinter(hPrinter);
+        free(printer_name_w);
+        return (WindowsPrinterCapabilities*)calloc(1, sizeof(WindowsPrinterCapabilities)); // Return empty capabilities struct
+    }
 
     WindowsPrinterCapabilities* caps = (WindowsPrinterCapabilities*)calloc(1, sizeof(WindowsPrinterCapabilities));
     if (!caps) {
@@ -841,28 +927,26 @@ FFI_PLUGIN_EXPORT WindowsPrinterCapabilities* get_windows_printer_capabilities(c
         POINT* paper_sizes_points = (POINT*)malloc(num_papers * sizeof(POINT));
 
         if (papers && paper_names_w && paper_sizes_points) {
-            DeviceCapabilitiesW(printer_name_w, port_w, DC_PAPERS, (LPCWSTR)papers, NULL);
-            DeviceCapabilitiesW(printer_name_w, port_w, DC_PAPERNAMES, (LPCWSTR)paper_names_w, NULL);
-            DeviceCapabilitiesW(printer_name_w, port_w, DC_PAPERSIZE, (LPCWSTR)paper_sizes_points, NULL);
+            if (DeviceCapabilitiesW(printer_name_w, port_w, DC_PAPERS, (LPCWSTR)papers, NULL) != -1 &&
+                DeviceCapabilitiesW(printer_name_w, port_w, DC_PAPERNAMES, (LPCWSTR)paper_names_w, NULL) != -1 &&
+                DeviceCapabilitiesW(printer_name_w, port_w, DC_PAPERSIZE, (LPCWSTR)paper_sizes_points, NULL) != -1) {
 
-            caps->paper_sizes.count = num_papers;
-            caps->paper_sizes.papers = (PaperSize*)malloc(num_papers * sizeof(PaperSize));
-            if (caps->paper_sizes.papers) {
-                for (long i = 0; i < num_papers; i++) {
-                    // Convert paper name from UTF-16 to UTF-8
-                    int name_len = WideCharToMultiByte(CP_UTF8, 0, paper_names_w[i], -1, NULL, 0, NULL, NULL);
-                    char* name_utf8 = (char*)malloc(name_len);
-                    if (name_utf8) {
-                        WideCharToMultiByte(CP_UTF8, 0, paper_names_w[i], -1, name_utf8, name_len, NULL, NULL);
-                        caps->paper_sizes.papers[i].name = name_utf8;
-                    } else {
-                        caps->paper_sizes.papers[i].name = strdup(""); // Fallback
+                caps->paper_sizes.count = num_papers;
+                caps->paper_sizes.papers = (PaperSize*)malloc(num_papers * sizeof(PaperSize));
+                if (caps->paper_sizes.papers) {
+                    for (long i = 0; i < num_papers; i++) {
+                        caps->paper_sizes.papers[i].name = to_utf8(paper_names_w[i]);
+                        // Dimensions are in 0.1mm units. Convert to mm.
+                        caps->paper_sizes.papers[i].width_mm = (float)paper_sizes_points[i].x / 10.0f;
+                        caps->paper_sizes.papers[i].height_mm = (float)paper_sizes_points[i].y / 10.0f;
                     }
-                    // Dimensions are in 0.1mm units. Convert to mm.
-                    caps->paper_sizes.papers[i].width_mm = (float)paper_sizes_points[i].x / 10.0f;
-                    caps->paper_sizes.papers[i].height_mm = (float)paper_sizes_points[i].y / 10.0f;
+                } else {
+                    caps->paper_sizes.count = 0;
+                    LOG("Failed to allocate memory for paper size details.");
                 }
             }
+        } else {
+            LOG("Failed to allocate memory for paper capabilities buffers.");
         }
         if (papers) free(papers);
         if (paper_names_w) free(paper_names_w);
@@ -874,16 +958,22 @@ FFI_PLUGIN_EXPORT WindowsPrinterCapabilities* get_windows_printer_capabilities(c
     if (num_res > 0) {
         LONG* resolutions = (LONG*)malloc(num_res * 2 * sizeof(LONG));
         if (resolutions) {
-            DeviceCapabilitiesW(printer_name_w, port_w, DC_ENUMRESOLUTIONS, (LPCWSTR)resolutions, NULL);
-            caps->resolutions.count = num_res;
-            caps->resolutions.resolutions = (Resolution*)malloc(num_res * sizeof(Resolution));
-            if (caps->resolutions.resolutions) {
-                for (long i = 0; i < num_res; i++) {
-                    caps->resolutions.resolutions[i].x_dpi = resolutions[i * 2];
-                    caps->resolutions.resolutions[i].y_dpi = resolutions[i * 2 + 1];
+            if (DeviceCapabilitiesW(printer_name_w, port_w, DC_ENUMRESOLUTIONS, (LPCWSTR)resolutions, NULL) != -1) {
+                caps->resolutions.count = num_res;
+                caps->resolutions.resolutions = (Resolution*)malloc(num_res * sizeof(Resolution));
+                if (caps->resolutions.resolutions) {
+                    for (long i = 0; i < num_res; i++) {
+                        caps->resolutions.resolutions[i].x_dpi = resolutions[i * 2];
+                        caps->resolutions.resolutions[i].y_dpi = resolutions[i * 2 + 1];
+                    }
+                } else {
+                    caps->resolutions.count = 0;
+                    LOG("Failed to allocate memory for resolution details.");
                 }
             }
             free(resolutions);
+        } else {
+            LOG("Failed to allocate memory for resolutions buffer.");
         }
     }
 
@@ -912,25 +1002,33 @@ FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char* printer_name, const ui
     LOG("submit_raw_data_job called for printer: '%s', doc: '%s', length: %d", printer_name, doc_name, length);
 #ifdef _WIN32
     HANDLE hPrinter;
-    DOC_INFO_1A docInfo;
+    DOC_INFO_1W docInfo;
     DWORD written;
     DWORD job_id = 0;
 
-    if (!OpenPrinterA((LPSTR)printer_name, &hPrinter, NULL)) {
-        LOG("OpenPrinterA failed with error %lu", GetLastError());
+    wchar_t* printer_name_w = to_utf16(printer_name);
+    if (!printer_name_w) return 0;
+
+    if (!OpenPrinterW(printer_name_w, &hPrinter, NULL)) {
+        LOG("OpenPrinterW failed with error %lu", GetLastError());
+        free(printer_name_w);
         return 0;
     }
+    free(printer_name_w);
 
-    docInfo.pDocName = (LPSTR)doc_name;
+    wchar_t* doc_name_w = to_utf16(doc_name);
+    docInfo.pDocName = doc_name_w;
     docInfo.pOutputFile = NULL;
-    docInfo.pDatatype = "RAW";
+    docInfo.pDatatype = L"RAW";
 
-    job_id = StartDocPrinterA(hPrinter, 1, (LPBYTE)&docInfo);
+    job_id = StartDocPrinterW(hPrinter, 1, (LPBYTE)&docInfo);
     if (job_id == 0) {
         ClosePrinter(hPrinter);
-        LOG("StartDocPrinterA failed with error %lu", GetLastError());
+        LOG("StartDocPrinterW failed with error %lu", GetLastError());
+        if (doc_name_w) free(doc_name_w);
         return 0;
     }
+    if (doc_name_w) free(doc_name_w);
 
     if (!StartPagePrinter(hPrinter)) {
         EndDocPrinter(hPrinter);
@@ -1017,21 +1115,31 @@ FFI_PLUGIN_EXPORT int32_t submit_pdf_job(const char* printer_name, const char* p
         return 0;
     }
 
-    HDC hdc = CreateDCA("WINSPOOL", printer_name, NULL, NULL);
+    wchar_t* printer_name_w = to_utf16(printer_name);
+    if (!printer_name_w) {
+        LOG("Failed to convert printer name to UTF-16");
+        FPDF_CloseDocument(doc);
+        return 0;
+    }
+    HDC hdc = CreateDCW(L"WINSPOOL", printer_name_w, NULL, NULL);
+    free(printer_name_w);
     if (!hdc) {
         LOG("CreateDCA failed for printer '%s' with error %lu", printer_name, GetLastError());
         FPDF_CloseDocument(doc);
         return 0;
     }
 
-    DOCINFOA di = { sizeof(DOCINFOA), doc_name, NULL, NULL, 0 };
-    int job_id = StartDocA(hdc, &di);
+    wchar_t* doc_name_w = to_utf16(doc_name);
+    DOCINFOW di = { sizeof(DOCINFOW), doc_name_w, NULL, 0 };
+    int job_id = StartDocW(hdc, &di);
     if (job_id <= 0) {
-        LOG("StartDocA failed with error %lu", GetLastError());
+        LOG("StartDocW failed with error %lu", GetLastError());
         DeleteDC(hdc);
         FPDF_CloseDocument(doc);
+        if (doc_name_w) free(doc_name_w);
         return 0;
     }
+    if (doc_name_w) free(doc_name_w);
 
     int page_count = FPDF_GetPageCount(doc);
     bool success = true;

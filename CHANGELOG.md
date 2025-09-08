@@ -2,11 +2,16 @@
 
 ## 0.0.3
 
-* **FEAT**: Added full support for Linux via CUPS.
-* **DOCS**: Updated README with Linux setup instructions and platform support status.
-* * **FEAT**: Added job status tracking streams for PDF and raw data printing.
-* **FEAT**: Added `getWindowsPrinterCapabilities` to fetch supported paper sizes and resolutions on Windows.
-* **DOCS**: Updated README to reflect new features.
+* **FEAT**: Added full support for Linux via CUPS. 🚀
+* **FEAT**: Added job status tracking streams for PDF and raw data printing. 📊
+* **FEAT**: Added `getWindowsPrinterCapabilities` to fetch supported paper sizes and resolutions on Windows. 🖨️
+* ✨ **FEAT**: Improved error handling and Windows printer capabilities:
+    *   Enhanced isolate communication with robust error responses.
+    *   Switched to Unicode (W-series) Windows APIs for full international character support in printer and document names.
+    *   Improved memory management and error handling in `get_windows_printer_capabilities`.
+    *   Added `NULL` checks for pointers returned by Windows API functions to prevent crashes.
+    *   Improved logging for easier debugging.
+* **DOCS**: Updated README with Linux setup instructions and new features. 📝
 
 ## 0.0.2
 
