@@ -12,3 +12,6 @@ linter:
 formatter:
   trailing_commas: preserve
   page_width: 260
+analyzer:
+  errors:
+    non_constant_identifier_names: ignore

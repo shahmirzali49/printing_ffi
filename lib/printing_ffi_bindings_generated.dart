@@ -206,6 +206,69 @@ class PrintingFfiBindings {
 
   late final _free_cups_option_listPtr = _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<CupsOptionList>)>>('free_cups_option_list');
   late final _free_cups_option_list = _free_cups_option_listPtr.asFunction<void Function(ffi.Pointer<CupsOptionList>)>();
+
+  ffi.Pointer<WindowsPrinterCapabilities> get_windows_printer_capabilities(
+    ffi.Pointer<ffi.Char> printer_name,
+  ) {
+    return _get_windows_printer_capabilities(
+      printer_name,
+    );
+  }
+
+  late final _get_windows_printer_capabilitiesPtr = _lookup<ffi.NativeFunction<ffi.Pointer<WindowsPrinterCapabilities> Function(ffi.Pointer<ffi.Char>)>>('get_windows_printer_capabilities');
+  late final _get_windows_printer_capabilities = _get_windows_printer_capabilitiesPtr.asFunction<ffi.Pointer<WindowsPrinterCapabilities> Function(ffi.Pointer<ffi.Char>)>();
+
+  void free_windows_printer_capabilities(
+    ffi.Pointer<WindowsPrinterCapabilities> capabilities,
+  ) {
+    return _free_windows_printer_capabilities(
+      capabilities,
+    );
+  }
+
+  late final _free_windows_printer_capabilitiesPtr = _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<WindowsPrinterCapabilities>)>>('free_windows_printer_capabilities');
+  late final _free_windows_printer_capabilities = _free_windows_printer_capabilitiesPtr.asFunction<void Function(ffi.Pointer<WindowsPrinterCapabilities>)>();
+
+  /// Functions that submit a job and return a job ID for status tracking.
+  int submit_raw_data_job(
+    ffi.Pointer<ffi.Char> printer_name,
+    ffi.Pointer<ffi.Uint8> data,
+    int length,
+    ffi.Pointer<ffi.Char> doc_name,
+  ) {
+    return _submit_raw_data_job(
+      printer_name,
+      data,
+      length,
+      doc_name,
+    );
+  }
+
+  late final _submit_raw_data_jobPtr = _lookup<ffi.NativeFunction<ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Uint8>, ffi.Int, ffi.Pointer<ffi.Char>)>>('submit_raw_data_job');
+  late final _submit_raw_data_job = _submit_raw_data_jobPtr.asFunction<int Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Uint8>, int, ffi.Pointer<ffi.Char>)>();
+
+  int submit_pdf_job(
+    ffi.Pointer<ffi.Char> printer_name,
+    ffi.Pointer<ffi.Char> pdf_file_path,
+    ffi.Pointer<ffi.Char> doc_name,
+    int scaling_mode,
+    int num_options,
+    ffi.Pointer<ffi.Pointer<ffi.Char>> option_keys,
+    ffi.Pointer<ffi.Pointer<ffi.Char>> option_values,
+  ) {
+    return _submit_pdf_job(
+      printer_name,
+      pdf_file_path,
+      doc_name,
+      scaling_mode,
+      num_options,
+      option_keys,
+      option_values,
+    );
+  }
+
+  late final _submit_pdf_jobPtr = _lookup<ffi.NativeFunction<ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, ffi.Int, ffi.Int, ffi.Pointer<ffi.Pointer<ffi.Char>>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>>('submit_pdf_job');
+  late final _submit_pdf_job = _submit_pdf_jobPtr.asFunction<int Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, int, int, ffi.Pointer<ffi.Pointer<ffi.Char>>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
 }
 
 /// Struct for returning printer information
@@ -285,4 +348,43 @@ final class CupsOptionList extends ffi.Struct {
   external int count;
 
   external ffi.Pointer<CupsOption> options;
+}
+
+/// Structs for Windows printer capabilities
+final class PaperSize extends ffi.Struct {
+  external ffi.Pointer<ffi.Char> name;
+
+  @ffi.Float()
+  external double width_mm;
+
+  @ffi.Float()
+  external double height_mm;
+}
+
+final class PaperSizeList extends ffi.Struct {
+  @ffi.Int()
+  external int count;
+
+  external ffi.Pointer<PaperSize> papers;
+}
+
+final class Resolution extends ffi.Struct {
+  @ffi.Long()
+  external int x_dpi;
+
+  @ffi.Long()
+  external int y_dpi;
+}
+
+final class ResolutionList extends ffi.Struct {
+  @ffi.Int()
+  external int count;
+
+  external ffi.Pointer<Resolution> resolutions;
+}
+
+final class WindowsPrinterCapabilities extends ffi.Struct {
+  external PaperSizeList paper_sizes;
+
+  external ResolutionList resolutions;
 }

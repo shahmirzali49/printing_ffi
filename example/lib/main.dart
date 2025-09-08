@@ -306,14 +306,17 @@ class _PrintingScreenState extends State<PrintingScreen> {
   Future<void> _showWindowsCapabilities() async {
     if (_selectedPrinter == null || !Platform.isWindows) return;
 
-    final capabilities =
-        await getWindowsPrinterCapabilities(_selectedPrinter!.name);
+    final capabilities = await getWindowsPrinterCapabilities(
+      _selectedPrinter!.name,
+    );
 
     if (!mounted) return;
 
     if (capabilities == null) {
-      _showSnackbar('Could not retrieve capabilities for this printer.',
-          isError: true);
+      _showSnackbar(
+        'Could not retrieve capabilities for this printer.',
+        isError: true,
+      );
       return;
     }
 
@@ -326,16 +329,20 @@ class _PrintingScreenState extends State<PrintingScreen> {
           height: 500,
           child: ListView(
             children: [
-              Text('Supported Paper Sizes',
-                  style: Theme.of(context).textTheme.titleMedium),
+              Text(
+                'Supported Paper Sizes',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
               for (final paper in capabilities.paperSizes)
                 ListTile(
                   title: Text(paper.name),
                   subtitle: Text(paper.toString()),
                 ),
               const Divider(),
-              Text('Supported Resolutions',
-                  style: Theme.of(context).textTheme.titleMedium),
+              Text(
+                'Supported Resolutions',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
               for (final res in capabilities.resolutions)
                 ListTile(title: Text(res.toString())),
             ],
@@ -490,9 +497,10 @@ class _PrintingScreenState extends State<PrintingScreen> {
                   if (Platform.isWindows) ...[
                     const SizedBox(height: 12),
                     ElevatedButton.icon(
-                        icon: const Icon(Icons.inventory_2_outlined),
-                        label: const Text('Show Printer Capabilities'),
-                        onPressed: _showWindowsCapabilities),
+                      icon: const Icon(Icons.inventory_2_outlined),
+                      label: const Text('Show Printer Capabilities'),
+                      onPressed: _showWindowsCapabilities,
+                    ),
                   ],
                 ],
               ),
@@ -734,6 +742,7 @@ class _PrintStatusDialogState extends State<_PrintStatusDialog> {
           ),
         );
       } else {
+        Navigator.of(context).pop();
         // If failed, stay on the dialog and show an error.
         setState(() => _isCancelling = false);
         ScaffoldMessenger.of(context).showSnackBar(
