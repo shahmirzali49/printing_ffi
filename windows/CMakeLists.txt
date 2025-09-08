@@ -6,24 +6,19 @@ cmake_minimum_required(VERSION 3.14)
 
 # --- Pdfium Dependency ---
 # Use FetchContent to download and extract Pdfium binaries. This is a robust
-# way to manage the dependency without requiring manual setup.
-include(FetchContent)
+# way to manage the dependency without requiring manual setup. It includes
+# workarounds for potential IDE issues.
+include(DownloadProject)
 
 # You can override these in the example/windows/CMakeLists.txt for testing
 set(PDFIUM_VERSION "7390" CACHE STRING "Version of pdfium used")
 set(PDFIUM_ARCH "x64" CACHE STRING "Architecture of pdfium used")
 
-FetchContent_Declare(
-  pdfium
+download_project(
+  PROJ pdfium
   URL "https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F${PDFIUM_VERSION}/pdfium-win-${PDFIUM_ARCH}.tgz"
-  URL_HASH SHA256=7ab3f91a3341b7cfdb3c3c039428e19ae26a095006870df25da4be40635e9198
+  QUIET
 )
-
-FetchContent_GetProperties(pdfium)
-if(NOT pdfium_POPULATED)
-  FetchContent_Populate(pdfium)
-  message(STATUS "pdfium downloaded to ${pdfium_SOURCE_DIR}")
-endif()
 
 # Set variables for the src/CMakeLists.txt to use.
 set(PDFIUM_INCLUDE_DIR "${pdfium_SOURCE_DIR}/include" CACHE PATH "Pdfium include directory")
