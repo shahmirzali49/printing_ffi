@@ -1,5 +1,3 @@
-
-
 ## 0.0.3
 
 * **FEAT**: Added full support for Linux via CUPS. 🚀
