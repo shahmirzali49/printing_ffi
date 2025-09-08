@@ -7,8 +7,10 @@ A Flutter plugin for direct printer communication using native FFI (Foreign Func
 - **List Printers** 📋: Retrieve all available printers, including offline ones, with their current status (e.g., `Idle`, `Printing`, `Offline`).
 - **Raw Data Printing** 📦: Send raw print data (e.g., ZPL, ESC/POS) directly to printers, bypassing document rendering.
 - **Print Job Management** ⚙️: List, pause, resume, and cancel print jobs for a selected printer.
+- **Track Print Job Status** 📊: Submit a print job and receive a stream of status updates, from submission to completion.
 - **PDF Printing** 📄: Print PDF files directly to a specified printer. On Windows, this uses a bundled version of the `pdfium` library for robust, self-contained rendering.
-- **Cross-Platform** 🌐: Supports macOS (CUPS) and Windows (winspool), with Linux support planned.
+- **Get Printer Capabilities (Windows)** 🖨️: Fetch supported paper sizes and resolutions for a given printer on Windows.
+- **Cross-Platform** 🌐: Supports macOS, Windows, and Linux via native APIs.
 - **Offline Printer Support** 🔌: Lists offline printers on macOS using `cupsGetDests`, addressing a key limitation of other plugins.
 - **Native Performance** ⚡: Uses FFI to interface directly with native printing APIs, reducing overhead and improving speed.
 - **UI Feedback** 🔔: Includes an example app with a user-friendly interface, empty states, and snackbar notifications for errors and status updates.
@@ -19,7 +21,7 @@ A Flutter plugin for direct printer communication using native FFI (Foreign Func
 | :--- | :---: | :--- |
 | 🍎 macOS | ✅ Supported | Requires CUPS installation. |
 | 🪟 Windows | ✅ Supported | Uses native `winspool` API. |
-| 🐧 Linux | ⏳ Planned | Support is planned for a future release. |
+| 🐧 Linux | ✅ Supported | Requires CUPS development libraries. |
 | 🤖 Android | ❌ Not Supported | - |
 | 📱 iOS | ❌ Not Supported | - |
 
@@ -120,6 +122,22 @@ flutter pub get
 
 No additional setup is required, as the plugin uses the native `winspool` API included with Windows. 🎉
 
+### Linux Setup 🐧
+
+1.  **Install CUPS development libraries**:
+    -   On Debian/Ubuntu:
+        ```bash
+        sudo apt-get install libcups2-dev
+        ```
+    -   On Fedora/CentOS/RHEL:
+        ```bash
+        sudo dnf install cups-devel
+        ```
+2.  **Ensure CUPS is running**:
+    ```bash
+    sudo systemctl start cups
+    ```
+
 #### Overriding the Pdfium Version
 
 The plugin automatically downloads a specific version of the `pdfium` library for PDF printing on Windows. If you need to use a different version, you can override the default by setting variables in your application's `windows/CMakeLists.txt` file *before* the `add_subdirectory(flutter)` line:
@@ -134,8 +152,8 @@ add_subdirectory(flutter)
 
 ## Limitations 🚧
 
--   Linux support is planned but not yet implemented.
 -   Requires manual setup for macOS (CUPS installation, Podfile configuration).
+-   Requires manual setup for macOS and Linux to install printing system dependencies.
 -   The Windows implementation automatically downloads and bundles the `pdfium` library for PDF rendering.
 
 ## Troubleshooting 🛠️

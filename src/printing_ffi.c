@@ -108,7 +108,7 @@ FFI_PLUGIN_EXPORT PrinterList* get_printers(void) {
     }
     free(buffer);
     return list;
-#else // macOS
+#else // macOS / Linux
     cups_dest_t* dests = NULL;
     LOG("Calling cupsGetDests to find printers");
     int num_dests = cupsGetDests(&dests);
@@ -117,7 +117,7 @@ FFI_PLUGIN_EXPORT PrinterList* get_printers(void) {
         return list; // Return empty list
     }
 
-    LOG("Found %d printers on macOS/Linux", num_dests);
+    LOG("Found %d printers on CUPS-based system", num_dests);
     list->count = num_dests;
     list->printers = (PrinterInfo*)malloc(num_dests * sizeof(PrinterInfo));
     if (!list->printers) {
@@ -231,13 +231,13 @@ FFI_PLUGIN_EXPORT PrinterInfo* get_default_printer(void) {
 
     free(pinfo2);
     return printer_info;
-#else // macOS
+#else // macOS / Linux
     const char* default_printer_name = cupsGetDefault();
     if (!default_printer_name) {
         LOG("cupsGetDefault returned null, no default printer found.");
         return NULL;
     }
-    LOG("macOS/Linux default printer name: %s", default_printer_name);
+    LOG("CUPS default printer name: %s", default_printer_name);
 
     cups_dest_t* dests = NULL;
     int num_dests = cupsGetDests(&dests);
@@ -321,7 +321,7 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8
         LOG("WritePrinter failed. Result: %d, Bytes written: %lu, Expected: %d", result, written, length);
     }
     return success;
-#else
+#else // macOS / Linux
     // Use getenv("TMPDIR") to get the correct temporary directory,
     // especially important for sandboxed macOS apps where /tmp is not writable.
     const char* tmpdir = getenv("TMPDIR");
@@ -528,7 +528,7 @@ FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_
 
     LOG("print_pdf (Pdfium/GDI) finished with result: %d", success);
     return success;
-#else // macOS / Linux
+#else // macOS / Linux (CUPS)
     cups_option_t* options = NULL;
     int num_cups_options = 0;
 
@@ -598,7 +598,7 @@ FFI_PLUGIN_EXPORT JobList* get_print_jobs(const char* printer_name) {
     free(buffer);
     ClosePrinter(hPrinter);
     return list;
-#else // macOS
+#else // macOS / Linux
     cups_job_t* jobs;
     LOG("Calling cupsGetJobs for active jobs");
     int num_jobs = cupsGetJobs(&jobs, printer_name, 1, CUPS_WHICHJOBS_ACTIVE);
@@ -607,7 +607,7 @@ FFI_PLUGIN_EXPORT JobList* get_print_jobs(const char* printer_name) {
         return list;
     }
 
-    LOG("Found %d active jobs on macOS/Linux", num_jobs);
+    LOG("Found %d active jobs on CUPS-based system", num_jobs);
     list->count = num_jobs;
     list->jobs = (JobInfo*)malloc(num_jobs * sizeof(JobInfo));
     if (!list->jobs) {
@@ -696,7 +696,7 @@ FFI_PLUGIN_EXPORT CupsOptionList* get_supported_cups_options(const char* printer
     // Not supported on Windows
     (void)printer_name;
     return list;
-#else // macOS / Linux
+#else // macOS / Linux (CUPS)
     const char* ppd_filename = cupsGetPPD(printer_name);
     if (!ppd_filename) {
         LOG("cupsGetPPD failed for '%s', error: %s", printer_name, cupsLastErrorString());
@@ -775,4 +775,307 @@ FFI_PLUGIN_EXPORT void free_cups_option_list(CupsOptionList* option_list) {
         free(option_list->options);
     }
     free(option_list);
+}
+
+FFI_PLUGIN_EXPORT WindowsPrinterCapabilities* get_windows_printer_capabilities(const char* printer_name) {
+    LOG("get_windows_printer_capabilities called for printer: '%s'", printer_name);
+#ifndef _WIN32
+    // This function is only for Windows. Return an empty struct.
+    WindowsPrinterCapabilities* caps = (WindowsPrinterCapabilities*)calloc(1, sizeof(WindowsPrinterCapabilities));
+    return caps;
+#else
+    HANDLE hPrinter;
+    if (!OpenPrinterA((LPSTR)printer_name, &hPrinter, NULL)) {
+        LOG("OpenPrinterA failed with error %lu", GetLastError());
+        return NULL;
+    }
+
+    // Get PRINTER_INFO_2 to find the port name required by DeviceCapabilities
+    DWORD needed;
+    GetPrinterA(hPrinter, 2, NULL, 0, &needed);
+    PRINTER_INFO_2A* pinfo2 = (PRINTER_INFO_2A*)malloc(needed);
+    if (!pinfo2 || !GetPrinterA(hPrinter, 2, (LPBYTE)pinfo2, needed, &needed)) {
+        LOG("GetPrinterA failed with error %lu", GetLastError());
+        if (pinfo2) free(pinfo2);
+        ClosePrinter(hPrinter);
+        return NULL;
+    }
+
+    const char* port = pinfo2->pPortName;
+
+    WindowsPrinterCapabilities* caps = (WindowsPrinterCapabilities*)calloc(1, sizeof(WindowsPrinterCapabilities));
+    if (!caps) {
+        free(pinfo2);
+        ClosePrinter(hPrinter);
+        return NULL;
+    }
+
+    // --- Get Paper Sizes ---
+    long num_papers = DeviceCapabilitiesA(printer_name, port, DC_PAPERS, NULL, NULL);
+    if (num_papers > 0) {
+        WORD* papers = (WORD*)malloc(num_papers * sizeof(WORD));
+        char (*paper_names)[64] = (char(*)[64])malloc(num_papers * 64);
+        POINT* paper_sizes_points = (POINT*)malloc(num_papers * sizeof(POINT));
+
+        if (papers && paper_names && paper_sizes_points) {
+            DeviceCapabilitiesA(printer_name, port, DC_PAPERS, (LPCSTR)papers, NULL);
+            DeviceCapabilitiesA(printer_name, port, DC_PAPERNAMES, (LPCSTR)paper_names, NULL);
+            DeviceCapabilitiesA(printer_name, port, DC_PAPERSIZE, (LPCSTR)paper_sizes_points, NULL);
+
+            caps->paper_sizes.count = num_papers;
+            caps->paper_sizes.papers = (PaperSize*)malloc(num_papers * sizeof(PaperSize));
+            if (caps->paper_sizes.papers) {
+                for (long i = 0; i < num_papers; i++) {
+                    caps->paper_sizes.papers[i].name = strdup(paper_names[i]);
+                    // Dimensions are in 0.1mm units. Convert to mm.
+                    caps->paper_sizes.papers[i].width_mm = (float)paper_sizes_points[i].x / 10.0f;
+                    caps->paper_sizes.papers[i].height_mm = (float)paper_sizes_points[i].y / 10.0f;
+                }
+            }
+        }
+        if (papers) free(papers);
+        if (paper_names) free(paper_names);
+        if (paper_sizes_points) free(paper_sizes_points);
+    }
+
+    // --- Get Resolutions ---
+    long num_res = DeviceCapabilitiesA(printer_name, port, DC_ENUMRESOLUTIONS, NULL, NULL);
+    if (num_res > 0) {
+        LONG* resolutions = (LONG*)malloc(num_res * 2 * sizeof(LONG));
+        if (resolutions) {
+            DeviceCapabilitiesA(printer_name, port, DC_ENUMRESOLUTIONS, (LPCSTR)resolutions, NULL);
+            caps->resolutions.count = num_res;
+            caps->resolutions.resolutions = (Resolution*)malloc(num_res * sizeof(Resolution));
+            if (caps->resolutions.resolutions) {
+                for (long i = 0; i < num_res; i++) {
+                    caps->resolutions.resolutions[i].x_dpi = resolutions[i * 2];
+                    caps->resolutions.resolutions[i].y_dpi = resolutions[i * 2 + 1];
+                }
+            }
+            free(resolutions);
+        }
+    }
+
+    free(pinfo2);
+    ClosePrinter(hPrinter);
+    return caps;
+#endif
+}
+
+FFI_PLUGIN_EXPORT void free_windows_printer_capabilities(WindowsPrinterCapabilities* capabilities) {
+    if (!capabilities) return;
+    if (capabilities->paper_sizes.papers) {
+        for (int i = 0; i < capabilities->paper_sizes.count; i++) {
+            free(capabilities->paper_sizes.papers[i].name);
+        }
+        free(capabilities->paper_sizes.papers);
+    }
+    if (capabilities->resolutions.resolutions) {
+        free(capabilities->resolutions.resolutions);
+    }
+    free(capabilities);
+}
+
+FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char* printer_name, const uint8_t* data, int length, const char* doc_name) {
+    LOG("submit_raw_data_job called for printer: '%s', doc: '%s', length: %d", printer_name, doc_name, length);
+#ifdef _WIN32
+    HANDLE hPrinter;
+    DOC_INFO_1A docInfo;
+    DWORD written;
+    DWORD job_id = 0;
+
+    if (!OpenPrinterA((LPSTR)printer_name, &hPrinter, NULL)) {
+        LOG("OpenPrinterA failed with error %lu", GetLastError());
+        return 0;
+    }
+
+    docInfo.pDocName = (LPSTR)doc_name;
+    docInfo.pOutputFile = NULL;
+    docInfo.pDatatype = "RAW";
+
+    job_id = StartDocPrinterA(hPrinter, 1, (LPBYTE)&docInfo);
+    if (job_id == 0) {
+        ClosePrinter(hPrinter);
+        LOG("StartDocPrinterA failed with error %lu", GetLastError());
+        return 0;
+    }
+
+    if (!StartPagePrinter(hPrinter)) {
+        EndDocPrinter(hPrinter);
+        LOG("StartPagePrinter failed with error %lu", GetLastError());
+        ClosePrinter(hPrinter);
+        return 0;
+    }
+
+    bool result = WritePrinter(hPrinter, (LPVOID)data, length, &written);
+    EndPagePrinter(hPrinter);
+    EndDocPrinter(hPrinter);
+    ClosePrinter(hPrinter);
+
+    if (!result || written != length) {
+        LOG("WritePrinter failed. Result: %d, Bytes written: %lu, Expected: %d", result, written, length);
+        // The job might have been created but failed to write. The caller can still track this job ID to see its error state.
+    }
+    return (int32_t)job_id;
+#else // macOS / Linux
+    const char* tmpdir = getenv("TMPDIR");
+    if (!tmpdir) {
+        tmpdir = "/tmp";
+    }
+
+    char temp_file[PATH_MAX];
+    snprintf(temp_file, sizeof(temp_file), "%s/printing_ffi_XXXXXX", tmpdir);
+    LOG("Creating temporary file at: %s", temp_file);
+
+    int fd = mkstemp(temp_file);
+    if (fd == -1) {
+        LOG("mkstemp failed to create temporary file");
+        return 0;
+    }
+
+    FILE* fp = fdopen(fd, "wb");
+    if (!fp) {
+        close(fd);
+        unlink(temp_file);
+        return 0;
+    }
+
+    size_t written = fwrite(data, 1, length, fp);
+    fclose(fp);
+
+    if (written != length) {
+        unlink(temp_file);
+        return 0;
+    }
+
+    cups_option_t* options = NULL;
+    int num_options = 0;
+    num_options = cupsAddOption("raw", "true", num_options, &options);
+
+    int job_id = cupsPrintFile(printer_name, temp_file, doc_name, num_options, options);
+    if (job_id <= 0) {
+        LOG("cupsPrintFile failed, error: %s", cupsLastErrorString());
+    }
+    cupsFreeOptions(num_options, options);
+    unlink(temp_file);
+    LOG("submit_raw_data_job finished with job_id: %d", job_id);
+    return job_id > 0 ? job_id : 0;
+#endif
+}
+
+FFI_PLUGIN_EXPORT int32_t submit_pdf_job(const char* printer_name, const char* pdf_file_path, const char* doc_name, int scaling_mode, int num_options, const char** option_keys, const char** option_values) {
+    LOG("submit_pdf_job called for printer: '%s', path: '%s', doc: '%s'", printer_name, pdf_file_path, doc_name);
+#ifdef _WIN32
+    if (!s_pdfium_initialized) {
+        FPDF_LIBRARY_CONFIG config;
+        memset(&config, 0, sizeof(config));
+        config.version = 2;
+        FPDF_InitLibraryWithConfig(&config);
+        s_pdfium_initialized = true;
+        LOG("Pdfium library initialized for the first time.");
+    }
+
+    (void)num_options;
+    (void)option_keys;
+    (void)option_values;
+
+    FPDF_DOCUMENT doc = FPDF_LoadDocument(pdf_file_path, NULL);
+    if (!doc) {
+        LOG("FPDF_LoadDocument failed for path: %s. Error: %ld", pdf_file_path, FPDF_GetLastError());
+        return 0;
+    }
+
+    HDC hdc = CreateDCA("WINSPOOL", printer_name, NULL, NULL);
+    if (!hdc) {
+        LOG("CreateDCA failed for printer '%s' with error %lu", printer_name, GetLastError());
+        FPDF_CloseDocument(doc);
+        return 0;
+    }
+
+    DOCINFOA di = { sizeof(DOCINFOA), doc_name, NULL, NULL, 0 };
+    int job_id = StartDocA(hdc, &di);
+    if (job_id <= 0) {
+        LOG("StartDocA failed with error %lu", GetLastError());
+        DeleteDC(hdc);
+        FPDF_CloseDocument(doc);
+        return 0;
+    }
+
+    int page_count = FPDF_GetPageCount(doc);
+    bool success = true;
+    for (int i = 0; i < page_count; ++i) {
+        if (StartPage(hdc) <= 0) { success = false; break; }
+
+        FPDF_PAGE page = FPDF_LoadPage(doc, i);
+        if (!page) { EndPage(hdc); success = false; break; }
+
+        int dpi_x = GetDeviceCaps(hdc, LOGPIXELSX);
+        int dpi_y = GetDeviceCaps(hdc, LOGPIXELSY);
+        int width = (int)(FPDF_GetPageWidthF(page) / 72.0 * dpi_x);
+        int height = (int)(FPDF_GetPageHeightF(page) / 72.0 * dpi_y);
+
+        BITMAPINFO bmi;
+        memset(&bmi, 0, sizeof(bmi));
+        bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+        bmi.bmiHeader.biWidth = width;
+        bmi.bmiHeader.biHeight = -height;
+        bmi.bmiHeader.biPlanes = 1;
+        bmi.bmiHeader.biBitCount = 32;
+        bmi.bmiHeader.biCompression = BI_RGB;
+
+        void* pBitmapData = NULL;
+        HBITMAP hBitmap = CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS, &pBitmapData, NULL, 0);
+        if (!hBitmap || !pBitmapData) { FPDF_ClosePage(page); EndPage(hdc); success = false; break; }
+
+        FPDF_BITMAP pdfBitmap = FPDFBitmap_CreateEx(width, height, FPDFBitmap_BGRA, pBitmapData, width * 4);
+        FPDFBitmap_FillRect(pdfBitmap, 0, 0, width, height, 0xFFFFFFFF);
+        FPDF_RenderPageBitmap(pdfBitmap, page, 0, 0, width, height, 0, FPDF_ANNOT);
+        FPDFBitmap_Destroy(pdfBitmap);
+
+        int printable_width = GetDeviceCaps(hdc, HORZRES);
+        int printable_height = GetDeviceCaps(hdc, VERTRES);
+        int dest_x = 0, dest_y = 0, dest_width = width, dest_height = height;
+
+        if (scaling_mode == 0) { // Fit Page
+            float page_aspect = (float)width / (float)height;
+            float printable_aspect = (float)printable_width / (float)printable_height;
+            if (page_aspect > printable_aspect) {
+                dest_width = printable_width;
+                dest_height = (int)(printable_width / page_aspect);
+            } else {
+                dest_height = printable_height;
+                dest_width = (int)(printable_height * page_aspect);
+            }
+            dest_x = (printable_width - dest_width) / 2;
+            dest_y = (printable_height - dest_height) / 2;
+        } else { // Actual Size
+            dest_x = (printable_width - dest_width) / 2;
+            dest_y = (printable_height - dest_height) / 2;
+        }
+
+        if (StretchDIBits(hdc, dest_x, dest_y, dest_width, dest_height, 0, 0, width, height, pBitmapData, &bmi, DIB_RGB_COLORS, SRCCOPY) == GDI_ERROR) { success = false; }
+
+        DeleteObject(hBitmap);
+        FPDF_ClosePage(page);
+        if (EndPage(hdc) <= 0) { success = false; }
+        if (!success) break;
+    }
+
+    if (success) { EndDoc(hdc); } else { AbortDoc(hdc); }
+    DeleteDC(hdc);
+    FPDF_CloseDocument(doc);
+    LOG("submit_pdf_job (Pdfium/GDI) finished with result: %d, job_id: %d", success, job_id);
+    return success ? job_id : 0;
+#else // macOS / Linux (CUPS)
+    cups_option_t* options = NULL;
+    int num_cups_options = 0;
+    for (int i = 0; i < num_options; i++) {
+        num_cups_options = cupsAddOption(option_keys[i], option_values[i], num_cups_options, &options);
+    }
+    int job_id = cupsPrintFile(printer_name, pdf_file_path, doc_name, num_cups_options, options);
+    if (job_id <= 0) { LOG("cupsPrintFile failed, error: %s", cupsLastErrorString()); }
+    cupsFreeOptions(num_cups_options, options);
+    LOG("submit_pdf_job finished with job_id: %d", job_id);
+    return job_id > 0 ? job_id : 0;
+#endif
 }

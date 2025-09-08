@@ -67,6 +67,33 @@ typedef struct {
     CupsOption* options;
 } CupsOptionList;
 
+// Structs for Windows printer capabilities
+typedef struct {
+    char* name;
+    float width_mm;
+    float height_mm;
+} PaperSize;
+
+typedef struct {
+    int count;
+    PaperSize* papers;
+} PaperSizeList;
+
+typedef struct {
+    long x_dpi;
+    long y_dpi;
+} Resolution;
+
+typedef struct {
+    int count;
+    Resolution* resolutions;
+} ResolutionList;
+
+typedef struct {
+    PaperSizeList paper_sizes;
+    ResolutionList resolutions;
+} WindowsPrinterCapabilities;
+
 FFI_PLUGIN_EXPORT int sum(int a, int b);
 FFI_PLUGIN_EXPORT int sum_long_running(int a, int b);
 FFI_PLUGIN_EXPORT PrinterList* get_printers(void);
@@ -82,5 +109,11 @@ FFI_PLUGIN_EXPORT bool resume_print_job(const char* printer_name, uint32_t job_i
 FFI_PLUGIN_EXPORT bool cancel_print_job(const char* printer_name, uint32_t job_id);
 FFI_PLUGIN_EXPORT CupsOptionList* get_supported_cups_options(const char* printer_name);
 FFI_PLUGIN_EXPORT void free_cups_option_list(CupsOptionList* option_list);
+FFI_PLUGIN_EXPORT WindowsPrinterCapabilities* get_windows_printer_capabilities(const char* printer_name);
+FFI_PLUGIN_EXPORT void free_windows_printer_capabilities(WindowsPrinterCapabilities* capabilities);
+
+// Functions that submit a job and return a job ID for status tracking.
+FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char* printer_name, const uint8_t* data, int length, const char* doc_name);
+FFI_PLUGIN_EXPORT int32_t submit_pdf_job(const char* printer_name, const char* pdf_file_path, const char* doc_name, int scaling_mode, int num_options, const char** option_keys, const char** option_values);
 
 #endif

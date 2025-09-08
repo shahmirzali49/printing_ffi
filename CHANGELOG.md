@@ -1,3 +1,13 @@
+
+
+## 0.0.3
+
+* **FEAT**: Added full support for Linux via CUPS.
+* **DOCS**: Updated README with Linux setup instructions and platform support status.
+* * **FEAT**: Added job status tracking streams for PDF and raw data printing.
+* **FEAT**: Added `getWindowsPrinterCapabilities` to fetch supported paper sizes and resolutions on Windows.
+* **DOCS**: Updated README to reflect new features.
+
 ## 0.0.2
 
 * **FIX**: Resolved a crash on Windows when printing by correctly quoting the printer name for the shell API.

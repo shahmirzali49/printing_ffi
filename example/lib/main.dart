@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
@@ -43,6 +44,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
   List<Printer> _printers = [];
   Printer? _selectedPrinter;
   List<PrintJob> _jobs = [];
+  StreamSubscription<List<PrintJob>>? _jobsSubscription;
   List<CupsOption>? _cupsOptions;
   Map<String, String> _selectedCupsOptions = {};
 
@@ -65,6 +67,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
   @override
   void dispose() {
     _rawDataController.dispose();
+    _jobsSubscription?.cancel();
     super.dispose();
   }
 
@@ -111,23 +114,32 @@ class _PrintingScreenState extends State<PrintingScreen> {
   void _onPrinterSelected(Printer? printer) {
     if (printer == null) return;
     setState(() {
+      _jobsSubscription?.cancel();
+      _jobs = [];
       _selectedPrinter = printer;
-      _refreshJobs();
+      _subscribeToJobs();
       _fetchCupsOptions();
     });
   }
 
-  Future<void> _refreshJobs() async {
+  void _subscribeToJobs() {
     if (_selectedPrinter == null) return;
+    _jobsSubscription?.cancel();
     setState(() => _isLoadingJobs = true);
-    try {
-      final jobs = await listPrintJobs(_selectedPrinter!.name);
-      setState(() => _jobs = jobs);
-    } catch (e) {
-      _showSnackbar('Failed to get jobs: $e', isError: true);
-    } finally {
-      setState(() => _isLoadingJobs = false);
-    }
+    _jobsSubscription = listPrintJobsStream(_selectedPrinter!.name).listen(
+      (jobs) {
+        if (!mounted) return;
+        setState(() {
+          _jobs = jobs;
+          _isLoadingJobs = false;
+        });
+      },
+      onError: (e) {
+        if (!mounted) return;
+        _showSnackbar('Error fetching jobs: $e', isError: true);
+        setState(() => _isLoadingJobs = false);
+      },
+    );
   }
 
   Future<void> _fetchCupsOptions() async {
@@ -179,11 +191,65 @@ class _PrintingScreenState extends State<PrintingScreen> {
       );
       if (success) {
         _showSnackbar('PDF sent to printer successfully!');
-        await Future.delayed(const Duration(seconds: 2), _refreshJobs);
       } else {
         _showSnackbar('Failed to print PDF.', isError: true);
       }
     }
+  }
+
+  Future<void> _printPdfAndTrack() async {
+    if (_selectedPrinter == null) {
+      _showSnackbar('No printer selected!', isError: true);
+      return;
+    }
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['pdf'],
+    );
+
+    if (result != null && result.files.single.path != null) {
+      final path = result.files.single.path!;
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => _PrintStatusDialog(
+          printerName: _selectedPrinter!.name,
+          jobStream: printPdfAndStreamStatus(
+            _selectedPrinter!.name,
+            path,
+            scaling: _selectedScaling,
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _printRawDataAndTrack() async {
+    if (_selectedPrinter == null) {
+      _showSnackbar('No printer selected!', isError: true);
+      return;
+    }
+    // Construct ZPL data with the text from the input field.
+    final textToPrint = _rawDataController.text;
+    if (textToPrint.isEmpty) {
+      _showSnackbar('Please enter some text to print.', isError: true);
+      return;
+    }
+    final zplData = '^XA^FO50,50^A0N,50,50^FD$textToPrint^FS^XZ';
+    final data = Uint8List.fromList(zplData.codeUnits);
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => _PrintStatusDialog(
+        printerName: _selectedPrinter!.name,
+        jobStream: rawDataToPrinterAndStreamStatus(
+          _selectedPrinter!.name,
+          data,
+          docName: 'My Tracked ZPL Label',
+        ),
+      ),
+    );
   }
 
   Future<void> _printRawData() async {
@@ -208,7 +274,6 @@ class _PrintingScreenState extends State<PrintingScreen> {
     );
     if (success) {
       _showSnackbar('Raw data sent successfully!');
-      await Future.delayed(const Duration(seconds: 2), _refreshJobs);
     } else {
       _showSnackbar('Failed to send raw data.', isError: true);
     }
@@ -233,10 +298,57 @@ class _PrintingScreenState extends State<PrintingScreen> {
         'Job $action ${success ? 'succeeded' : 'failed'}.',
         isError: !success,
       );
-      await Future.delayed(const Duration(seconds: 2), _refreshJobs);
     } catch (e) {
       _showSnackbar('Error managing job: $e', isError: true);
     }
+  }
+
+  Future<void> _showWindowsCapabilities() async {
+    if (_selectedPrinter == null || !Platform.isWindows) return;
+
+    final capabilities =
+        await getWindowsPrinterCapabilities(_selectedPrinter!.name);
+
+    if (!mounted) return;
+
+    if (capabilities == null) {
+      _showSnackbar('Could not retrieve capabilities for this printer.',
+          isError: true);
+      return;
+    }
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Capabilities for ${_selectedPrinter!.name}'),
+        content: SizedBox(
+          width: 400,
+          height: 500,
+          child: ListView(
+            children: [
+              Text('Supported Paper Sizes',
+                  style: Theme.of(context).textTheme.titleMedium),
+              for (final paper in capabilities.paperSizes)
+                ListTile(
+                  title: Text(paper.name),
+                  subtitle: Text(paper.toString()),
+                ),
+              const Divider(),
+              Text('Supported Resolutions',
+                  style: Theme.of(context).textTheme.titleMedium),
+              for (final res in capabilities.resolutions)
+                ListTile(title: Text(res.toString())),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -248,7 +360,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
           title: const Text('Printing FFI Example'),
           actions: [
             IconButton(
-              icon: const Icon(Icons.refresh),
+              icon: const Icon(Icons.refresh_outlined),
               onPressed: _refreshPrinters,
             ),
           ],
@@ -369,6 +481,19 @@ class _PrintingScreenState extends State<PrintingScreen> {
                       ),
                     ),
                   ),
+                  const SizedBox(height: 12),
+                  ElevatedButton.icon(
+                    icon: const Icon(Icons.track_changes),
+                    label: const Text('Print PDF and Track Status'),
+                    onPressed: _printPdfAndTrack,
+                  ),
+                  if (Platform.isWindows) ...[
+                    const SizedBox(height: 12),
+                    ElevatedButton.icon(
+                        icon: const Icon(Icons.inventory_2_outlined),
+                        label: const Text('Show Printer Capabilities'),
+                        onPressed: _showWindowsCapabilities),
+                  ],
                 ],
               ),
             ),
@@ -393,6 +518,14 @@ class _PrintingScreenState extends State<PrintingScreen> {
                 onPressed: _printRawData,
               ),
             ),
+            const SizedBox(height: 12),
+            Center(
+              child: ElevatedButton.icon(
+                icon: const Icon(Icons.track_changes),
+                label: const Text('Print Raw Data and Track'),
+                onPressed: _printRawDataAndTrack,
+              ),
+            ),
           ],
         ),
       ),
@@ -408,10 +541,6 @@ class _PrintingScreenState extends State<PrintingScreen> {
             Text(
               'Print Queue',
               style: Theme.of(context).textTheme.headlineSmall,
-            ),
-            IconButton(
-              icon: const Icon(Icons.refresh),
-              onPressed: _refreshJobs,
             ),
           ],
         ),
@@ -551,5 +680,132 @@ class _PrintingScreenState extends State<PrintingScreen> {
         ),
       );
     }).toList();
+  }
+}
+
+class _PrintStatusDialog extends StatefulWidget {
+  const _PrintStatusDialog({
+    required this.jobStream,
+    required this.printerName,
+  });
+
+  final Stream<PrintJob> jobStream;
+  final String printerName;
+
+  @override
+  State<_PrintStatusDialog> createState() => _PrintStatusDialogState();
+}
+
+class _PrintStatusDialogState extends State<_PrintStatusDialog> {
+  StreamSubscription<PrintJob>? _subscription;
+  PrintJob? _job;
+  Object? _error;
+  bool _isCancelling = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _subscription = widget.jobStream.listen(
+      (job) {
+        if (mounted) setState(() => _job = job);
+      },
+      onError: (error) {
+        if (mounted) setState(() => _error = error);
+      },
+    );
+  }
+
+  Future<void> _cancelJob() async {
+    if (_job == null || !mounted) return;
+    setState(() => _isCancelling = true);
+    try {
+      final success = await cancelPrintJob(widget.printerName, _job!.id);
+
+      // After the await, the widget might have been disposed.
+      if (!mounted) return;
+
+      if (success) {
+        // If successful, pop the dialog and show a confirmation snackbar.
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Cancel command sent successfully.'),
+            backgroundColor: Colors.blue,
+          ),
+        );
+      } else {
+        // If failed, stay on the dialog and show an error.
+        setState(() => _isCancelling = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to send cancel command.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isCancelling = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Error cancelling job: $e')));
+    }
+  }
+
+  @override
+  void dispose() {
+    _subscription?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isJobTerminal =
+        _job != null &&
+        (_job!.status == PrintJobStatus.completed ||
+            _job!.status == PrintJobStatus.canceled ||
+            _job!.status == PrintJobStatus.aborted ||
+            _job!.status == PrintJobStatus.error);
+
+    final canCancel = _job != null && !_isCancelling && !isJobTerminal;
+
+    return AlertDialog(
+      title: const Text('Tracking Print Job...'),
+      content: SizedBox(
+        width: 250,
+        height: 100,
+        child: Center(
+          child: _error != null
+              ? Text(
+                  'Error: $_error',
+                  style: const TextStyle(color: Colors.red),
+                )
+              : _job == null
+              ? const CircularProgressIndicator()
+              : Text(
+                  'Job #${_job!.id}: ${_job!.statusDescription}',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+        ),
+      ),
+      actions: <Widget>[
+        if (isJobTerminal || _error != null)
+          TextButton(
+            child: const Text('Close'),
+            onPressed: () => Navigator.of(context).pop(),
+          )
+        else
+          TextButton(
+            onPressed: canCancel ? _cancelJob : null,
+            child: _isCancelling
+                ? const SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(strokeWidth: 3),
+                  )
+                : const Text('Cancel'),
+          ),
+      ],
+    );
   }
 }

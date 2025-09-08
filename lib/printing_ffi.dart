@@ -161,6 +161,43 @@ class CupsOption {
   });
 }
 
+/// Represents a paper size supported by a Windows printer.
+class WindowsPaperSize {
+  final String name;
+  final double widthMillimeters;
+  final double heightMillimeters;
+
+  WindowsPaperSize({
+    required this.name,
+    required this.widthMillimeters,
+    required this.heightMillimeters,
+  });
+
+  @override
+  String toString() =>
+      '$name (${widthMillimeters.toStringAsFixed(1)} x ${heightMillimeters.toStringAsFixed(1)} mm)';
+}
+
+/// Represents a resolution supported by a Windows printer.
+class WindowsResolution {
+  final int xdpi;
+  final int ydpi;
+
+  WindowsResolution({required this.xdpi, required this.ydpi});
+
+  @override
+  String toString() => '$xdpi x $ydpi DPI';
+}
+
+/// Holds the capabilities (paper sizes, resolutions) of a Windows printer.
+class WindowsPrinterCapabilities {
+  final List<WindowsPaperSize> paperSizes;
+  final List<WindowsResolution> resolutions;
+
+  WindowsPrinterCapabilities(
+      {required this.paperSizes, required this.resolutions});
+}
+
 // Request classes for printing operations
 class _PrintRequest {
   final int id;
@@ -217,6 +254,36 @@ class _GetCupsOptionsRequest {
   const _GetCupsOptionsRequest(this.id, this.printerName);
 }
 
+class _SubmitRawDataJobRequest {
+  final int id;
+  final String printerName;
+  final Uint8List data;
+  final String docName;
+
+  const _SubmitRawDataJobRequest(this.id, this.printerName, this.data, this.docName);
+}
+
+class _SubmitPdfJobRequest {
+  final int id;
+  final String printerName;
+  final String pdfFilePath;
+  final String docName;
+  final Map<String, String>? cupsOptions;
+  final PdfPrintScaling scaling;
+
+  const _SubmitPdfJobRequest(
+    this.id, this.printerName, this.pdfFilePath, this.docName, this.cupsOptions, this.scaling,
+  );
+}
+
+class _GetWindowsCapsRequest {
+  final int id;
+  final String printerName;
+
+  const _GetWindowsCapsRequest(this.id, this.printerName);
+}
+
+
 // Response classes
 class _PrintResponse {
   final int id;
@@ -253,6 +320,20 @@ class _GetCupsOptionsResponse {
   const _GetCupsOptionsResponse(this.id, this.options);
 }
 
+class _SubmitJobResponse {
+  final int id;
+  final int jobId;
+
+  const _SubmitJobResponse(this.id, this.jobId);
+}
+
+class _GetWindowsCapsResponse {
+  final int id;
+  final WindowsPrinterCapabilities? capabilities;
+
+  const _GetWindowsCapsResponse(this.id, this.capabilities);
+}
+
 const String _libName = 'printing_ffi'; // Updated library name
 
 final DynamicLibrary _dylib = () {
@@ -267,6 +348,59 @@ final DynamicLibrary _dylib = () {
 final PrintingFfiBindings _bindings = PrintingFfiBindings(
   _dylib,
 ); // Updated to PrintingFfiBindings
+
+// Manually look up the new functions for submitting jobs.
+final _submit_raw_data_job = _dylib.lookupFunction<
+    Int32 Function(Pointer<Utf8>, Pointer<Uint8>, Int32, Pointer<Utf8>),
+    int Function(Pointer<Utf8>, Pointer<Uint8>, int, Pointer<Utf8>)>('submit_raw_data_job');
+
+final _submit_pdf_job = _dylib.lookupFunction<
+    Int32 Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Int32, Int32, Pointer<Pointer<Utf8>>, Pointer<Pointer<Utf8>>),
+    int Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, int, int, Pointer<Pointer<Utf8>>, Pointer<Pointer<Utf8>>)>('submit_pdf_job');
+
+// --- FFI Structs for Windows Capabilities ---
+final class _PaperSize extends Struct {
+  external Pointer<Utf8> name;
+  @Float()
+  external double width_mm;
+  @Float()
+  external double height_mm;
+}
+
+final class _PaperSizeList extends Struct {
+  @Int()
+  external int count;
+  external Pointer<_PaperSize> papers;
+}
+
+final class _Resolution extends Struct {
+  @Long()
+  external int x_dpi;
+  @Long()
+  external int y_dpi;
+}
+
+final class _ResolutionList extends Struct {
+  @Int()
+  external int count;
+  external Pointer<_Resolution> resolutions;
+}
+
+final class _WindowsPrinterCapabilitiesStruct extends Struct {
+  external _PaperSizeList paper_sizes;
+  external _ResolutionList resolutions;
+}
+
+// --- FFI Lookups for Windows Capabilities ---
+final _get_windows_printer_capabilities = _dylib.lookupFunction<
+    Pointer<_WindowsPrinterCapabilitiesStruct> Function(Pointer<Utf8>),
+    Pointer<_WindowsPrinterCapabilitiesStruct> Function(
+        Pointer<Utf8>)>('get_windows_printer_capabilities');
+
+final _free_windows_printer_capabilities = _dylib.lookupFunction<
+    Void Function(Pointer<_WindowsPrinterCapabilitiesStruct>),
+    void Function(Pointer<_WindowsPrinterCapabilitiesStruct>)>(
+    'free_windows_printer_capabilities');
 
 // Example functions from template
 int sum(int a, int b) => _bindings.sum(a, b);
@@ -386,6 +520,108 @@ Future<bool> printPdf(
   return completer.future;
 }
 
+/// Submits a raw data job to the printer and returns a stream of [PrintJob]
+/// objects to track its status.
+///
+/// This is useful for monitoring the job's progress in real-time. The stream
+/// will close automatically when the job reaches a terminal state (e.g.,
+/// completed, canceled, or error).
+///
+/// - [printerName]: The name of the target printer.
+/// - [data]: The raw byte data to be printed.
+/// - [docName]: The name of the document to be shown in the print queue.
+/// - [pollInterval]: The duration between status checks.
+Stream<PrintJob> rawDataToPrinterAndStreamStatus(
+  String printerName,
+  Uint8List data, {
+  String docName = 'Flutter Raw Data',
+  Duration pollInterval = const Duration(seconds: 2),
+}) {
+  return _streamJobStatus(
+    printerName: printerName,
+    pollInterval: pollInterval,
+    submitJob: () => _submitRawDataJob(printerName, data, docName: docName),
+  );
+}
+
+/// Submits a PDF file to the printer and returns a stream of [PrintJob]
+/// objects to track its status.
+///
+/// This is useful for monitoring the job's progress in real-time. The stream
+/// will close automatically when the job reaches a terminal state (e.g.,
+/// completed, canceled, or error).
+///
+/// See [printPdf] for more details on parameters.
+Stream<PrintJob> printPdfAndStreamStatus(
+  String printerName,
+  String pdfFilePath, {
+  String docName = 'Flutter PDF Document',
+  PdfPrintScaling scaling = PdfPrintScaling.fitPage,
+  Map<String, String>? cupsOptions,
+  Duration pollInterval = const Duration(seconds: 2),
+}) {
+  return _streamJobStatus(
+    printerName: printerName,
+    pollInterval: pollInterval,
+    submitJob: () => _submitPdfJob(
+      printerName,
+      pdfFilePath,
+      docName: docName,
+      scaling: scaling,
+      cupsOptions: cupsOptions,
+    ),
+  );
+}
+
+/// Generic internal function to handle job submission and status polling.
+Stream<PrintJob> _streamJobStatus({
+  required String printerName,
+  required Duration pollInterval,
+  required Future<int> Function() submitJob,
+}) {
+  late StreamController<PrintJob> controller;
+  Timer? poller;
+  PrintJob? lastJob;
+
+  Future<void> poll(int jobId) async {
+    if (controller.isClosed) return;
+    try {
+      final jobs = await listPrintJobs(printerName);
+      final currentJob = jobs.firstWhere((j) => j.id == jobId, orElse: () => lastJob!);
+
+      if (currentJob.rawStatus != lastJob?.rawStatus) {
+        controller.add(currentJob);
+        lastJob = currentJob;
+      }
+
+      final status = currentJob.status;
+      if (status == PrintJobStatus.completed || status == PrintJobStatus.canceled || status == PrintJobStatus.aborted || status == PrintJobStatus.error) {
+        poller?.cancel();
+        await controller.close();
+      }
+    } catch (e, s) {
+      if (!controller.isClosed) controller.addError(e, s);
+      poller?.cancel();
+      await controller.close();
+    }
+  }
+
+  controller = StreamController<PrintJob>(onListen: () async {
+    final jobId = await submitJob();
+    if (jobId <= 0) {
+      controller.addError(Exception('Failed to submit job to the print queue.'));
+      await controller.close();
+    } else {
+      poller = Timer.periodic(pollInterval, (_) => poll(jobId));
+      poll(jobId); // Initial poll
+    }
+  }, onCancel: () {
+    poller?.cancel();
+  });
+
+  return controller.stream;
+}
+
 /// Fetches the list of supported CUPS options for a given printer.
 ///
 /// This function is only effective on macOS and Linux. On Windows, it will
@@ -410,6 +646,24 @@ Future<List<CupsOption>> getSupportedCupsOptions(String printerName) async {
   return completer.future;
 }
 
+/// Fetches capabilities for a given printer on Windows, such as supported
+/// paper sizes and resolutions.
+///
+/// Returns `null` if not on Windows or if capabilities cannot be retrieved.
+Future<WindowsPrinterCapabilities?> getWindowsPrinterCapabilities(
+    String printerName) async {
+  if (!Platform.isWindows) {
+    return null;
+  }
+  final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
+  final int requestId = _nextGetWindowsCapsRequestId++;
+  final request = _GetWindowsCapsRequest(requestId, printerName);
+  final completer = Completer<WindowsPrinterCapabilities?>();
+  _getWindowsCapsRequests[requestId] = completer;
+  helperIsolateSendPort.send(request);
+  return completer.future;
+}
+
 Future<List<PrintJob>> listPrintJobs(String printerName) async {
   final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
   final int requestId = _nextPrintJobsRequestId++;
@@ -418,6 +672,70 @@ Future<List<PrintJob>> listPrintJobs(String printerName) async {
   _printJobsRequests[requestId] = completer;
   helperIsolateSendPort.send(request);
   return completer.future;
+}
+
+/// Returns a stream of print jobs for the specified printer.
+///
+/// This function polls for print jobs at a given interval and emits a new list
+/// of jobs. This is useful for building reactive UIs that automatically update
+/// as the print queue changes.
+///
+/// - [printerName]: The name of the target printer.
+/// - [pollInterval]: The duration between each poll for print jobs. Defaults to 2 seconds.
+Stream<List<PrintJob>> listPrintJobsStream(
+  String printerName, {
+  Duration pollInterval = const Duration(seconds: 2),
+}) {
+  late StreamController<List<PrintJob>> controller;
+  Timer? timer;
+
+  void startPolling() {
+    if (timer?.isActive ?? false) return;
+    timer = Timer.periodic(pollInterval, (_) async {
+      if (controller.isClosed) {
+        timer?.cancel();
+        return;
+      }
+      try {
+        final jobs = await listPrintJobs(printerName);
+        if (!controller.isClosed) {
+          controller.add(jobs);
+        }
+      } catch (e, s) {
+        if (!controller.isClosed) {
+          controller.addError(e, s);
+        }
+      }
+    });
+  }
+
+  void stopPolling() {
+    timer?.cancel();
+    timer = null;
+  }
+
+  controller = StreamController<List<PrintJob>>(
+    onListen: () {
+      // Immediately fetch jobs on listen, then start polling.
+      listPrintJobs(printerName)
+          .then((jobs) {
+            if (!controller.isClosed) {
+              controller.add(jobs);
+            }
+            startPolling();
+          })
+          .catchError((e, s) {
+            if (!controller.isClosed) {
+              controller.addError(e, s);
+            }
+          });
+    },
+    onPause: stopPolling,
+    onResume: startPolling,
+    onCancel: stopPolling,
+  );
+
+  return controller.stream;
 }
 
 Future<bool> pausePrintJob(String printerName, int jobId) async {
@@ -465,6 +783,43 @@ Future<bool> cancelPrintJob(String printerName, int jobId) async {
   return completer.future;
 }
 
+Future<int> _submitRawDataJob(
+  String printerName,
+  Uint8List data, {
+  String docName = 'Flutter Document',
+}) async {
+  final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
+  final int requestId = _nextSubmitRawDataJobRequestId++;
+  final request = _SubmitRawDataJobRequest(requestId, printerName, data, docName);
+  final completer = Completer<int>();
+  _submitRawDataJobRequests[requestId] = completer;
+  helperIsolateSendPort.send(request);
+  return completer.future;
+}
+
+Future<int> _submitPdfJob(
+  String printerName,
+  String pdfFilePath, {
+  String docName = 'Flutter PDF Document',
+  PdfPrintScaling scaling = PdfPrintScaling.fitPage,
+  Map<String, String>? cupsOptions,
+}) async {
+  final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
+  final int requestId = _nextSubmitPdfJobRequestId++;
+  final request = _SubmitPdfJobRequest(
+    requestId,
+    printerName,
+    pdfFilePath,
+    docName,
+    cupsOptions,
+    scaling,
+  );
+  final completer = Completer<int>();
+  _submitPdfJobRequests[requestId] = completer;
+  helperIsolateSendPort.send(request);
+  return completer.future;
+}
+
 // Isolate communication setup
 
 int _nextPrintRequestId = 0;
@@ -472,12 +827,19 @@ int _nextPrintJobsRequestId = 0;
 int _nextPrintJobActionRequestId = 0;
 int _nextPrintPdfRequestId = 0;
 int _nextGetCupsOptionsRequestId = 0;
+int _nextSubmitRawDataJobRequestId = 0;
+int _nextSubmitPdfJobRequestId = 0;
+int _nextGetWindowsCapsRequestId = 0;
 
 final Map<int, Completer<bool>> _printRequests = <int, Completer<bool>>{};
 final Map<int, Completer<List<PrintJob>>> _printJobsRequests = <int, Completer<List<PrintJob>>>{};
 final Map<int, Completer<bool>> _printJobActionRequests = <int, Completer<bool>>{};
 final Map<int, Completer<bool>> _printPdfRequests = <int, Completer<bool>>{};
 final Map<int, Completer<List<CupsOption>>> _getCupsOptionsRequests = <int, Completer<List<CupsOption>>>{};
+final Map<int, Completer<WindowsPrinterCapabilities?>> _getWindowsCapsRequests =
+    <int, Completer<WindowsPrinterCapabilities?>>{};
+final Map<int, Completer<int>> _submitRawDataJobRequests = <int, Completer<int>>{};
+final Map<int, Completer<int>> _submitPdfJobRequests = <int, Completer<int>>{};
 
 Future<SendPort> _helperIsolateSendPort = () async {
   final Completer<SendPort> completer = Completer<SendPort>();
@@ -516,6 +878,18 @@ Future<SendPort> _helperIsolateSendPort = () async {
         final Completer<List<CupsOption>> completer = _getCupsOptionsRequests[data.id]!;
         _getCupsOptionsRequests.remove(data.id);
         completer.complete(data.options);
+        return;
+      }
+      if (data is _SubmitJobResponse) {
+        if (_submitRawDataJobRequests.containsKey(data.id)) {
+          _submitRawDataJobRequests.remove(data.id)!.complete(data.jobId);
+        } else if (_submitPdfJobRequests.containsKey(data.id)) {
+          _submitPdfJobRequests.remove(data.id)!.complete(data.jobId);
+        }
+        return;
+      }
+      if (data is _GetWindowsCapsResponse) {
+        _getWindowsCapsRequests.remove(data.id)!.complete(data.capabilities);
         return;
       }
       throw UnsupportedError('Unsupported message type: ${data.runtimeType}');
@@ -665,6 +1039,104 @@ Future<SendPort> _helperIsolateSendPort = () async {
               }
             }
             sendPort.send(_GetCupsOptionsResponse(data.id, options));
+          } finally {
+            malloc.free(namePtr);
+          }
+        } else if (data is _SubmitRawDataJobRequest) {
+          final namePtr = data.printerName.toNativeUtf8();
+          final docNamePtr = data.docName.toNativeUtf8();
+          final dataPtr = malloc<Uint8>(data.data.length);
+          for (var i = 0; i < data.data.length; i++) {
+            dataPtr[i] = data.data[i];
+          }
+          try {
+            final int jobId = _submit_raw_data_job(
+              namePtr.cast(),
+              dataPtr,
+              data.data.length,
+              docNamePtr.cast(),
+            );
+            sendPort.send(_SubmitJobResponse(data.id, jobId));
+          } finally {
+            malloc.free(namePtr);
+            malloc.free(docNamePtr);
+            malloc.free(dataPtr);
+          }
+        } else if (data is _SubmitPdfJobRequest) {
+          final namePtr = data.printerName.toNativeUtf8();
+          final pathPtr = data.pdfFilePath.toNativeUtf8();
+          final docNamePtr = data.docName.toNativeUtf8();
+          try {
+            final int numOptions = (Platform.isMacOS || Platform.isLinux) ? data.cupsOptions?.length ?? 0 : 0;
+            Pointer<Pointer<Utf8>> keysPtr = nullptr;
+            Pointer<Pointer<Utf8>> valuesPtr = nullptr;
+
+            if (numOptions > 0) {
+              keysPtr = malloc<Pointer<Utf8>>(numOptions);
+              valuesPtr = malloc<Pointer<Utf8>>(numOptions);
+              int i = 0;
+              for (var entry in data.cupsOptions!.entries) {
+                keysPtr[i] = entry.key.toNativeUtf8();
+                valuesPtr[i] = entry.value.toNativeUtf8();
+                i++;
+              }
+            }
+
+            final int jobId = _submit_pdf_job(
+              namePtr.cast(), pathPtr.cast(), docNamePtr.cast(),
+              data.scaling.index, numOptions,
+              keysPtr.cast(), valuesPtr.cast(),
+            );
+            sendPort.send(_SubmitJobResponse(data.id, jobId));
+
+            if (numOptions > 0) {
+              for (var i = 0; i < numOptions; i++) {
+                malloc.free(keysPtr[i]);
+                malloc.free(valuesPtr[i]);
+              }
+              malloc.free(keysPtr);
+              malloc.free(valuesPtr);
+            }
+          } finally {
+            malloc.free(namePtr);
+            malloc.free(pathPtr);
+            malloc.free(docNamePtr);
+          }
+        } else if (data is _GetWindowsCapsRequest) {
+          final namePtr = data.printerName.toNativeUtf8();
+          try {
+            final capsPtr = _get_windows_printer_capabilities(namePtr.cast());
+            if (capsPtr == nullptr) {
+              sendPort.send(_GetWindowsCapsResponse(data.id, null));
+            } else {
+              try {
+                final capsStruct = capsPtr.ref;
+                final paperSizes = <WindowsPaperSize>[];
+                for (var i = 0; i < capsStruct.paper_sizes.count; i++) {
+                  final paperStruct = capsStruct.paper_sizes.papers[i];
+                  paperSizes.add(WindowsPaperSize(
+                    name: paperStruct.name.toDartString(),
+                    widthMillimeters: paperStruct.width_mm,
+                    heightMillimeters: paperStruct.height_mm,
+                  ));
+                }
+                final resolutions = <WindowsResolution>[];
+                for (var i = 0; i < capsStruct.resolutions.count; i++) {
+                  final resStruct = capsStruct.resolutions.resolutions[i];
+                  resolutions.add(WindowsResolution(
+                    xdpi: resStruct.x_dpi,
+                    ydpi: resStruct.y_dpi,
+                  ));
+                }
+                final capabilities = WindowsPrinterCapabilities(
+                  paperSizes: paperSizes,
+                  resolutions: resolutions,
+                );
+                sendPort.send(_GetWindowsCapsResponse(data.id, capabilities));
+              } finally {
+                _free_windows_printer_capabilities(capsPtr);
+              }
+            }
           } finally {
             malloc.free(namePtr);
           }
