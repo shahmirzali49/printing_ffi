@@ -137,6 +137,7 @@ enum PdfPrintScaling {
 class CupsOptionChoice {
   /// The value to be sent to CUPS (e.g., "A4", "4").
   final String choice;
+
   /// The human-readable text for the choice (e.g., "A4", "Landscape").
   final String text;
 
@@ -146,8 +147,10 @@ class CupsOptionChoice {
 class CupsOption {
   /// The name of the option (e.g., "media", "orientation-requested").
   final String name;
+
   /// The default value for this option.
   final String defaultValue;
+
   /// A list of supported values for this option.
   final List<CupsOptionChoice> supportedValues;
 
@@ -510,8 +513,7 @@ Future<SendPort> _helperIsolateSendPort = () async {
         return;
       }
       if (data is _GetCupsOptionsResponse) {
-        final Completer<List<CupsOption>> completer =
-            _getCupsOptionsRequests[data.id]!;
+        final Completer<List<CupsOption>> completer = _getCupsOptionsRequests[data.id]!;
         _getCupsOptionsRequests.remove(data.id);
         completer.complete(data.options);
         return;
@@ -590,8 +592,7 @@ Future<SendPort> _helperIsolateSendPort = () async {
           final docNamePtr = data.docName.toNativeUtf8();
           try {
             // Handle cupsOptions for native call
-            final int numOptions =
-                (Platform.isMacOS || Platform.isLinux) ? data.cupsOptions?.length ?? 0 : 0;
+            final int numOptions = (Platform.isMacOS || Platform.isLinux) ? data.cupsOptions?.length ?? 0 : 0;
             Pointer<Pointer<Utf8>> keysPtr = nullptr;
             Pointer<Pointer<Utf8>> valuesPtr = nullptr;
 
@@ -633,8 +634,7 @@ Future<SendPort> _helperIsolateSendPort = () async {
         } else if (data is _GetCupsOptionsRequest) {
           final namePtr = data.printerName.toNativeUtf8();
           try {
-            final optionListPtr =
-                _bindings.get_supported_cups_options(namePtr.cast());
+            final optionListPtr = _bindings.get_supported_cups_options(namePtr.cast());
             final options = <CupsOption>[];
             if (optionListPtr != nullptr) {
               try {
