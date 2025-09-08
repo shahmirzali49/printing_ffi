@@ -18,6 +18,8 @@
 #ifdef _WIN32
 // Include the main Pdfium header. Ensure this is in your src/ directory.
 #include "fpdfview.h"
+// Global state for Pdfium initialization
+static bool s_pdfium_initialized = false;
 #endif
 
 // Logging macro - enabled when DEBUG_LOGGING is defined (e.g., in debug builds)
@@ -25,6 +27,27 @@
 #define LOG(format, ...) fprintf(stderr, "[printing_ffi] " format "\n", ##__VA_ARGS__)
 #else
 #define LOG(...)
+#endif
+
+#ifdef _WIN32
+BOOL WINAPI DllMain(
+    HINSTANCE hinstDLL,
+    DWORD fdwReason,
+    LPVOID lpvReserved)
+{
+    switch (fdwReason)
+    {
+    case DLL_PROCESS_DETACH:
+        if (s_pdfium_initialized)
+        {
+            FPDF_DestroyLibrary();
+            s_pdfium_initialized = false;
+            LOG("Pdfium library destroyed on process detach.");
+        }
+        break;
+    }
+    return TRUE;
+}
 #endif
 
 FFI_PLUGIN_EXPORT int sum(int a, int b) {
@@ -350,8 +373,6 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8
 FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_path, const char* doc_name, int scaling_mode, int num_options, const char** option_keys, const char** option_values) {
     LOG("print_pdf called for printer: '%s', path: '%s', doc: '%s'", printer_name, pdf_file_path, doc_name);
 #ifdef _WIN32
-    // One-time initialization of the Pdfium library.
-    static bool s_pdfium_initialized = false;
     if (!s_pdfium_initialized) {
         FPDF_LIBRARY_CONFIG config;
         memset(&config, 0, sizeof(config));
@@ -416,7 +437,7 @@ FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_
         memset(&bmi, 0, sizeof(bmi));
         bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
         bmi.bmiHeader.biWidth = width;
-        bmi.bmiHeader.biHeight = height; // Positive for bottom-up DIB
+        bmi.bmiHeader.biHeight = -height; // Negative for top-down DIB, which Pdfium uses.
         bmi.bmiHeader.biPlanes = 1;
         bmi.bmiHeader.biBitCount = 32; // BGRA format
         bmi.bmiHeader.biCompression = BI_RGB;
@@ -431,11 +452,25 @@ FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_
             break;
         }
 
-        // Fill with white background (Pdfium renders with transparency)
-        memset(pBitmapData, 0xFF, width * height * 4);
+        // Create a Pdfium bitmap that wraps the DIB section's buffer.
+        FPDF_BITMAP pdfBitmap = FPDFBitmap_CreateEx(width, height, FPDFBitmap_BGRA, pBitmapData, width * 4);
+        if (!pdfBitmap) {
+            LOG("FPDFBitmap_CreateEx failed for page %d", i);
+            DeleteObject(hBitmap);
+            FPDF_ClosePage(page);
+            EndPage(hdc);
+            success = false;
+            break;
+        }
 
-        // Render the page
-        FPDF_RenderPageBitmap(hBitmap, page, 0, 0, width, height, 0, FPDF_ANNOT);
+        // Fill with white background (Pdfium renders with transparency by default)
+        FPDFBitmap_FillRect(pdfBitmap, 0, 0, width, height, 0xFFFFFFFF);
+
+        // Render the page into the Pdfium bitmap (which is our DIB buffer)
+        FPDF_RenderPageBitmap(pdfBitmap, page, 0, 0, width, height, 0, FPDF_ANNOT);
+
+        // The DIB section is now updated. We can destroy the Pdfium bitmap wrapper.
+        FPDFBitmap_Destroy(pdfBitmap);
 
         // Get printable area of the printer
         int printable_width = GetDeviceCaps(hdc, HORZRES);
