@@ -9,7 +9,7 @@ topics:
  - printing
  - print
  - thermal-printer
- - usb-printer
+ - ffi
  - pos-printer
 
 
