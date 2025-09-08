@@ -120,6 +120,18 @@ flutter pub get
 
 No additional setup is required, as the plugin uses the native `winspool` API included with Windows. 🎉
 
+#### Overriding the Pdfium Version
+
+The plugin automatically downloads a specific version of the `pdfium` library for PDF printing on Windows. If you need to use a different version, you can override the default by setting variables in your application's `windows/CMakeLists.txt` file *before* the `add_subdirectory(flutter)` line:
+
+```cmake
+# In your_project/windows/CMakeLists.txt
+set(PDFIUM_VERSION "5790" CACHE STRING "" FORCE)
+set(PDFIUM_ARCH "x64" CACHE STRING "" FORCE)
+
+add_subdirectory(flutter)
+```
+
 ## Limitations 🚧
 
 -   Linux support is planned but not yet implemented.
