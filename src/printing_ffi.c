@@ -784,49 +784,80 @@ FFI_PLUGIN_EXPORT WindowsPrinterCapabilities* get_windows_printer_capabilities(c
     WindowsPrinterCapabilities* caps = (WindowsPrinterCapabilities*)calloc(1, sizeof(WindowsPrinterCapabilities));
     return caps;
 #else
+    // Convert printer_name from UTF-8 to UTF-16 for Windows W-functions
+    int printer_name_w_len = MultiByteToWideChar(CP_UTF8, 0, printer_name, -1, NULL, 0);
+    if (printer_name_w_len == 0) {
+        LOG("MultiByteToWideChar (len) for printer_name failed with error %lu", GetLastError());
+        return NULL;
+    }
+    wchar_t* printer_name_w = (wchar_t*)malloc(printer_name_w_len * sizeof(wchar_t));
+    if (!printer_name_w) return NULL;
+    if (MultiByteToWideChar(CP_UTF8, 0, printer_name, -1, printer_name_w, printer_name_w_len) == 0) {
+        LOG("MultiByteToWideChar for printer_name failed with error %lu", GetLastError());
+        free(printer_name_w);
+        return NULL;
+    }
+
     HANDLE hPrinter;
-    if (!OpenPrinterA((LPSTR)printer_name, &hPrinter, NULL)) {
-        LOG("OpenPrinterA failed with error %lu", GetLastError());
+    if (!OpenPrinterW(printer_name_w, &hPrinter, NULL)) {
+        LOG("OpenPrinterW failed with error %lu", GetLastError());
+        free(printer_name_w);
         return NULL;
     }
 
     // Get PRINTER_INFO_2 to find the port name required by DeviceCapabilities
     DWORD needed;
-    GetPrinterA(hPrinter, 2, NULL, 0, &needed);
-    PRINTER_INFO_2A* pinfo2 = (PRINTER_INFO_2A*)malloc(needed);
-    if (!pinfo2 || !GetPrinterA(hPrinter, 2, (LPBYTE)pinfo2, needed, &needed)) {
-        LOG("GetPrinterA failed with error %lu", GetLastError());
+    GetPrinterW(hPrinter, 2, NULL, 0, &needed);
+    if (needed == 0) { // Check if GetPrinterW failed to get needed size
+        LOG("GetPrinterW (to get size) failed with error %lu", GetLastError());
+        ClosePrinter(hPrinter);
+        free(printer_name_w);
+        return NULL;
+    }
+    PRINTER_INFO_2W* pinfo2 = (PRINTER_INFO_2W*)malloc(needed);
+    if (!pinfo2 || !GetPrinterW(hPrinter, 2, (LPBYTE)pinfo2, needed, &needed)) {
+        LOG("GetPrinterW failed with error %lu", GetLastError());
         if (pinfo2) free(pinfo2);
         ClosePrinter(hPrinter);
+        free(printer_name_w);
         return NULL;
     }
 
-    const char* port = pinfo2->pPortName;
+    const wchar_t* port_w = pinfo2->pPortName;
 
     WindowsPrinterCapabilities* caps = (WindowsPrinterCapabilities*)calloc(1, sizeof(WindowsPrinterCapabilities));
     if (!caps) {
         free(pinfo2);
         ClosePrinter(hPrinter);
+        free(printer_name_w);
         return NULL;
     }
 
     // --- Get Paper Sizes ---
-    long num_papers = DeviceCapabilitiesA(printer_name, port, DC_PAPERS, NULL, NULL);
+    long num_papers = DeviceCapabilitiesW(printer_name_w, port_w, DC_PAPERS, NULL, NULL);
     if (num_papers > 0) {
         WORD* papers = (WORD*)malloc(num_papers * sizeof(WORD));
-        char (*paper_names)[64] = (char(*)[64])malloc(num_papers * 64);
+        wchar_t (*paper_names_w)[64] = (wchar_t(*)[64])malloc(num_papers * 64 * sizeof(wchar_t));
         POINT* paper_sizes_points = (POINT*)malloc(num_papers * sizeof(POINT));
 
-        if (papers && paper_names && paper_sizes_points) {
-            DeviceCapabilitiesA(printer_name, port, DC_PAPERS, (LPCSTR)papers, NULL);
-            DeviceCapabilitiesA(printer_name, port, DC_PAPERNAMES, (LPCSTR)paper_names, NULL);
-            DeviceCapabilitiesA(printer_name, port, DC_PAPERSIZE, (LPCSTR)paper_sizes_points, NULL);
+        if (papers && paper_names_w && paper_sizes_points) {
+            DeviceCapabilitiesW(printer_name_w, port_w, DC_PAPERS, (LPCWSTR)papers, NULL);
+            DeviceCapabilitiesW(printer_name_w, port_w, DC_PAPERNAMES, (LPCWSTR)paper_names_w, NULL);
+            DeviceCapabilitiesW(printer_name_w, port_w, DC_PAPERSIZE, (LPCWSTR)paper_sizes_points, NULL);
 
             caps->paper_sizes.count = num_papers;
             caps->paper_sizes.papers = (PaperSize*)malloc(num_papers * sizeof(PaperSize));
             if (caps->paper_sizes.papers) {
                 for (long i = 0; i < num_papers; i++) {
-                    caps->paper_sizes.papers[i].name = strdup(paper_names[i]);
+                    // Convert paper name from UTF-16 to UTF-8
+                    int name_len = WideCharToMultiByte(CP_UTF8, 0, paper_names_w[i], -1, NULL, 0, NULL, NULL);
+                    char* name_utf8 = (char*)malloc(name_len);
+                    if (name_utf8) {
+                        WideCharToMultiByte(CP_UTF8, 0, paper_names_w[i], -1, name_utf8, name_len, NULL, NULL);
+                        caps->paper_sizes.papers[i].name = name_utf8;
+                    } else {
+                        caps->paper_sizes.papers[i].name = strdup(""); // Fallback
+                    }
                     // Dimensions are in 0.1mm units. Convert to mm.
                     caps->paper_sizes.papers[i].width_mm = (float)paper_sizes_points[i].x / 10.0f;
                     caps->paper_sizes.papers[i].height_mm = (float)paper_sizes_points[i].y / 10.0f;
@@ -834,16 +865,16 @@ FFI_PLUGIN_EXPORT WindowsPrinterCapabilities* get_windows_printer_capabilities(c
             }
         }
         if (papers) free(papers);
-        if (paper_names) free(paper_names);
+        if (paper_names_w) free(paper_names_w);
         if (paper_sizes_points) free(paper_sizes_points);
     }
 
     // --- Get Resolutions ---
-    long num_res = DeviceCapabilitiesA(printer_name, port, DC_ENUMRESOLUTIONS, NULL, NULL);
+    long num_res = DeviceCapabilitiesW(printer_name_w, port_w, DC_ENUMRESOLUTIONS, NULL, NULL);
     if (num_res > 0) {
         LONG* resolutions = (LONG*)malloc(num_res * 2 * sizeof(LONG));
         if (resolutions) {
-            DeviceCapabilitiesA(printer_name, port, DC_ENUMRESOLUTIONS, (LPCSTR)resolutions, NULL);
+            DeviceCapabilitiesW(printer_name_w, port_w, DC_ENUMRESOLUTIONS, (LPCWSTR)resolutions, NULL);
             caps->resolutions.count = num_res;
             caps->resolutions.resolutions = (Resolution*)malloc(num_res * sizeof(Resolution));
             if (caps->resolutions.resolutions) {
@@ -858,6 +889,7 @@ FFI_PLUGIN_EXPORT WindowsPrinterCapabilities* get_windows_printer_capabilities(c
 
     free(pinfo2);
     ClosePrinter(hPrinter);
+    free(printer_name_w);
     return caps;
 #endif
 }

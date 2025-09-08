@@ -174,8 +174,7 @@ class WindowsPaperSize {
   });
 
   @override
-  String toString() =>
-      '$name (${widthMillimeters.toStringAsFixed(1)} x ${heightMillimeters.toStringAsFixed(1)} mm)';
+  String toString() => '$name (${widthMillimeters.toStringAsFixed(1)} x ${heightMillimeters.toStringAsFixed(1)} mm)';
 }
 
 /// Represents a resolution supported by a Windows printer.
@@ -194,8 +193,15 @@ class WindowsPrinterCapabilities {
   final List<WindowsPaperSize> paperSizes;
   final List<WindowsResolution> resolutions;
 
-  WindowsPrinterCapabilities(
-      {required this.paperSizes, required this.resolutions});
+  WindowsPrinterCapabilities({required this.paperSizes, required this.resolutions});
+}
+
+/// Exception thrown when the helper isolate encounters a fatal error or exits unexpectedly.
+class IsolateError extends Error {
+  final String message;
+  IsolateError(this.message);
+  @override
+  String toString() => 'IsolateError: $message';
 }
 
 // Request classes for printing operations
@@ -272,7 +278,12 @@ class _SubmitPdfJobRequest {
   final PdfPrintScaling scaling;
 
   const _SubmitPdfJobRequest(
-    this.id, this.printerName, this.pdfFilePath, this.docName, this.cupsOptions, this.scaling,
+    this.id,
+    this.printerName,
+    this.pdfFilePath,
+    this.docName,
+    this.cupsOptions,
+    this.scaling,
   );
 }
 
@@ -282,7 +293,6 @@ class _GetWindowsCapsRequest {
 
   const _GetWindowsCapsRequest(this.id, this.printerName);
 }
-
 
 // Response classes
 class _PrintResponse {
@@ -334,6 +344,14 @@ class _GetWindowsCapsResponse {
   const _GetWindowsCapsResponse(this.id, this.capabilities);
 }
 
+class _ErrorResponse {
+  final int id;
+  final Object error;
+  final StackTrace? stackTrace;
+
+  const _ErrorResponse(this.id, this.error, this.stackTrace);
+}
+
 const String _libName = 'printing_ffi'; // Updated library name
 
 final DynamicLibrary _dylib = () {
@@ -350,13 +368,12 @@ final PrintingFfiBindings _bindings = PrintingFfiBindings(
 ); // Updated to PrintingFfiBindings
 
 // Manually look up the new functions for submitting jobs.
-final _submit_raw_data_job = _dylib.lookupFunction<
-    Int32 Function(Pointer<Utf8>, Pointer<Uint8>, Int32, Pointer<Utf8>),
-    int Function(Pointer<Utf8>, Pointer<Uint8>, int, Pointer<Utf8>)>('submit_raw_data_job');
+final _submit_raw_data_job = _dylib.lookupFunction<Int32 Function(Pointer<Utf8>, Pointer<Uint8>, Int32, Pointer<Utf8>), int Function(Pointer<Utf8>, Pointer<Uint8>, int, Pointer<Utf8>)>('submit_raw_data_job');
 
-final _submit_pdf_job = _dylib.lookupFunction<
-    Int32 Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Int32, Int32, Pointer<Pointer<Utf8>>, Pointer<Pointer<Utf8>>),
-    int Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, int, int, Pointer<Pointer<Utf8>>, Pointer<Pointer<Utf8>>)>('submit_pdf_job');
+final _submit_pdf_job = _dylib
+    .lookupFunction<Int32 Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Int32, Int32, Pointer<Pointer<Utf8>>, Pointer<Pointer<Utf8>>), int Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, int, int, Pointer<Pointer<Utf8>>, Pointer<Pointer<Utf8>>)>(
+      'submit_pdf_job',
+    );
 
 // --- FFI Structs for Windows Capabilities ---
 final class _PaperSize extends Struct {
@@ -392,15 +409,9 @@ final class _WindowsPrinterCapabilitiesStruct extends Struct {
 }
 
 // --- FFI Lookups for Windows Capabilities ---
-final _get_windows_printer_capabilities = _dylib.lookupFunction<
-    Pointer<_WindowsPrinterCapabilitiesStruct> Function(Pointer<Utf8>),
-    Pointer<_WindowsPrinterCapabilitiesStruct> Function(
-        Pointer<Utf8>)>('get_windows_printer_capabilities');
+final _get_windows_printer_capabilities = _dylib.lookupFunction<Pointer<_WindowsPrinterCapabilitiesStruct> Function(Pointer<Utf8>), Pointer<_WindowsPrinterCapabilitiesStruct> Function(Pointer<Utf8>)>('get_windows_printer_capabilities');
 
-final _free_windows_printer_capabilities = _dylib.lookupFunction<
-    Void Function(Pointer<_WindowsPrinterCapabilitiesStruct>),
-    void Function(Pointer<_WindowsPrinterCapabilitiesStruct>)>(
-    'free_windows_printer_capabilities');
+final _free_windows_printer_capabilities = _dylib.lookupFunction<Void Function(Pointer<_WindowsPrinterCapabilitiesStruct>), void Function(Pointer<_WindowsPrinterCapabilitiesStruct>)>('free_windows_printer_capabilities');
 
 // Example functions from template
 int sum(int a, int b) => _bindings.sum(a, b);
@@ -606,18 +617,21 @@ Stream<PrintJob> _streamJobStatus({
     }
   }
 
-  controller = StreamController<PrintJob>(onListen: () async {
-    final jobId = await submitJob();
-    if (jobId <= 0) {
-      controller.addError(Exception('Failed to submit job to the print queue.'));
-      await controller.close();
-    } else {
-      poller = Timer.periodic(pollInterval, (_) => poll(jobId));
-      poll(jobId); // Initial poll
-    }
-  }, onCancel: () {
-    poller?.cancel();
-  });
+  controller = StreamController<PrintJob>(
+    onListen: () async {
+      final jobId = await submitJob();
+      if (jobId <= 0) {
+        controller.addError(Exception('Failed to submit job to the print queue.'));
+        await controller.close();
+      } else {
+        poller = Timer.periodic(pollInterval, (_) => poll(jobId));
+        poll(jobId); // Initial poll
+      }
+    },
+    onCancel: () {
+      poller?.cancel();
+    },
+  );
 
   return controller.stream;
 }
@@ -650,8 +664,7 @@ Future<List<CupsOption>> getSupportedCupsOptions(String printerName) async {
 /// paper sizes and resolutions.
 ///
 /// Returns `null` if not on Windows or if capabilities cannot be retrieved.
-Future<WindowsPrinterCapabilities?> getWindowsPrinterCapabilities(
-    String printerName) async {
+Future<WindowsPrinterCapabilities?> getWindowsPrinterCapabilities(String printerName) async {
   if (!Platform.isWindows) {
     return null;
   }
@@ -836,319 +849,437 @@ final Map<int, Completer<List<PrintJob>>> _printJobsRequests = <int, Completer<L
 final Map<int, Completer<bool>> _printJobActionRequests = <int, Completer<bool>>{};
 final Map<int, Completer<bool>> _printPdfRequests = <int, Completer<bool>>{};
 final Map<int, Completer<List<CupsOption>>> _getCupsOptionsRequests = <int, Completer<List<CupsOption>>>{};
-final Map<int, Completer<WindowsPrinterCapabilities?>> _getWindowsCapsRequests =
-    <int, Completer<WindowsPrinterCapabilities?>>{};
+final Map<int, Completer<WindowsPrinterCapabilities?>> _getWindowsCapsRequests = <int, Completer<WindowsPrinterCapabilities?>>{};
 final Map<int, Completer<int>> _submitRawDataJobRequests = <int, Completer<int>>{};
 final Map<int, Completer<int>> _submitPdfJobRequests = <int, Completer<int>>{};
 
+void _failAllPendingRequests(Object error, [StackTrace? stackTrace]) {
+  final allCompleters = [
+    ..._printRequests.values,
+    ..._printJobsRequests.values,
+    ..._printJobActionRequests.values,
+    ..._printPdfRequests.values,
+    ..._getCupsOptionsRequests.values,
+    ..._getWindowsCapsRequests.values,
+    ..._submitRawDataJobRequests.values,
+    ..._submitPdfJobRequests.values,
+  ];
+
+  for (final completer in allCompleters) {
+    if (!completer.isCompleted) {
+      completer.completeError(error, stackTrace);
+    }
+  }
+
+  _printRequests.clear();
+  _printJobsRequests.clear();
+  _printJobActionRequests.clear();
+  _printPdfRequests.clear();
+  _getCupsOptionsRequests.clear();
+  _getWindowsCapsRequests.clear();
+  _submitRawDataJobRequests.clear();
+  _submitPdfJobRequests.clear();
+}
+
 Future<SendPort> _helperIsolateSendPort = () async {
   final Completer<SendPort> completer = Completer<SendPort>();
-  final ReceivePort receivePort = ReceivePort()
-    ..listen((dynamic data) {
-      if (data is SendPort) {
-        completer.complete(data);
-        return;
-      }
+  final ReceivePort receivePort = ReceivePort(); // Move this line up here
 
-      if (data is _PrintResponse) {
-        final Completer<bool> completer = _printRequests[data.id]!;
-        _printRequests.remove(data.id);
-        completer.complete(data.result);
-        return;
-      }
-      if (data is _PrintJobsResponse) {
-        final Completer<List<PrintJob>> completer = _printJobsRequests[data.id]!;
-        _printJobsRequests.remove(data.id);
-        completer.complete(data.jobs);
-        return;
-      }
-      if (data is _PrintJobActionResponse) {
-        final Completer<bool> completer = _printJobActionRequests[data.id]!;
-        _printJobActionRequests.remove(data.id);
-        completer.complete(data.result);
-        return;
-      }
-      if (data is _PrintPdfResponse) {
-        final Completer<bool> completer = _printPdfRequests[data.id]!;
-        _printPdfRequests.remove(data.id);
-        completer.complete(data.result);
-        return;
-      }
-      if (data is _GetCupsOptionsResponse) {
-        final Completer<List<CupsOption>> completer = _getCupsOptionsRequests[data.id]!;
-        _getCupsOptionsRequests.remove(data.id);
-        completer.complete(data.options);
-        return;
-      }
-      if (data is _SubmitJobResponse) {
-        if (_submitRawDataJobRequests.containsKey(data.id)) {
-          _submitRawDataJobRequests.remove(data.id)!.complete(data.jobId);
-        } else if (_submitPdfJobRequests.containsKey(data.id)) {
-          _submitPdfJobRequests.remove(data.id)!.complete(data.jobId);
-        }
-        return;
-      }
-      if (data is _GetWindowsCapsResponse) {
-        _getWindowsCapsRequests.remove(data.id)!.complete(data.capabilities);
-        return;
-      }
-      throw UnsupportedError('Unsupported message type: ${data.runtimeType}');
-    });
+  receivePort.listen((dynamic data) {
+    if (data is SendPort) {
+      completer.complete(data);
+      return;
+    }
 
-  await Isolate.spawn((SendPort sendPort) async {
-    final ReceivePort helperReceivePort = ReceivePort()
-      ..listen((dynamic data) {
-        if (data is _PrintRequest) {
-          final namePtr = data.printerName.toNativeUtf8();
-          final docNamePtr = data.docName.toNativeUtf8();
-          final dataPtr = malloc<Uint8>(data.data.length);
-          for (var i = 0; i < data.data.length; i++) {
-            dataPtr[i] = data.data[i];
-          }
-          try {
-            final bool result = _bindings.raw_data_to_printer(
-              namePtr.cast(),
-              dataPtr,
-              data.data.length,
-              docNamePtr.cast(),
-            );
-            sendPort.send(_PrintResponse(data.id, result));
-          } finally {
-            malloc.free(namePtr);
-            malloc.free(docNamePtr);
-            malloc.free(dataPtr);
-          }
-        } else if (data is _PrintJobsRequest) {
-          final namePtr = data.printerName.toNativeUtf8();
-          try {
-            final jobListPtr = _bindings.get_print_jobs(namePtr.cast());
-            final jobs = <PrintJob>[];
-            if (jobListPtr != nullptr) {
+    // Handle fatal isolate errors
+    if (data is List && data.length == 2 && data[0] is String) {
+      final error = IsolateError('Uncaught exception in helper isolate: ${data[0]}');
+      final stack = StackTrace.fromString(data[1].toString());
+      if (!completer.isCompleted) completer.completeError(error, stack);
+      _failAllPendingRequests(error, stack);
+      receivePort.close();
+      return;
+    }
+
+    // Handle unexpected isolate exit
+    if (data == null) {
+      final error = IsolateError('Helper isolate exited unexpectedly.');
+      if (!completer.isCompleted) completer.completeError(error);
+      _failAllPendingRequests(error);
+      receivePort.close();
+    }
+
+    if (data is _PrintResponse) {
+      final Completer<bool> completer = _printRequests[data.id]!;
+      _printRequests.remove(data.id);
+      completer.complete(data.result);
+      return;
+    }
+    if (data is _PrintJobsResponse) {
+      final Completer<List<PrintJob>> completer = _printJobsRequests[data.id]!;
+      _printJobsRequests.remove(data.id);
+      completer.complete(data.jobs);
+      return;
+    }
+    if (data is _PrintJobActionResponse) {
+      final Completer<bool> completer = _printJobActionRequests[data.id]!;
+      _printJobActionRequests.remove(data.id);
+      completer.complete(data.result);
+      return;
+    }
+    if (data is _PrintPdfResponse) {
+      final Completer<bool> completer = _printPdfRequests[data.id]!;
+      _printPdfRequests.remove(data.id);
+      completer.complete(data.result);
+      return;
+    }
+    if (data is _GetCupsOptionsResponse) {
+      final Completer<List<CupsOption>> completer = _getCupsOptionsRequests[data.id]!;
+      _getCupsOptionsRequests.remove(data.id);
+      completer.complete(data.options);
+      return;
+    }
+    if (data is _SubmitJobResponse) {
+      if (_submitRawDataJobRequests.containsKey(data.id)) {
+        _submitRawDataJobRequests.remove(data.id)!.complete(data.jobId);
+      } else if (_submitPdfJobRequests.containsKey(data.id)) {
+        _submitPdfJobRequests.remove(data.id)!.complete(data.jobId);
+      }
+      return;
+    }
+    if (data is _GetWindowsCapsResponse) {
+      _getWindowsCapsRequests.remove(data.id)!.complete(data.capabilities);
+      return;
+    }
+    if (data is _ErrorResponse) {
+      final Completer? requestCompleter;
+      if (_printRequests.containsKey(data.id)) {
+        requestCompleter = _printRequests.remove(data.id);
+      } else if (_printJobsRequests.containsKey(data.id)) {
+        requestCompleter = _printJobsRequests.remove(data.id);
+      } else if (_printJobActionRequests.containsKey(data.id)) {
+        requestCompleter = _printJobActionRequests.remove(data.id);
+      } else if (_printPdfRequests.containsKey(data.id)) {
+        requestCompleter = _printPdfRequests.remove(data.id);
+      } else if (_getCupsOptionsRequests.containsKey(data.id)) {
+        requestCompleter = _getCupsOptionsRequests.remove(data.id);
+      } else if (_submitRawDataJobRequests.containsKey(data.id)) {
+        requestCompleter = _submitRawDataJobRequests.remove(data.id);
+      } else if (_submitPdfJobRequests.containsKey(data.id)) {
+        requestCompleter = _submitPdfJobRequests.remove(data.id);
+      } else if (_getWindowsCapsRequests.containsKey(data.id)) {
+        requestCompleter = _getWindowsCapsRequests.remove(data.id);
+      } else {
+        requestCompleter = null;
+      }
+      requestCompleter?.completeError(data.error, data.stackTrace);
+      return;
+    }
+    throw UnsupportedError('Unsupported message type: ${data.runtimeType}');
+  });
+
+  await Isolate.spawn(
+    (SendPort sendPort) async {
+      final ReceivePort helperReceivePort = ReceivePort()
+        ..listen((dynamic data) {
+          // ... rest of the isolate code remains the same
+          if (data is _PrintRequest) {
+            try {
+              final namePtr = data.printerName.toNativeUtf8();
+              final docNamePtr = data.docName.toNativeUtf8();
+              final dataPtr = malloc<Uint8>(data.data.length);
+              for (var i = 0; i < data.data.length; i++) {
+                dataPtr[i] = data.data[i];
+              }
               try {
-                final jobList = jobListPtr.ref;
-                for (var i = 0; i < jobList.count; i++) {
-                  final jobInfo = jobList.jobs[i];
-                  jobs.add(
-                    PrintJob(
-                      jobInfo.id,
-                      jobInfo.title.cast<Utf8>().toDartString(),
-                      jobInfo.status,
-                    ),
-                  );
-                }
-              } finally {
-                // IMPORTANT: Free the memory for the job list.
-                _bindings.free_job_list(jobListPtr);
-              }
-            }
-            sendPort.send(_PrintJobsResponse(data.id, jobs));
-          } finally {
-            malloc.free(namePtr);
-          }
-        } else if (data is _PrintJobActionRequest) {
-          final namePtr = data.printerName.toNativeUtf8();
-          try {
-            bool result = false;
-            if (data.action == 'pause') {
-              result = _bindings.pause_print_job(namePtr.cast(), data.jobId);
-            } else if (data.action == 'resume') {
-              result = _bindings.resume_print_job(namePtr.cast(), data.jobId);
-            } else if (data.action == 'cancel') {
-              result = _bindings.cancel_print_job(namePtr.cast(), data.jobId);
-            }
-            sendPort.send(_PrintJobActionResponse(data.id, result));
-          } finally {
-            malloc.free(namePtr);
-          }
-        } else if (data is _PrintPdfRequest) {
-          final namePtr = data.printerName.toNativeUtf8();
-          final pathPtr = data.pdfFilePath.toNativeUtf8();
-          final docNamePtr = data.docName.toNativeUtf8();
-          try {
-            // Handle cupsOptions for native call
-            final int numOptions = (Platform.isMacOS || Platform.isLinux) ? data.cupsOptions?.length ?? 0 : 0;
-            Pointer<Pointer<Utf8>> keysPtr = nullptr;
-            Pointer<Pointer<Utf8>> valuesPtr = nullptr;
-
-            if (numOptions > 0) {
-              keysPtr = malloc<Pointer<Utf8>>(numOptions);
-              valuesPtr = malloc<Pointer<Utf8>>(numOptions);
-              int i = 0;
-              for (var entry in data.cupsOptions!.entries) {
-                keysPtr[i] = entry.key.toNativeUtf8();
-                valuesPtr[i] = entry.value.toNativeUtf8();
-                i++;
-              }
-            }
-
-            final bool result = _bindings.print_pdf(
-              namePtr.cast(),
-              pathPtr.cast(),
-              docNamePtr.cast(),
-              data.scaling.index,
-              numOptions,
-              keysPtr.cast(),
-              valuesPtr.cast(),
-            );
-            sendPort.send(_PrintPdfResponse(data.id, result));
-
-            if (numOptions > 0) {
-              for (var i = 0; i < numOptions; i++) {
-                malloc.free(keysPtr[i]);
-                malloc.free(valuesPtr[i]);
-              }
-              malloc.free(keysPtr);
-              malloc.free(valuesPtr);
-            }
-          } finally {
-            malloc.free(namePtr);
-            malloc.free(pathPtr);
-            malloc.free(docNamePtr);
-          }
-        } else if (data is _GetCupsOptionsRequest) {
-          final namePtr = data.printerName.toNativeUtf8();
-          try {
-            final optionListPtr = _bindings.get_supported_cups_options(namePtr.cast());
-            final options = <CupsOption>[];
-            if (optionListPtr != nullptr) {
-              try {
-                final optionList = optionListPtr.ref;
-                for (var i = 0; i < optionList.count; i++) {
-                  final optionInfo = optionList.options[i];
-                  final supportedValues = <CupsOptionChoice>[];
-                  final choiceList = optionInfo.supported_values;
-                  for (var j = 0; j < choiceList.count; j++) {
-                    final choiceInfo = choiceList.choices[j];
-                    supportedValues.add(
-                      CupsOptionChoice(
-                        choice: choiceInfo.choice.cast<Utf8>().toDartString(),
-                        text: choiceInfo.text.cast<Utf8>().toDartString(),
-                      ),
-                    );
-                  }
-                  options.add(
-                    CupsOption(
-                      name: optionInfo.name.cast<Utf8>().toDartString(),
-                      defaultValue: optionInfo.default_value.cast<Utf8>().toDartString(),
-                      supportedValues: supportedValues,
-                    ),
-                  );
-                }
-              } finally {
-                _bindings.free_cups_option_list(optionListPtr);
-              }
-            }
-            sendPort.send(_GetCupsOptionsResponse(data.id, options));
-          } finally {
-            malloc.free(namePtr);
-          }
-        } else if (data is _SubmitRawDataJobRequest) {
-          final namePtr = data.printerName.toNativeUtf8();
-          final docNamePtr = data.docName.toNativeUtf8();
-          final dataPtr = malloc<Uint8>(data.data.length);
-          for (var i = 0; i < data.data.length; i++) {
-            dataPtr[i] = data.data[i];
-          }
-          try {
-            final int jobId = _submit_raw_data_job(
-              namePtr.cast(),
-              dataPtr,
-              data.data.length,
-              docNamePtr.cast(),
-            );
-            sendPort.send(_SubmitJobResponse(data.id, jobId));
-          } finally {
-            malloc.free(namePtr);
-            malloc.free(docNamePtr);
-            malloc.free(dataPtr);
-          }
-        } else if (data is _SubmitPdfJobRequest) {
-          final namePtr = data.printerName.toNativeUtf8();
-          final pathPtr = data.pdfFilePath.toNativeUtf8();
-          final docNamePtr = data.docName.toNativeUtf8();
-          try {
-            final int numOptions = (Platform.isMacOS || Platform.isLinux) ? data.cupsOptions?.length ?? 0 : 0;
-            Pointer<Pointer<Utf8>> keysPtr = nullptr;
-            Pointer<Pointer<Utf8>> valuesPtr = nullptr;
-
-            if (numOptions > 0) {
-              keysPtr = malloc<Pointer<Utf8>>(numOptions);
-              valuesPtr = malloc<Pointer<Utf8>>(numOptions);
-              int i = 0;
-              for (var entry in data.cupsOptions!.entries) {
-                keysPtr[i] = entry.key.toNativeUtf8();
-                valuesPtr[i] = entry.value.toNativeUtf8();
-                i++;
-              }
-            }
-
-            final int jobId = _submit_pdf_job(
-              namePtr.cast(), pathPtr.cast(), docNamePtr.cast(),
-              data.scaling.index, numOptions,
-              keysPtr.cast(), valuesPtr.cast(),
-            );
-            sendPort.send(_SubmitJobResponse(data.id, jobId));
-
-            if (numOptions > 0) {
-              for (var i = 0; i < numOptions; i++) {
-                malloc.free(keysPtr[i]);
-                malloc.free(valuesPtr[i]);
-              }
-              malloc.free(keysPtr);
-              malloc.free(valuesPtr);
-            }
-          } finally {
-            malloc.free(namePtr);
-            malloc.free(pathPtr);
-            malloc.free(docNamePtr);
-          }
-        } else if (data is _GetWindowsCapsRequest) {
-          final namePtr = data.printerName.toNativeUtf8();
-          try {
-            final capsPtr = _get_windows_printer_capabilities(namePtr.cast());
-            if (capsPtr == nullptr) {
-              sendPort.send(_GetWindowsCapsResponse(data.id, null));
-            } else {
-              try {
-                final capsStruct = capsPtr.ref;
-                final paperSizes = <WindowsPaperSize>[];
-                for (var i = 0; i < capsStruct.paper_sizes.count; i++) {
-                  final paperStruct = capsStruct.paper_sizes.papers[i];
-                  paperSizes.add(WindowsPaperSize(
-                    name: paperStruct.name.toDartString(),
-                    widthMillimeters: paperStruct.width_mm,
-                    heightMillimeters: paperStruct.height_mm,
-                  ));
-                }
-                final resolutions = <WindowsResolution>[];
-                for (var i = 0; i < capsStruct.resolutions.count; i++) {
-                  final resStruct = capsStruct.resolutions.resolutions[i];
-                  resolutions.add(WindowsResolution(
-                    xdpi: resStruct.x_dpi,
-                    ydpi: resStruct.y_dpi,
-                  ));
-                }
-                final capabilities = WindowsPrinterCapabilities(
-                  paperSizes: paperSizes,
-                  resolutions: resolutions,
+                final bool result = _bindings.raw_data_to_printer(
+                  namePtr.cast(),
+                  dataPtr,
+                  data.data.length,
+                  docNamePtr.cast(),
                 );
-                sendPort.send(_GetWindowsCapsResponse(data.id, capabilities));
+                sendPort.send(_PrintResponse(data.id, result));
               } finally {
-                _free_windows_printer_capabilities(capsPtr);
+                malloc.free(namePtr);
+                malloc.free(docNamePtr);
+                malloc.free(dataPtr);
               }
+            } catch (e, s) {
+              sendPort.send(_ErrorResponse(data.id, e, s));
             }
-          } finally {
-            malloc.free(namePtr);
-          }
-        } else {
-          throw UnsupportedError(
-            'Unsupported message type: ${data.runtimeType}',
-          );
-        }
-      });
+          } else if (data is _PrintJobsRequest) {
+            try {
+              final namePtr = data.printerName.toNativeUtf8();
+              try {
+                final jobListPtr = _bindings.get_print_jobs(namePtr.cast());
+                final jobs = <PrintJob>[];
+                if (jobListPtr != nullptr) {
+                  try {
+                    final jobList = jobListPtr.ref;
+                    for (var i = 0; i < jobList.count; i++) {
+                      final jobInfo = jobList.jobs[i];
+                      jobs.add(
+                        PrintJob(
+                          jobInfo.id,
+                          jobInfo.title.cast<Utf8>().toDartString(),
+                          jobInfo.status,
+                        ),
+                      );
+                    }
+                  } finally {
+                    // IMPORTANT: Free the memory for the job list.
+                    _bindings.free_job_list(jobListPtr);
+                  }
+                }
+                sendPort.send(_PrintJobsResponse(data.id, jobs));
+              } finally {
+                malloc.free(namePtr);
+              }
+            } catch (e, s) {
+              sendPort.send(_ErrorResponse(data.id, e, s));
+            }
+          } else if (data is _PrintJobActionRequest) {
+            try {
+              final namePtr = data.printerName.toNativeUtf8();
+              try {
+                bool result = false;
+                if (data.action == 'pause') {
+                  result = _bindings.pause_print_job(namePtr.cast(), data.jobId);
+                } else if (data.action == 'resume') {
+                  result = _bindings.resume_print_job(namePtr.cast(), data.jobId);
+                } else if (data.action == 'cancel') {
+                  result = _bindings.cancel_print_job(namePtr.cast(), data.jobId);
+                }
+                sendPort.send(_PrintJobActionResponse(data.id, result));
+              } finally {
+                malloc.free(namePtr);
+              }
+            } catch (e, s) {
+              sendPort.send(_ErrorResponse(data.id, e, s));
+            }
+          } else if (data is _PrintPdfRequest) {
+            try {
+              final namePtr = data.printerName.toNativeUtf8();
+              final pathPtr = data.pdfFilePath.toNativeUtf8();
+              final docNamePtr = data.docName.toNativeUtf8();
+              try {
+                // Handle cupsOptions for native call
+                final int numOptions = (Platform.isMacOS || Platform.isLinux) ? data.cupsOptions?.length ?? 0 : 0;
+                Pointer<Pointer<Utf8>> keysPtr = nullptr;
+                Pointer<Pointer<Utf8>> valuesPtr = nullptr;
 
-    sendPort.send(helperReceivePort.sendPort);
-  }, receivePort.sendPort);
+                if (numOptions > 0) {
+                  keysPtr = malloc<Pointer<Utf8>>(numOptions);
+                  valuesPtr = malloc<Pointer<Utf8>>(numOptions);
+                  int i = 0;
+                  for (var entry in data.cupsOptions!.entries) {
+                    keysPtr[i] = entry.key.toNativeUtf8();
+                    valuesPtr[i] = entry.value.toNativeUtf8();
+                    i++;
+                  }
+                }
+
+                final bool result = _bindings.print_pdf(
+                  namePtr.cast(),
+                  pathPtr.cast(),
+                  docNamePtr.cast(),
+                  data.scaling.index,
+                  numOptions,
+                  keysPtr.cast(),
+                  valuesPtr.cast(),
+                );
+                sendPort.send(_PrintPdfResponse(data.id, result));
+
+                if (numOptions > 0) {
+                  for (var i = 0; i < numOptions; i++) {
+                    malloc.free(keysPtr[i]);
+                    malloc.free(valuesPtr[i]);
+                  }
+                  malloc.free(keysPtr);
+                  malloc.free(valuesPtr);
+                }
+              } finally {
+                malloc.free(namePtr);
+                malloc.free(pathPtr);
+                malloc.free(docNamePtr);
+              }
+            } catch (e, s) {
+              sendPort.send(_ErrorResponse(data.id, e, s));
+            }
+          } else if (data is _GetCupsOptionsRequest) {
+            try {
+              final namePtr = data.printerName.toNativeUtf8();
+              try {
+                final optionListPtr = _bindings.get_supported_cups_options(namePtr.cast());
+                final options = <CupsOption>[];
+                if (optionListPtr != nullptr) {
+                  try {
+                    final optionList = optionListPtr.ref;
+                    for (var i = 0; i < optionList.count; i++) {
+                      final optionInfo = optionList.options[i];
+                      final supportedValues = <CupsOptionChoice>[];
+                      final choiceList = optionInfo.supported_values;
+                      for (var j = 0; j < choiceList.count; j++) {
+                        final choiceInfo = choiceList.choices[j];
+                        supportedValues.add(
+                          CupsOptionChoice(
+                            choice: choiceInfo.choice.cast<Utf8>().toDartString(),
+                            text: choiceInfo.text.cast<Utf8>().toDartString(),
+                          ),
+                        );
+                      }
+                      options.add(
+                        CupsOption(
+                          name: optionInfo.name.cast<Utf8>().toDartString(),
+                          defaultValue: optionInfo.default_value.cast<Utf8>().toDartString(),
+                          supportedValues: supportedValues,
+                        ),
+                      );
+                    }
+                  } finally {
+                    _bindings.free_cups_option_list(optionListPtr);
+                  }
+                }
+                sendPort.send(_GetCupsOptionsResponse(data.id, options));
+              } finally {
+                malloc.free(namePtr);
+              }
+            } catch (e, s) {
+              sendPort.send(_ErrorResponse(data.id, e, s));
+            }
+          } else if (data is _SubmitRawDataJobRequest) {
+            try {
+              final namePtr = data.printerName.toNativeUtf8();
+              final docNamePtr = data.docName.toNativeUtf8();
+              final dataPtr = malloc<Uint8>(data.data.length);
+              for (var i = 0; i < data.data.length; i++) {
+                dataPtr[i] = data.data[i];
+              }
+              try {
+                final int jobId = _submit_raw_data_job(
+                  namePtr.cast(),
+                  dataPtr,
+                  data.data.length,
+                  docNamePtr.cast(),
+                );
+                sendPort.send(_SubmitJobResponse(data.id, jobId));
+              } finally {
+                malloc.free(namePtr);
+                malloc.free(docNamePtr);
+                malloc.free(dataPtr);
+              }
+            } catch (e, s) {
+              sendPort.send(_ErrorResponse(data.id, e, s));
+            }
+          } else if (data is _SubmitPdfJobRequest) {
+            try {
+              final namePtr = data.printerName.toNativeUtf8();
+              final pathPtr = data.pdfFilePath.toNativeUtf8();
+              final docNamePtr = data.docName.toNativeUtf8();
+              try {
+                final int numOptions = (Platform.isMacOS || Platform.isLinux) ? data.cupsOptions?.length ?? 0 : 0;
+                Pointer<Pointer<Utf8>> keysPtr = nullptr;
+                Pointer<Pointer<Utf8>> valuesPtr = nullptr;
+
+                if (numOptions > 0) {
+                  keysPtr = malloc<Pointer<Utf8>>(numOptions);
+                  valuesPtr = malloc<Pointer<Utf8>>(numOptions);
+                  int i = 0;
+                  for (var entry in data.cupsOptions!.entries) {
+                    keysPtr[i] = entry.key.toNativeUtf8();
+                    valuesPtr[i] = entry.value.toNativeUtf8();
+                    i++;
+                  }
+                }
+
+                final int jobId = _submit_pdf_job(
+                  namePtr.cast(),
+                  pathPtr.cast(),
+                  docNamePtr.cast(),
+                  data.scaling.index,
+                  numOptions,
+                  keysPtr.cast(),
+                  valuesPtr.cast(),
+                );
+                sendPort.send(_SubmitJobResponse(data.id, jobId));
+
+                if (numOptions > 0) {
+                  for (var i = 0; i < numOptions; i++) {
+                    malloc.free(keysPtr[i]);
+                    malloc.free(valuesPtr[i]);
+                  }
+                  malloc.free(keysPtr);
+                  malloc.free(valuesPtr);
+                }
+              } finally {
+                malloc.free(namePtr);
+                malloc.free(pathPtr);
+                malloc.free(docNamePtr);
+              }
+            } catch (e, s) {
+              sendPort.send(_ErrorResponse(data.id, e, s));
+            }
+          } else if (data is _GetWindowsCapsRequest) {
+            try {
+              final namePtr = data.printerName.toNativeUtf8();
+              try {
+                final capsPtr = _get_windows_printer_capabilities(namePtr.cast());
+                if (capsPtr == nullptr) {
+                  sendPort.send(_GetWindowsCapsResponse(data.id, null));
+                } else {
+                  try {
+                    final capsStruct = capsPtr.ref;
+                    final paperSizes = <WindowsPaperSize>[];
+                    for (var i = 0; i < capsStruct.paper_sizes.count; i++) {
+                      final paperStruct = capsStruct.paper_sizes.papers[i];
+                      paperSizes.add(
+                        WindowsPaperSize(
+                          name: paperStruct.name.toDartString(),
+                          widthMillimeters: paperStruct.width_mm,
+                          heightMillimeters: paperStruct.height_mm,
+                        ),
+                      );
+                    }
+                    final resolutions = <WindowsResolution>[];
+                    for (var i = 0; i < capsStruct.resolutions.count; i++) {
+                      final resStruct = capsStruct.resolutions.resolutions[i];
+                      resolutions.add(
+                        WindowsResolution(
+                          xdpi: resStruct.x_dpi,
+                          ydpi: resStruct.y_dpi,
+                        ),
+                      );
+                    }
+                    final capabilities = WindowsPrinterCapabilities(
+                      paperSizes: paperSizes,
+                      resolutions: resolutions,
+                    );
+                    sendPort.send(_GetWindowsCapsResponse(data.id, capabilities));
+                  } finally {
+                    _free_windows_printer_capabilities(capsPtr);
+                  }
+                }
+              } finally {
+                malloc.free(namePtr);
+              }
+            } catch (e, s) {
+              sendPort.send(_ErrorResponse(data.id, e, s));
+            }
+          } else {
+            throw UnsupportedError(
+              'Unsupported message type: ${data.runtimeType}',
+            );
+          }
+        });
+
+      sendPort.send(helperReceivePort.sendPort);
+    },
+    receivePort.sendPort,
+    // Now receivePort is properly declared and can be referenced
+    onError: receivePort.sendPort,
+    onExit: receivePort.sendPort,
+    // ignore: invalid_return_type_for_catch_error
+  ).catchError((e, s) => completer.completeError(e, s));
 
   return completer.future;
 }();
