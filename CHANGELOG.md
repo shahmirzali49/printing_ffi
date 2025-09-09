@@ -1,10 +1,10 @@
 
 ## 0.0.5
 
-* **FEAT**: Added support for `copies` and `pageRange` when printing PDFs on Windows and CUPS-based systems.
-* **FEAT**: Refactored the `pageRange` parameter to use a type-safe `PageRange` class, improving API clarity and preventing invalid format errors.
-* **DOCS**: Updated documentation for new printing parameters and the `PageRange` class.
-* **EXAMPLE**: Added UI controls for setting the number of copies and page range in the example app.
+* **FEAT**: Added support for `copies` and `pageRange` when printing PDFs on Windows and CUPS-based systems. 🔢
+* **FEAT**: Refactored the `pageRange` parameter to use a type-safe `PageRange` class, improving API clarity and preventing invalid format errors. 🔒
+* **DOCS**: Updated documentation for new printing parameters and the `PageRange` class. 📝
+* **EXAMPLE**: Added UI controls for setting the number of copies and page range in the example app. 🎨
 
 ## 0.0.4
 
