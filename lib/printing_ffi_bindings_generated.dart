@@ -106,6 +106,8 @@ class PrintingFfiBindings {
     ffi.Pointer<ffi.Char> pdf_file_path,
     ffi.Pointer<ffi.Char> doc_name,
     int scaling_mode,
+    int copies,
+    ffi.Pointer<ffi.Char> page_range,
     int num_options,
     ffi.Pointer<ffi.Pointer<ffi.Char>> option_keys,
     ffi.Pointer<ffi.Pointer<ffi.Char>> option_values,
@@ -115,14 +117,17 @@ class PrintingFfiBindings {
       pdf_file_path,
       doc_name,
       scaling_mode,
+      copies,
+      page_range,
       num_options,
       option_keys,
       option_values,
     );
   }
 
-  late final _print_pdfPtr = _lookup<ffi.NativeFunction<ffi.Bool Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, ffi.Int, ffi.Int, ffi.Pointer<ffi.Pointer<ffi.Char>>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>>('print_pdf');
-  late final _print_pdf = _print_pdfPtr.asFunction<bool Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, int, int, ffi.Pointer<ffi.Pointer<ffi.Char>>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+  late final _print_pdfPtr =
+      _lookup<ffi.NativeFunction<ffi.Bool Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, ffi.Int, ffi.Int, ffi.Pointer<ffi.Char>, ffi.Int, ffi.Pointer<ffi.Pointer<ffi.Char>>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>>('print_pdf');
+  late final _print_pdf = _print_pdfPtr.asFunction<bool Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, int, int, ffi.Pointer<ffi.Char>, int, ffi.Pointer<ffi.Pointer<ffi.Char>>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
 
   ffi.Pointer<JobList> get_print_jobs(
     ffi.Pointer<ffi.Char> printer_name,
@@ -252,6 +257,8 @@ class PrintingFfiBindings {
     ffi.Pointer<ffi.Char> pdf_file_path,
     ffi.Pointer<ffi.Char> doc_name,
     int scaling_mode,
+    int copies,
+    ffi.Pointer<ffi.Char> page_range,
     int num_options,
     ffi.Pointer<ffi.Pointer<ffi.Char>> option_keys,
     ffi.Pointer<ffi.Pointer<ffi.Char>> option_values,
@@ -261,14 +268,19 @@ class PrintingFfiBindings {
       pdf_file_path,
       doc_name,
       scaling_mode,
+      copies,
+      page_range,
       num_options,
       option_keys,
       option_values,
     );
   }
 
-  late final _submit_pdf_jobPtr = _lookup<ffi.NativeFunction<ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, ffi.Int, ffi.Int, ffi.Pointer<ffi.Pointer<ffi.Char>>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>>('submit_pdf_job');
-  late final _submit_pdf_job = _submit_pdf_jobPtr.asFunction<int Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, int, int, ffi.Pointer<ffi.Pointer<ffi.Char>>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+  late final _submit_pdf_jobPtr =
+      _lookup<ffi.NativeFunction<ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, ffi.Int, ffi.Int, ffi.Pointer<ffi.Char>, ffi.Int, ffi.Pointer<ffi.Pointer<ffi.Char>>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
+        'submit_pdf_job',
+      );
+  late final _submit_pdf_job = _submit_pdf_jobPtr.asFunction<int Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, int, int, ffi.Pointer<ffi.Char>, int, ffi.Pointer<ffi.Pointer<ffi.Char>>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
 }
 
 /// Struct for returning printer information

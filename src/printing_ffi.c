@@ -14,6 +14,7 @@
 #include <stdlib.h>
 #include <limits.h>
 #endif
+#include <ctype.h>
 
 #ifdef _WIN32
 // Include the main Pdfium header. Ensure this is in your src/ directory.
@@ -59,6 +60,65 @@ static char* to_utf8(const wchar_t* utf16_str) {
     if (!utf8_str) return strdup(""); // Should not happen
     WideCharToMultiByte(CP_UTF8, 0, utf16_str, -1, utf8_str, len, NULL, NULL);
     return utf8_str;
+}
+
+// Helper function to parse page ranges.
+// `range_str`: e.g., "1-3,5,8-10"
+// `page_flags`: A pre-allocated array of bools of size `total_pages`.
+// `total_pages`: Total number of pages in the document.
+// Returns true on success, false on parsing error.
+static bool parse_page_range(const char* range_str, bool* page_flags, int total_pages) {
+    // If range is empty or null, mark all pages for printing.
+    if (!range_str || strlen(range_str) == 0) {
+        for (int i = 0; i < total_pages; i++) page_flags[i] = true;
+        return true;
+    }
+
+    // Otherwise, first mark all as false.
+    for (int i = 0; i < total_pages; i++) page_flags[i] = false;
+
+    char* str = strdup(range_str);
+    if (!str) return false;
+    char* to_free = str;
+
+    char* token = strtok(str, ",");
+    while (token) {
+        // Trim whitespace
+        while (isspace((unsigned char)*token)) token++;
+        char* end = token + strlen(token) - 1;
+        while (end > token && isspace((unsigned char)*end)) *end-- = '\0';
+
+        if (strlen(token) == 0) {
+            token = strtok(NULL, ",");
+            continue;
+        }
+
+        int start_page, end_page;
+        char* dash = strchr(token, '-');
+
+        if (dash) { // It's a range like "3-5"
+            *dash = '\0';
+            start_page = atoi(token);
+            end_page = atoi(dash + 1);
+        } else { // It's a single page like "7"
+            start_page = end_page = atoi(token);
+        }
+
+        // Validate input
+        if (start_page < 1 || end_page < start_page || end_page > total_pages || start_page > total_pages) {
+            LOG("Invalid page range value: start=%d, end=%d, total=%d", start_page, end_page, total_pages);
+            free(to_free);
+            return false; // Invalid range
+        }
+
+        // Mark pages to be printed (adjusting for 0-based index)
+        for (int i = start_page; i <= end_page; i++) {
+            page_flags[i - 1] = true;
+        }
+        token = strtok(NULL, ",");
+    }
+    free(to_free);
+    return true;
 }
 #endif
 
@@ -412,7 +472,7 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8
 #endif
 }
 
-FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_path, const char* doc_name, int scaling_mode, int num_options, const char** option_keys, const char** option_values) {
+FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_path, const char* doc_name, int scaling_mode, int copies, const char* page_range, int num_options, const char** option_keys, const char** option_values) {
     LOG("print_pdf called for printer: '%s', path: '%s', doc: '%s'", printer_name, pdf_file_path, doc_name);
 #ifdef _WIN32
     if (!s_pdfium_initialized) {
@@ -435,13 +495,42 @@ FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_
         return false;
     }
 
+    // --- Set copies via DEVMODE ---
+    HANDLE hPrinter;
+    if (!OpenPrinterW(printer_name_w, &hPrinter, NULL)) {
+        LOG("OpenPrinterW failed with error %lu", GetLastError());
+        FPDF_CloseDocument(doc);
+        free(printer_name_w);
+        return false;
+    }
+    DEVMODEW* pDevMode = NULL;
+    LONG devModeSize = DocumentPropertiesW(NULL, hPrinter, printer_name_w, NULL, NULL, 0);
+    if (devModeSize > 0) {
+        pDevMode = (DEVMODEW*)malloc(devModeSize);
+        if (pDevMode) {
+            if (DocumentPropertiesW(NULL, hPrinter, printer_name_w, pDevMode, NULL, DM_OUT_BUFFER) == IDOK) {
+                if (copies > 1) {
+                    pDevMode->dmFields |= DM_COPIES;
+                    pDevMode->dmCopies = copies;
+                    // Validate the changes
+                    DocumentPropertiesW(NULL, hPrinter, printer_name_w, pDevMode, pDevMode, DM_IN_BUFFER | DM_OUT_BUFFER);
+                }
+            } else {
+                free(pDevMode);
+                pDevMode = NULL;
+            }
+        }
+    }
+    ClosePrinter(hPrinter);
+
     wchar_t* printer_name_w = to_utf16(printer_name);
     if (!printer_name_w) {
         LOG("Failed to convert printer name to UTF-16");
         FPDF_CloseDocument(doc);
         return false;
     }
-    HDC hdc = CreateDCW(L"WINSPOOL", printer_name_w, NULL, NULL);
+    HDC hdc = CreateDCW(L"WINSPOOL", printer_name_w, NULL, pDevMode);
+    if (pDevMode) free(pDevMode);
     free(printer_name_w);
     if (!hdc) {
         LOG("CreateDCA failed for printer '%s' with error %lu", printer_name, GetLastError());
@@ -460,12 +549,34 @@ FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_
     }
 
     int page_count = FPDF_GetPageCount(doc);
+    bool* pages_to_print = (bool*)malloc(page_count * sizeof(bool));
+    if (!pages_to_print) {
+        LOG("Failed to allocate memory for page range flags.");
+        AbortDoc(hdc);
+        DeleteDC(hdc);
+        FPDF_CloseDocument(doc);
+        return false;
+    }
+    if (!parse_page_range(page_range, pages_to_print, page_count)) {
+        LOG("Invalid page range string provided: %s", page_range);
+        free(pages_to_print);
+        AbortDoc(hdc);
+        DeleteDC(hdc);
+        FPDF_CloseDocument(doc);
+        return false;
+    }
+
     bool success = true;
     for (int i = 0; i < page_count; ++i) {
         if (StartPage(hdc) <= 0) {
             LOG("StartPage failed for page %d with error %lu", i, GetLastError());
             success = false;
             break;
+        }
+
+        if (!pages_to_print[i]) {
+            EndPage(hdc);
+            continue;
         }
 
         FPDF_PAGE page = FPDF_LoadPage(doc, i);
@@ -568,6 +679,7 @@ FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_
         if (!success) break;
     }
 
+    free(pages_to_print);
     if (success) {
         EndDoc(hdc);
     } else {
@@ -1093,7 +1205,7 @@ FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char* printer_name, const ui
 #endif
 }
 
-FFI_PLUGIN_EXPORT int32_t submit_pdf_job(const char* printer_name, const char* pdf_file_path, const char* doc_name, int scaling_mode, int num_options, const char** option_keys, const char** option_values) {
+FFI_PLUGIN_EXPORT int32_t submit_pdf_job(const char* printer_name, const char* pdf_file_path, const char* doc_name, int scaling_mode, int copies, const char* page_range, int num_options, const char** option_keys, const char** option_values) {
     LOG("submit_pdf_job called for printer: '%s', path: '%s', doc: '%s'", printer_name, pdf_file_path, doc_name);
 #ifdef _WIN32
     if (!s_pdfium_initialized) {
@@ -1115,13 +1227,41 @@ FFI_PLUGIN_EXPORT int32_t submit_pdf_job(const char* printer_name, const char* p
         return 0;
     }
 
+    // --- Set copies via DEVMODE ---
+    HANDLE hPrinterHandle;
+    if (!OpenPrinterW(printer_name_w, &hPrinterHandle, NULL)) {
+        LOG("OpenPrinterW failed with error %lu", GetLastError());
+        FPDF_CloseDocument(doc);
+        free(printer_name_w);
+        return 0;
+    }
+    DEVMODEW* pDevMode = NULL;
+    LONG devModeSize = DocumentPropertiesW(NULL, hPrinterHandle, printer_name_w, NULL, NULL, 0);
+    if (devModeSize > 0) {
+        pDevMode = (DEVMODEW*)malloc(devModeSize);
+        if (pDevMode) {
+            if (DocumentPropertiesW(NULL, hPrinterHandle, printer_name_w, pDevMode, NULL, DM_OUT_BUFFER) == IDOK) {
+                if (copies > 1) {
+                    pDevMode->dmFields |= DM_COPIES;
+                    pDevMode->dmCopies = copies;
+                    DocumentPropertiesW(NULL, hPrinterHandle, printer_name_w, pDevMode, pDevMode, DM_IN_BUFFER | DM_OUT_BUFFER);
+                }
+            } else {
+                free(pDevMode);
+                pDevMode = NULL;
+            }
+        }
+    }
+    ClosePrinter(hPrinterHandle);
+
     wchar_t* printer_name_w = to_utf16(printer_name);
     if (!printer_name_w) {
         LOG("Failed to convert printer name to UTF-16");
         FPDF_CloseDocument(doc);
         return 0;
     }
-    HDC hdc = CreateDCW(L"WINSPOOL", printer_name_w, NULL, NULL);
+    HDC hdc = CreateDCW(L"WINSPOOL", printer_name_w, NULL, pDevMode);
+    if (pDevMode) free(pDevMode);
     free(printer_name_w);
     if (!hdc) {
         LOG("CreateDCA failed for printer '%s' with error %lu", printer_name, GetLastError());
@@ -1142,10 +1282,27 @@ FFI_PLUGIN_EXPORT int32_t submit_pdf_job(const char* printer_name, const char* p
     if (doc_name_w) free(doc_name_w);
 
     int page_count = FPDF_GetPageCount(doc);
+    bool* pages_to_print = (bool*)malloc(page_count * sizeof(bool));
+    if (!pages_to_print) {
+        LOG("Failed to allocate memory for page range flags.");
+        AbortDoc(hdc);
+        DeleteDC(hdc);
+        FPDF_CloseDocument(doc);
+        return 0;
+    }
+    if (!parse_page_range(page_range, pages_to_print, page_count)) {
+        LOG("Invalid page range string provided: %s", page_range);
+        free(pages_to_print);
+        AbortDoc(hdc);
+        DeleteDC(hdc);
+        FPDF_CloseDocument(doc);
+        return 0;
+    }
+
     bool success = true;
     for (int i = 0; i < page_count; ++i) {
         if (StartPage(hdc) <= 0) { success = false; break; }
-
+        if (!pages_to_print[i]) { EndPage(hdc); continue; }
         FPDF_PAGE page = FPDF_LoadPage(doc, i);
         if (!page) { EndPage(hdc); success = false; break; }
 
@@ -1201,6 +1358,7 @@ FFI_PLUGIN_EXPORT int32_t submit_pdf_job(const char* printer_name, const char* p
         if (!success) break;
     }
 
+    free(pages_to_print);
     if (success) { EndDoc(hdc); } else { AbortDoc(hdc); }
     DeleteDC(hdc);
     FPDF_CloseDocument(doc);

@@ -55,6 +55,8 @@ class _PrintingScreenState extends State<PrintingScreen> {
     text: 'Hello, FFI!',
   );
   PdfPrintScaling _selectedScaling = PdfPrintScaling.fitPage;
+  final TextEditingController _copiesController = TextEditingController(text: '1');
+  final TextEditingController _pageRangeController = TextEditingController();
 
   ///int _tabIndex = 0;
 
@@ -68,6 +70,8 @@ class _PrintingScreenState extends State<PrintingScreen> {
   void dispose() {
     _rawDataController.dispose();
     _jobsSubscription?.cancel();
+    _copiesController.dispose();
+    _pageRangeController.dispose();
     super.dispose();
   }
 
@@ -169,6 +173,8 @@ class _PrintingScreenState extends State<PrintingScreen> {
   Future<void> _printPdf({
     Map<String, String>? cupsOptions,
     required PdfPrintScaling scaling,
+    required int copies,
+    required String pageRange,
   }) async {
     if (_selectedPrinter == null) {
       _showSnackbar('No printer selected!', isError: true);
@@ -188,6 +194,8 @@ class _PrintingScreenState extends State<PrintingScreen> {
         docName: 'My Flutter PDF',
         cupsOptions: cupsOptions,
         scaling: scaling,
+        copies: copies,
+        pageRange: pageRange,
       );
       if (success) {
         _showSnackbar('PDF sent to printer successfully!');
@@ -208,6 +216,8 @@ class _PrintingScreenState extends State<PrintingScreen> {
     );
 
     if (result != null && result.files.single.path != null) {
+      final copies = int.tryParse(_copiesController.text) ?? 1;
+      final pageRange = _pageRangeController.text;
       final path = result.files.single.path!;
       showDialog(
         context: context,
@@ -218,6 +228,8 @@ class _PrintingScreenState extends State<PrintingScreen> {
             _selectedPrinter!.name,
             path,
             scaling: _selectedScaling,
+            copies: copies,
+            pageRange: pageRange,
           ),
         ),
       );
@@ -480,7 +492,11 @@ class _PrintingScreenState extends State<PrintingScreen> {
                   ElevatedButton.icon(
                     icon: const Icon(Icons.picture_as_pdf),
                     label: const Text('Print a PDF File'),
-                    onPressed: () => _printPdf(scaling: _selectedScaling),
+                    onPressed: () => _printPdf(
+                      scaling: _selectedScaling,
+                      copies: int.tryParse(_copiesController.text) ?? 1,
+                      pageRange: _pageRangeController.text,
+                    ),
                     style: ElevatedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 24,
@@ -488,6 +504,38 @@ class _PrintingScreenState extends State<PrintingScreen> {
                       ),
                     ),
                   ),
+                  const SizedBox(height: 12),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _copiesController,
+                            decoration: const InputDecoration(
+                              border: OutlineInputBorder(),
+                              labelText: 'Copies',
+                            ),
+                            keyboardType: TextInputType.number,
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          flex: 2,
+                          child: TextField(
+                            controller: _pageRangeController,
+                            decoration: const InputDecoration(
+                              border: OutlineInputBorder(),
+                              labelText: 'Page Range',
+                              hintText: 'e.g. 1-3, 5, 7-9',
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text('Leave page range blank to print all pages.', style: TextStyle(fontSize: 12, color: Colors.grey)),
                   const SizedBox(height: 12),
                   ElevatedButton.icon(
                     icon: const Icon(Icons.track_changes),
@@ -623,6 +671,8 @@ class _PrintingScreenState extends State<PrintingScreen> {
               onPressed: () => _printPdf(
                 cupsOptions: _selectedCupsOptions,
                 scaling: _selectedScaling,
+                copies: int.tryParse(_copiesController.text) ?? 1,
+                pageRange: _pageRangeController.text,
               ),
               style: ElevatedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(

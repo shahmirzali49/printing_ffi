@@ -242,6 +242,8 @@ class _PrintPdfRequest {
   final String docName;
   final Map<String, String>? cupsOptions;
   final PdfPrintScaling scaling;
+  final int copies;
+  final String? pageRange;
 
   const _PrintPdfRequest(
     this.id,
@@ -250,6 +252,8 @@ class _PrintPdfRequest {
     this.docName,
     this.cupsOptions,
     this.scaling,
+    this.copies,
+    this.pageRange,
   );
 }
 
@@ -276,6 +280,8 @@ class _SubmitPdfJobRequest {
   final String docName;
   final Map<String, String>? cupsOptions;
   final PdfPrintScaling scaling;
+  final int copies;
+  final String? pageRange;
 
   const _SubmitPdfJobRequest(
     this.id,
@@ -284,6 +290,8 @@ class _SubmitPdfJobRequest {
     this.docName,
     this.cupsOptions,
     this.scaling,
+    this.copies,
+    this.pageRange,
   );
 }
 
@@ -370,10 +378,18 @@ final PrintingFfiBindings _bindings = PrintingFfiBindings(
 // Manually look up the new functions for submitting jobs.
 final _submit_raw_data_job = _dylib.lookupFunction<Int32 Function(Pointer<Utf8>, Pointer<Uint8>, Int32, Pointer<Utf8>), int Function(Pointer<Utf8>, Pointer<Uint8>, int, Pointer<Utf8>)>('submit_raw_data_job');
 
-final _submit_pdf_job = _dylib
-    .lookupFunction<Int32 Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, Int32, Int32, Pointer<Pointer<Utf8>>, Pointer<Pointer<Utf8>>), int Function(Pointer<Utf8>, Pointer<Utf8>, Pointer<Utf8>, int, int, Pointer<Pointer<Utf8>>, Pointer<Pointer<Utf8>>)>(
-      'submit_pdf_job',
-    );
+// Manually look up print_pdf because its signature has changed and we don't want to force a ffigen run.
+final _print_pdf = _dylib.lookupFunction<
+    Bool Function(Pointer<Utf8> printerName, Pointer<Utf8> pdfFilePath, Pointer<Utf8> docName, Int32 scalingMode, Int32 copies, Pointer<Utf8> pageRange, Int32 numOptions, Pointer<Pointer<Utf8>> optionKeys,
+        Pointer<Pointer<Utf8>> optionValues),
+    bool Function(Pointer<Utf8> printerName, Pointer<Utf8> pdfFilePath, Pointer<Utf8> docName, int scalingMode, int copies, Pointer<Utf8> pageRange, int numOptions, Pointer<Pointer<Utf8>> optionKeys,
+        Pointer<Pointer<Utf8>> optionValues)>('print_pdf');
+
+final _submit_pdf_job = _dylib.lookupFunction<
+    Int32 Function(Pointer<Utf8> printerName, Pointer<Utf8> pdfFilePath, Pointer<Utf8> docName, Int32 scalingMode, Int32 copies, Pointer<Utf8> pageRange, Int32 numOptions, Pointer<Pointer<Utf8>> optionKeys,
+        Pointer<Pointer<Utf8>> optionValues),
+    int Function(Pointer<Utf8> printerName, Pointer<Utf8> pdfFilePath, Pointer<Utf8> docName, int scalingMode, int copies, Pointer<Utf8> pageRange, int numOptions, Pointer<Pointer<Utf8>> optionKeys,
+        Pointer<Pointer<Utf8>> optionValues)>('submit_pdf_job');
 
 // --- FFI Structs for Windows Capabilities ---
 final class _PaperSize extends Struct {
@@ -504,16 +520,21 @@ Future<bool> rawDataToPrinter(
 ///
 /// - [printerName]: The name of the target printer.
 /// - [pdfFilePath]: The local path to the PDF file.
-/// - [docName]: The name of the document to be shown in the print queue.
+/// - [docName]: The name of the document to show in the print queue.
 /// - [scaling]: The scaling mode for Windows printing (defaults to [PdfPrintScaling.fitPage]).
+/// - [copies]: The number of copies to print. Defaults to 1.
+/// - [pageRange]: A string specifying the pages to print (e.g., "1-3,5,7-9").
+///   Leave empty or `null` to print all pages. **Warning**: An invalid range may cause the print to fail.
 /// - [cupsOptions]: A map of CUPS options (e.g., `{'media': 'A4', 'orientation-requested': '4'}`).
-///   This is only used on macOS and Linux.
+///   On macOS/Linux, `copies` and `pageRange` are automatically added to this map if provided.
 Future<bool> printPdf(
   String printerName,
   String pdfFilePath, {
   String docName = 'Flutter PDF Document',
   PdfPrintScaling scaling = PdfPrintScaling.fitPage,
   Map<String, String>? cupsOptions,
+  int? copies,
+  String? pageRange,
 }) async {
   final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
   final int requestId = _nextPrintPdfRequestId++;
@@ -524,6 +545,8 @@ Future<bool> printPdf(
     docName,
     cupsOptions,
     scaling,
+    copies ?? 1,
+    pageRange,
   );
   final Completer<bool> completer = Completer<bool>();
   _printPdfRequests[requestId] = completer;
@@ -569,6 +592,8 @@ Stream<PrintJob> printPdfAndStreamStatus(
   String docName = 'Flutter PDF Document',
   PdfPrintScaling scaling = PdfPrintScaling.fitPage,
   Map<String, String>? cupsOptions,
+  int? copies,
+  String? pageRange,
   Duration pollInterval = const Duration(seconds: 2),
 }) {
   return _streamJobStatus(
@@ -580,6 +605,8 @@ Stream<PrintJob> printPdfAndStreamStatus(
       docName: docName,
       scaling: scaling,
       cupsOptions: cupsOptions,
+      copies: copies,
+      pageRange: pageRange,
     ),
   );
 }
@@ -816,6 +843,8 @@ Future<int> _submitPdfJob(
   String docName = 'Flutter PDF Document',
   PdfPrintScaling scaling = PdfPrintScaling.fitPage,
   Map<String, String>? cupsOptions,
+  int? copies,
+  String? pageRange,
 }) async {
   final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
   final int requestId = _nextSubmitPdfJobRequestId++;
@@ -826,6 +855,8 @@ Future<int> _submitPdfJob(
     docName,
     cupsOptions,
     scaling,
+    copies ?? 1,
+    pageRange,
   );
   final completer = Completer<int>();
   _submitPdfJobRequests[requestId] = completer;
@@ -1062,9 +1093,16 @@ Future<SendPort> _helperIsolateSendPort = () async {
               final namePtr = data.printerName.toNativeUtf8();
               final pathPtr = data.pdfFilePath.toNativeUtf8();
               final docNamePtr = data.docName.toNativeUtf8();
+              final pageRangePtr = data.pageRange?.toNativeUtf8() ?? nullptr;
               try {
                 // Handle cupsOptions for native call
-                final int numOptions = (Platform.isMacOS || Platform.isLinux) ? data.cupsOptions?.length ?? 0 : 0;
+                final effectiveCupsOptions = {...?data.cupsOptions};
+                if (Platform.isMacOS || Platform.isLinux) {
+                  if (data.copies > 1) effectiveCupsOptions['copies'] = data.copies.toString();
+                  if (data.pageRange != null && data.pageRange!.isNotEmpty) effectiveCupsOptions['page-ranges'] = data.pageRange!;
+                }
+
+                final int numOptions = effectiveCupsOptions.length;
                 Pointer<Pointer<Utf8>> keysPtr = nullptr;
                 Pointer<Pointer<Utf8>> valuesPtr = nullptr;
 
@@ -1072,18 +1110,20 @@ Future<SendPort> _helperIsolateSendPort = () async {
                   keysPtr = malloc<Pointer<Utf8>>(numOptions);
                   valuesPtr = malloc<Pointer<Utf8>>(numOptions);
                   int i = 0;
-                  for (var entry in data.cupsOptions!.entries) {
+                  for (var entry in effectiveCupsOptions.entries) {
                     keysPtr[i] = entry.key.toNativeUtf8();
                     valuesPtr[i] = entry.value.toNativeUtf8();
                     i++;
                   }
                 }
 
-                final bool result = _bindings.print_pdf(
+                final bool result = _print_pdf(
                   namePtr.cast(),
                   pathPtr.cast(),
                   docNamePtr.cast(),
                   data.scaling.index,
+                  data.copies,
+                  pageRangePtr.cast(),
                   numOptions,
                   keysPtr.cast(),
                   valuesPtr.cast(),
@@ -1102,6 +1142,7 @@ Future<SendPort> _helperIsolateSendPort = () async {
                 malloc.free(namePtr);
                 malloc.free(pathPtr);
                 malloc.free(docNamePtr);
+                if (pageRangePtr != nullptr) malloc.free(pageRangePtr);
               }
             } catch (e, s) {
               sendPort.send(_ErrorResponse(data.id, e, s));
@@ -1176,8 +1217,15 @@ Future<SendPort> _helperIsolateSendPort = () async {
               final namePtr = data.printerName.toNativeUtf8();
               final pathPtr = data.pdfFilePath.toNativeUtf8();
               final docNamePtr = data.docName.toNativeUtf8();
+              final pageRangePtr = data.pageRange?.toNativeUtf8() ?? nullptr;
               try {
-                final int numOptions = (Platform.isMacOS || Platform.isLinux) ? data.cupsOptions?.length ?? 0 : 0;
+                final effectiveCupsOptions = {...?data.cupsOptions};
+                if (Platform.isMacOS || Platform.isLinux) {
+                  if (data.copies > 1) effectiveCupsOptions['copies'] = data.copies.toString();
+                  if (data.pageRange != null && data.pageRange!.isNotEmpty) effectiveCupsOptions['page-ranges'] = data.pageRange!;
+                }
+
+                final int numOptions = effectiveCupsOptions.length;
                 Pointer<Pointer<Utf8>> keysPtr = nullptr;
                 Pointer<Pointer<Utf8>> valuesPtr = nullptr;
 
@@ -1185,7 +1233,7 @@ Future<SendPort> _helperIsolateSendPort = () async {
                   keysPtr = malloc<Pointer<Utf8>>(numOptions);
                   valuesPtr = malloc<Pointer<Utf8>>(numOptions);
                   int i = 0;
-                  for (var entry in data.cupsOptions!.entries) {
+                  for (var entry in effectiveCupsOptions.entries) {
                     keysPtr[i] = entry.key.toNativeUtf8();
                     valuesPtr[i] = entry.value.toNativeUtf8();
                     i++;
@@ -1197,6 +1245,8 @@ Future<SendPort> _helperIsolateSendPort = () async {
                   pathPtr.cast(),
                   docNamePtr.cast(),
                   data.scaling.index,
+                  data.copies,
+                  pageRangePtr.cast(),
                   numOptions,
                   keysPtr.cast(),
                   valuesPtr.cast(),
@@ -1215,6 +1265,7 @@ Future<SendPort> _helperIsolateSendPort = () async {
                 malloc.free(namePtr);
                 malloc.free(pathPtr);
                 malloc.free(docNamePtr);
+                if (pageRangePtr != nullptr) malloc.free(pageRangePtr);
               }
             } catch (e, s) {
               sendPort.send(_ErrorResponse(data.id, e, s));
