@@ -13,6 +13,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <limits.h>
+#include <unistd.h>
 #endif
 #include <ctype.h>
 
@@ -80,9 +81,17 @@ static bool parse_page_range(const char* range_str, bool* page_flags, int total_
     char* str = strdup(range_str);
     if (!str) return false;
     char* to_free = str;
+    
+    // Use strtok for non-Windows, strtok_s for Windows
+    char* token;
     char* context = NULL;
+    
+#ifdef _WIN32
+    token = strtok_s(str, ",", &context);
+#else
+    token = strtok(str, ",");
+#endif
 
-    char* token = strtok_s(str, ",", &context);
     while (token) {
         // Trim whitespace
         while (isspace((unsigned char)*token)) token++;
@@ -90,7 +99,11 @@ static bool parse_page_range(const char* range_str, bool* page_flags, int total_
         while (end > token && isspace((unsigned char)*end)) *end-- = '\0';
 
         if (strlen(token) == 0) {
+#ifdef _WIN32
             token = strtok_s(NULL, ",", &context);
+#else
+            token = strtok(NULL, ",");
+#endif
             continue;
         }
 
@@ -116,7 +129,12 @@ static bool parse_page_range(const char* range_str, bool* page_flags, int total_
         for (int i = start_page; i <= end_page; i++) {
             page_flags[i - 1] = true;
         }
+        
+#ifdef _WIN32
         token = strtok_s(NULL, ",", &context);
+#else
+        token = strtok(NULL, ",");
+#endif
     }
     free(to_free);
     return true;
@@ -129,6 +147,9 @@ BOOL WINAPI DllMain(
     DWORD fdwReason,
     LPVOID lpvReserved)
 {
+    (void)hinstDLL;    // Suppress unused parameter warning
+    (void)lpvReserved; // Suppress unused parameter warning
+    
     switch (fdwReason)
     {
     case DLL_PROCESS_DETACH:
@@ -179,7 +200,7 @@ FFI_PLUGIN_EXPORT PrinterList* get_printers(void) {
 
     if (EnumPrintersW(PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS, NULL, 2, buffer, needed, &needed, &returned)) {
         LOG("Found %lu printers on Windows", returned);
-        list->count = returned;
+        list->count = (int)returned;  // Cast to int for consistency
         list->printers = (PrinterInfo*)malloc(returned * sizeof(PrinterInfo));
         if (!list->printers) {
             free(buffer);
@@ -189,7 +210,7 @@ FFI_PLUGIN_EXPORT PrinterList* get_printers(void) {
         PRINTER_INFO_2W* printers = (PRINTER_INFO_2W*)buffer;
         for (DWORD i = 0; i < returned; i++) {
             list->printers[i].name = to_utf8(printers[i].pPrinterName);
-            list->printers[i].state = printers[i].Status;
+            list->printers[i].state = (int)printers[i].Status;  // Cast to int
             list->printers[i].url = to_utf8(printers[i].pPrinterName); // Use printer name as URL for Windows
             list->printers[i].model = to_utf8(printers[i].pDriverName);
             list->printers[i].location = to_utf8(printers[i].pLocation);
@@ -221,7 +242,7 @@ FFI_PLUGIN_EXPORT PrinterList* get_printers(void) {
     }
 
     for (int i = 0; i < num_dests; i++) {
-        list->printers[i].name = strdup(dests[i].name);
+        list->printers[i].name = strdup(dests[i].name ? dests[i].name : "");
         list->printers[i].is_default = dests[i].is_default;
 
         const char* state_str = cupsGetOption("printer-state", dests[i].num_options, dests[i].options);
@@ -317,7 +338,7 @@ FFI_PLUGIN_EXPORT PrinterInfo* get_default_printer(void) {
         return NULL;
     }
     printer_info->name = to_utf8(pinfo2->pPrinterName);
-    printer_info->state = pinfo2->Status;
+    printer_info->state = (int)pinfo2->Status;  // Cast to int
     printer_info->url = to_utf8(pinfo2->pPrinterName);
     printer_info->model = to_utf8(pinfo2->pDriverName);
     printer_info->location = to_utf8(pinfo2->pLocation);
@@ -350,7 +371,7 @@ FFI_PLUGIN_EXPORT PrinterInfo* get_default_printer(void) {
         return NULL;
     }
 
-    printer_info->name = strdup(default_dest->name);
+    printer_info->name = strdup(default_dest->name ? default_dest->name : "");
     printer_info->is_default = default_dest->is_default;
     const char* state_str = cupsGetOption("printer-state", default_dest->num_options, default_dest->options);
     printer_info->state = state_str ? atoi(state_str) : 3;
@@ -381,6 +402,13 @@ FFI_PLUGIN_EXPORT void free_printer_info(PrinterInfo* printer_info) {
 
 FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8_t* data, int length, const char* doc_name) {
     LOG("raw_data_to_printer called for printer: '%s', doc: '%s', length: %d", printer_name, doc_name, length);
+    
+    // Validate input parameters
+    if (!printer_name || !data || length <= 0 || !doc_name) {
+        LOG("Invalid input parameters");
+        return false;
+    }
+    
 #ifdef _WIN32
     HANDLE hPrinter;
     DOC_INFO_1W docInfo;
@@ -416,12 +444,12 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8
         return false;
     }
 
-    bool result = WritePrinter(hPrinter, (LPVOID)data, length, &written);
+    bool result = WritePrinter(hPrinter, (LPVOID)data, (DWORD)length, &written);
     EndPagePrinter(hPrinter);
     EndDocPrinter(hPrinter);
     ClosePrinter(hPrinter);
     free(printer_name_w);
-    bool success = result && written == length;
+    bool success = result && written == (DWORD)length;
     if (!success) {
         LOG("WritePrinter failed. Result: %d, Bytes written: %lu, Expected: %d", result, written, length);
     }
@@ -451,10 +479,10 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8
         return false;
     }
 
-    size_t written = fwrite(data, 1, length, fp);
+    size_t written = fwrite(data, 1, (size_t)length, fp);
     fclose(fp);
 
-    if (written != length) {
+    if (written != (size_t)length) {
         unlink(temp_file);
         return false;
     }
@@ -477,6 +505,13 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8
 
 FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_path, const char* doc_name, int scaling_mode, int copies, const char* page_range, int num_options, const char** option_keys, const char** option_values) {
     LOG("print_pdf called for printer: '%s', path: '%s', doc: '%s'", printer_name, pdf_file_path, doc_name);
+    
+    // Validate input parameters
+    if (!printer_name || !pdf_file_path || !doc_name || copies <= 0) {
+        LOG("Invalid input parameters");
+        return false;
+    }
+    
 #ifdef _WIN32
     if (!s_pdfium_initialized) {
         FPDF_LIBRARY_CONFIG config;
@@ -555,33 +590,36 @@ FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_
         AbortDoc(hdc);
         DeleteDC(hdc);
         FPDF_CloseDocument(doc);
+        if (doc_name_w) free(doc_name_w);
         free(printer_name_w);
         return false;
     }
     if (!parse_page_range(page_range, pages_to_print, page_count)) {
-        LOG("Invalid page range string provided: %s", page_range);
+        LOG("Invalid page range string provided: %s", page_range ? page_range : "(null)");
         free(pages_to_print);
         AbortDoc(hdc);
         DeleteDC(hdc);
         FPDF_CloseDocument(doc);
+        if (doc_name_w) free(doc_name_w);
         free(printer_name_w);
         return false;
     }
 
     bool success = true;
     // Manually loop for copies, as some drivers (like "Print to PDF") ignore the DEVMODE setting.
-    for (int c = 0; c < copies; c++) {
-        if (!success) break;
-        for (int i = 0; i < page_count; ++i) {
-            if (!pages_to_print[i]) {
-                continue;
-            }
-
+    for (int c = 0; c < copies && success; c++) {
+        for (int i = 0; i < page_count && success; ++i) {
             if (StartPage(hdc) <= 0) {
                 LOG("StartPage failed for page %d with error %lu", i, GetLastError());
                 success = false;
                 break;
             }
+
+            if (!pages_to_print[i]) {
+                EndPage(hdc);
+                continue;
+            }
+
             FPDF_PAGE page = FPDF_LoadPage(doc, i);
             if (!page) {
                 LOG("FPDF_LoadPage failed for page %d", i);
@@ -678,8 +716,6 @@ FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_
                 LOG("EndPage failed for page %d with error %lu", i, GetLastError());
                 success = false;
             }
-
-            if (!success) break;
         }
     }
 
@@ -692,6 +728,7 @@ FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_
 
     DeleteDC(hdc);
     FPDF_CloseDocument(doc);
+    if (doc_name_w) free(doc_name_w);
     free(printer_name_w);
 
     LOG("print_pdf (Pdfium/GDI) finished with result: %d", success);
@@ -701,8 +738,10 @@ FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_
     int num_cups_options = 0;
 
     for (int i = 0; i < num_options; i++) {
-        LOG("Adding CUPS option: %s=%s", option_keys[i], option_values[i]);
-        num_cups_options = cupsAddOption(option_keys[i], option_values[i], num_cups_options, &options);
+        if (option_keys && option_keys[i] && option_values && option_values[i]) {
+            LOG("Adding CUPS option: %s=%s", option_keys[i], option_values[i]);
+            num_cups_options = cupsAddOption(option_keys[i], option_values[i], num_cups_options, &options);
+        }
     }
 
     int job_id = cupsPrintFile(printer_name, pdf_file_path, doc_name, num_cups_options, options);
@@ -720,6 +759,11 @@ FFI_PLUGIN_EXPORT JobList* get_print_jobs(const char* printer_name) {
     if (!list) return NULL;
     list->count = 0;
     list->jobs = NULL;
+
+    if (!printer_name) {
+        LOG("get_print_jobs called with null printer name");
+        return list; // Return empty list
+    }
 
     LOG("get_print_jobs called for printer: '%s'", printer_name);
 #ifdef _WIN32
@@ -741,6 +785,7 @@ FFI_PLUGIN_EXPORT JobList* get_print_jobs(const char* printer_name) {
     EnumJobsW(hPrinter, 0, 0xFFFFFFFF, 2, NULL, 0, &needed, &returned);
     if (needed == 0) {
         ClosePrinter(hPrinter);
+        free(printer_name_w);
         return list;
     }
     BYTE* buffer = (BYTE*)malloc(needed);
@@ -753,7 +798,7 @@ FFI_PLUGIN_EXPORT JobList* get_print_jobs(const char* printer_name) {
 
     if (EnumJobsW(hPrinter, 0, 0xFFFFFFFF, 2, buffer, needed, &needed, &returned)) {
         LOG("Found %lu jobs on Windows", returned);
-        list->count = returned;
+        list->count = (int)returned;
         list->jobs = (JobInfo*)malloc(returned * sizeof(JobInfo));
         if (!list->jobs) {
             free(buffer);
@@ -766,7 +811,7 @@ FFI_PLUGIN_EXPORT JobList* get_print_jobs(const char* printer_name) {
         for (DWORD i = 0; i < returned; i++) {
             list->jobs[i].id = jobs[i].JobId;
             list->jobs[i].title = to_utf8(jobs[i].pDocument);
-            list->jobs[i].status = jobs[i].Status;
+            list->jobs[i].status = (int)jobs[i].Status;
         }
     } else {
         LOG("EnumJobsW failed with error %lu", GetLastError());
@@ -794,7 +839,7 @@ FFI_PLUGIN_EXPORT JobList* get_print_jobs(const char* printer_name) {
     }
 
     for (int i = 0; i < num_jobs; i++) {
-        list->jobs[i].id = jobs[i].id;
+        list->jobs[i].id = (uint32_t)jobs[i].id;
         list->jobs[i].title = strdup(jobs[i].title ? jobs[i].title : "Unknown");
         list->jobs[i].status = jobs[i].state;
     }
@@ -815,6 +860,11 @@ FFI_PLUGIN_EXPORT void free_job_list(JobList* job_list) {
 }
 
 FFI_PLUGIN_EXPORT bool pause_print_job(const char* printer_name, uint32_t job_id) {
+    if (!printer_name) {
+        LOG("pause_print_job called with null printer name");
+        return false;
+    }
+    
     LOG("pause_print_job called for printer: '%s', job_id: %u", printer_name, job_id);
 #ifdef _WIN32
     HANDLE hPrinter;
@@ -831,13 +881,18 @@ FFI_PLUGIN_EXPORT bool pause_print_job(const char* printer_name, uint32_t job_id
     ClosePrinter(hPrinter);
     return result;
 #else
-    bool result = cupsCancelJob2(CUPS_HTTP_DEFAULT, printer_name, job_id, IPP_HOLD_JOB) == 1;
+    bool result = cupsCancelJob2(CUPS_HTTP_DEFAULT, printer_name, (int)job_id, IPP_HOLD_JOB) == 1;
     if (!result) LOG("cupsCancelJob2(IPP_HOLD_JOB) failed, error: %s", cupsLastErrorString());
     return result;
 #endif
 }
 
 FFI_PLUGIN_EXPORT bool resume_print_job(const char* printer_name, uint32_t job_id) {
+    if (!printer_name) {
+        LOG("resume_print_job called with null printer name");
+        return false;
+    }
+    
     LOG("resume_print_job called for printer: '%s', job_id: %u", printer_name, job_id);
 #ifdef _WIN32
     HANDLE hPrinter;
@@ -854,13 +909,18 @@ FFI_PLUGIN_EXPORT bool resume_print_job(const char* printer_name, uint32_t job_i
     ClosePrinter(hPrinter);
     return result;
 #else
-    bool result = cupsCancelJob2(CUPS_HTTP_DEFAULT, printer_name, job_id, IPP_RELEASE_JOB) == 1;
+    bool result = cupsCancelJob2(CUPS_HTTP_DEFAULT, printer_name, (int)job_id, IPP_RELEASE_JOB) == 1;
     if (!result) LOG("cupsCancelJob2(IPP_RELEASE_JOB) failed, error: %s", cupsLastErrorString());
     return result;
 #endif
 }
 
 FFI_PLUGIN_EXPORT bool cancel_print_job(const char* printer_name, uint32_t job_id) {
+    if (!printer_name) {
+        LOG("cancel_print_job called with null printer name");
+        return false;
+    }
+    
     LOG("cancel_print_job called for printer: '%s', job_id: %u", printer_name, job_id);
 #ifdef _WIN32
     HANDLE hPrinter;
@@ -877,13 +937,23 @@ FFI_PLUGIN_EXPORT bool cancel_print_job(const char* printer_name, uint32_t job_i
     ClosePrinter(hPrinter);
     return result;
 #else
-    bool result = cupsCancelJob(printer_name, job_id) == 1;
+    bool result = cupsCancelJob(printer_name, (int)job_id) == 1;
     if (!result) LOG("cupsCancelJob failed, error: %s", cupsLastErrorString());
     return result;
 #endif
 }
 
 FFI_PLUGIN_EXPORT CupsOptionList* get_supported_cups_options(const char* printer_name) {
+    if (!printer_name) {
+        LOG("get_supported_cups_options called with null printer name");
+        CupsOptionList* list = (CupsOptionList*)malloc(sizeof(CupsOptionList));
+        if (list) {
+            list->count = 0;
+            list->options = NULL;
+        }
+        return list;
+    }
+    
     LOG("get_supported_cups_options called for printer: '%s'", printer_name);
     CupsOptionList* list = (CupsOptionList*)malloc(sizeof(CupsOptionList));
     if (!list) return NULL;
@@ -892,7 +962,6 @@ FFI_PLUGIN_EXPORT CupsOptionList* get_supported_cups_options(const char* printer
 
 #ifdef _WIN32
     // Not supported on Windows
-    (void)printer_name;
     return list;
 #else // macOS / Linux (CUPS)
     const char* ppd_filename = cupsGetPPD(printer_name);
@@ -905,6 +974,7 @@ FFI_PLUGIN_EXPORT CupsOptionList* get_supported_cups_options(const char* printer
     ppd_file_t* ppd = ppdOpenFile(ppd_filename);
     if (!ppd) {
         LOG("ppdOpenFile failed for '%s'", ppd_filename);
+        unlink(ppd_filename); // Clean up temporary PPD file
         return list;
     }
 
@@ -917,6 +987,7 @@ FFI_PLUGIN_EXPORT CupsOptionList* get_supported_cups_options(const char* printer
 
     if (num_ui_options == 0) {
         ppdClose(ppd);
+        unlink(ppd_filename);
         LOG("No UI options found in PPD");
         return list;
     }
@@ -926,6 +997,7 @@ FFI_PLUGIN_EXPORT CupsOptionList* get_supported_cups_options(const char* printer
     list->options = (CupsOption*)malloc(num_ui_options * sizeof(CupsOption));
     if (!list->options) {
         ppdClose(ppd);
+        unlink(ppd_filename);
         free(list);
         return NULL;
     }
@@ -937,20 +1009,29 @@ FFI_PLUGIN_EXPORT CupsOptionList* get_supported_cups_options(const char* printer
         for (int j = 0; j < group->num_options; j++) {
             option = group->options + j;
 
-            list->options[current_option_index].name = strdup(option->keyword);
-            list->options[current_option_index].default_value = strdup(option->defchoice);
+            list->options[current_option_index].name = strdup(option->keyword ? option->keyword : "");
+            list->options[current_option_index].default_value = strdup(option->defchoice ? option->defchoice : "");
 
             list->options[current_option_index].supported_values.count = option->num_choices;
-            list->options[current_option_index].supported_values.choices = (CupsOptionChoice*)malloc(option->num_choices * sizeof(CupsOptionChoice));
-            for (int k = 0; k < option->num_choices; k++) {
-                list->options[current_option_index].supported_values.choices[k].choice = strdup(option->choices[k].choice);
-                list->options[current_option_index].supported_values.choices[k].text = strdup(option->choices[k].text);
+            if (option->num_choices > 0) {
+                list->options[current_option_index].supported_values.choices = (CupsOptionChoice*)malloc(option->num_choices * sizeof(CupsOptionChoice));
+                if (list->options[current_option_index].supported_values.choices) {
+                    for (int k = 0; k < option->num_choices; k++) {
+                        list->options[current_option_index].supported_values.choices[k].choice = strdup(option->choices[k].choice ? option->choices[k].choice : "");
+                        list->options[current_option_index].supported_values.choices[k].text = strdup(option->choices[k].text ? option->choices[k].text : "");
+                    }
+                } else {
+                    list->options[current_option_index].supported_values.count = 0;
+                }
+            } else {
+                list->options[current_option_index].supported_values.choices = NULL;
             }
             current_option_index++;
         }
     }
 
     ppdClose(ppd);
+    unlink(ppd_filename); // Clean up temporary PPD file
     LOG("get_supported_cups_options finished");
     return list;
 #endif
@@ -976,6 +1057,12 @@ FFI_PLUGIN_EXPORT void free_cups_option_list(CupsOptionList* option_list) {
 }
 
 FFI_PLUGIN_EXPORT WindowsPrinterCapabilities* get_windows_printer_capabilities(const char* printer_name) {
+    if (!printer_name) {
+        LOG("get_windows_printer_capabilities called with null printer name");
+        WindowsPrinterCapabilities* caps = (WindowsPrinterCapabilities*)calloc(1, sizeof(WindowsPrinterCapabilities));
+        return caps;
+    }
+    
     LOG("get_windows_printer_capabilities called for printer: '%s'", printer_name);
 #ifndef _WIN32
     // This function is only for Windows. Return an empty struct.
@@ -1013,7 +1100,7 @@ FFI_PLUGIN_EXPORT WindowsPrinterCapabilities* get_windows_printer_capabilities(c
     }
     if (!GetPrinterW(hPrinter, 2, (LPBYTE)pinfo2, needed, &needed)) {
         LOG("GetPrinterW failed with error %lu", GetLastError());
-        if (pinfo2) free(pinfo2);
+        free(pinfo2);
         ClosePrinter(hPrinter);
         free(printer_name_w);
         return NULL;
@@ -1048,7 +1135,7 @@ FFI_PLUGIN_EXPORT WindowsPrinterCapabilities* get_windows_printer_capabilities(c
                 DeviceCapabilitiesW(printer_name_w, port_w, DC_PAPERNAMES, (LPWSTR)paper_names_w, NULL) != -1 &&
                 DeviceCapabilitiesW(printer_name_w, port_w, DC_PAPERSIZE, (LPWSTR)paper_sizes_points, NULL) != -1) {
 
-                caps->paper_sizes.count = num_papers;
+                caps->paper_sizes.count = (int)num_papers;
                 caps->paper_sizes.papers = (PaperSize*)malloc(num_papers * sizeof(PaperSize));
                 if (caps->paper_sizes.papers) {
                     for (long i = 0; i < num_papers; i++) {
@@ -1076,7 +1163,7 @@ FFI_PLUGIN_EXPORT WindowsPrinterCapabilities* get_windows_printer_capabilities(c
         LONG* resolutions = (LONG*)malloc(num_res * 2 * sizeof(LONG));
         if (resolutions) {
             if (DeviceCapabilitiesW(printer_name_w, port_w, DC_ENUMRESOLUTIONS, (LPWSTR)resolutions, NULL) != -1) {
-                caps->resolutions.count = num_res;
+                caps->resolutions.count = (int)num_res;
                 caps->resolutions.resolutions = (Resolution*)malloc(num_res * sizeof(Resolution));
                 if (caps->resolutions.resolutions) {
                     for (long i = 0; i < num_res; i++) {
@@ -1117,6 +1204,13 @@ FFI_PLUGIN_EXPORT void free_windows_printer_capabilities(WindowsPrinterCapabilit
 
 FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char* printer_name, const uint8_t* data, int length, const char* doc_name) {
     LOG("submit_raw_data_job called for printer: '%s', doc: '%s', length: %d", printer_name, doc_name, length);
+    
+    // Validate input parameters
+    if (!printer_name || !data || length <= 0 || !doc_name) {
+        LOG("Invalid input parameters");
+        return 0;
+    }
+    
 #ifdef _WIN32
     HANDLE hPrinter;
     DOC_INFO_1W docInfo;
@@ -1155,13 +1249,13 @@ FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char* printer_name, const ui
         return 0;
     }
 
-    bool result = WritePrinter(hPrinter, (LPVOID)data, length, &written);
+    bool result = WritePrinter(hPrinter, (LPVOID)data, (DWORD)length, &written);
     EndPagePrinter(hPrinter);
     EndDocPrinter(hPrinter);
     ClosePrinter(hPrinter);
     free(printer_name_w);
 
-    if (!result || written != length) {
+    if (!result || written != (DWORD)length) {
         LOG("WritePrinter failed. Result: %d, Bytes written: %lu, Expected: %d", result, written, length);
         // The job might have been created but failed to write. The caller can still track this job ID to see its error state.
     }
@@ -1189,10 +1283,10 @@ FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char* printer_name, const ui
         return 0;
     }
 
-    size_t written = fwrite(data, 1, length, fp);
+    size_t written = fwrite(data, 1, (size_t)length, fp);
     fclose(fp);
 
-    if (written != length) {
+    if (written != (size_t)length) {
         unlink(temp_file);
         return 0;
     }
@@ -1214,6 +1308,13 @@ FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char* printer_name, const ui
 
 FFI_PLUGIN_EXPORT int32_t submit_pdf_job(const char* printer_name, const char* pdf_file_path, const char* doc_name, int scaling_mode, int copies, const char* page_range, int num_options, const char** option_keys, const char** option_values) {
     LOG("submit_pdf_job called for printer: '%s', path: '%s', doc: '%s'", printer_name, pdf_file_path, doc_name);
+    
+    // Validate input parameters
+    if (!printer_name || !pdf_file_path || !doc_name || copies <= 0) {
+        LOG("Invalid input parameters");
+        return 0;
+    }
+    
 #ifdef _WIN32
     if (!s_pdfium_initialized) {
         FPDF_LIBRARY_CONFIG config;
@@ -1298,7 +1399,7 @@ FFI_PLUGIN_EXPORT int32_t submit_pdf_job(const char* printer_name, const char* p
         return 0;
     }
     if (!parse_page_range(page_range, pages_to_print, page_count)) {
-        LOG("Invalid page range string provided: %s", page_range);
+        LOG("Invalid page range string provided: %s", page_range ? page_range : "(null)");
         free(pages_to_print);
         AbortDoc(hdc);
         DeleteDC(hdc);
@@ -1309,13 +1410,10 @@ FFI_PLUGIN_EXPORT int32_t submit_pdf_job(const char* printer_name, const char* p
 
     bool success = true;
     // Manually loop for copies, as some drivers (like "Print to PDF") ignore the DEVMODE setting.
-    for (int c = 0; c < copies; c++) {
-        if (!success) break;
-        for (int i = 0; i < page_count; ++i) {
-            if (!pages_to_print[i]) {
-                continue;
-            }
+    for (int c = 0; c < copies && success; c++) {
+        for (int i = 0; i < page_count && success; ++i) {
             if (StartPage(hdc) <= 0) { success = false; break; }
+            if (!pages_to_print[i]) { EndPage(hdc); continue; }
             FPDF_PAGE page = FPDF_LoadPage(doc, i);
             if (!page) { EndPage(hdc); success = false; break; }
 
@@ -1368,7 +1466,6 @@ FFI_PLUGIN_EXPORT int32_t submit_pdf_job(const char* printer_name, const char* p
             DeleteObject(hBitmap);
             FPDF_ClosePage(page);
             if (EndPage(hdc) <= 0) { success = false; }
-            if (!success) break;
         }
     }
 
@@ -1383,7 +1480,9 @@ FFI_PLUGIN_EXPORT int32_t submit_pdf_job(const char* printer_name, const char* p
     cups_option_t* options = NULL;
     int num_cups_options = 0;
     for (int i = 0; i < num_options; i++) {
-        num_cups_options = cupsAddOption(option_keys[i], option_values[i], num_cups_options, &options);
+        if (option_keys && option_keys[i] && option_values && option_values[i]) {
+            num_cups_options = cupsAddOption(option_keys[i], option_values[i], num_cups_options, &options);
+        }
     }
     int job_id = cupsPrintFile(printer_name, pdf_file_path, doc_name, num_cups_options, options);
     if (job_id <= 0) { LOG("cupsPrintFile failed, error: %s", cupsLastErrorString()); }
