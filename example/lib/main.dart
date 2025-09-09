@@ -55,7 +55,9 @@ class _PrintingScreenState extends State<PrintingScreen> {
     text: 'Hello, FFI!',
   );
   PdfPrintScaling _selectedScaling = PdfPrintScaling.fitPage;
-  final TextEditingController _copiesController = TextEditingController(text: '1');
+  final TextEditingController _copiesController = TextEditingController(
+    text: '1',
+  );
   final TextEditingController _pageRangeController = TextEditingController();
 
   ///int _tabIndex = 0;
@@ -210,12 +212,18 @@ class _PrintingScreenState extends State<PrintingScreen> {
         if (success) {
           _showSnackbar('PDF sent to printer successfully!');
         } else {
-          _showSnackbar('Failed to print PDF. The printer may be offline or the page range may be invalid for the document.', isError: true);
+          _showSnackbar(
+            'Failed to print PDF. The printer may be offline or the page range may be invalid for the document.',
+            isError: true,
+          );
         }
       } on ArgumentError catch (e) {
         _showSnackbar('Invalid argument: ${e.message}', isError: true);
       } catch (e) {
-        _showSnackbar('An unexpected error occurred while printing: $e', isError: true);
+        _showSnackbar(
+          'An unexpected error occurred while printing: $e',
+          isError: true,
+        );
       }
     }
   }
@@ -559,7 +567,10 @@ class _PrintingScreenState extends State<PrintingScreen> {
                     ),
                   ),
                   const SizedBox(height: 4),
-                  const Text('Leave page range blank to print all pages.', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                  const Text(
+                    'Leave page range blank to print all pages.',
+                    style: TextStyle(fontSize: 12, color: Colors.grey),
+                  ),
                   const SizedBox(height: 12),
                   ElevatedButton.icon(
                     icon: const Icon(Icons.track_changes),
@@ -782,6 +793,7 @@ class _PrintStatusDialogState extends State<_PrintStatusDialog> {
   StreamSubscription<PrintJob>? _subscription;
   PrintJob? _job;
   Object? _error;
+  bool _isDone = false;
   bool _isCancelling = false;
 
   @override
@@ -793,6 +805,11 @@ class _PrintStatusDialogState extends State<_PrintStatusDialog> {
       },
       onError: (error) {
         if (mounted) setState(() => _error = error);
+      },
+      onDone: () {
+        if (mounted) {
+          setState(() => _isDone = true);
+        }
       },
     );
   }
@@ -850,29 +867,38 @@ class _PrintStatusDialogState extends State<_PrintStatusDialog> {
             _job!.status == PrintJobStatus.aborted ||
             _job!.status == PrintJobStatus.error);
 
-    final canCancel = _job != null && !_isCancelling && !isJobTerminal;
+    // If the stream is done but we never got a job object, it means the job
+    // completed so quickly it was never seen in the queue. We can treat this
+    // as a successful completion.
+    final isImplicitlyComplete = _isDone && _job == null && _error == null;
+
+    final canCancel = !_isCancelling && !isJobTerminal && !_isDone;
+
+    Widget content;
+    if (_error != null) {
+      content = Text(
+        'Error: $_error',
+        style: const TextStyle(color: Colors.red),
+      );
+    } else if (isImplicitlyComplete) {
+      content = Text(
+        'Job Completed',
+        style: Theme.of(context).textTheme.titleMedium,
+      );
+    } else if (_job == null) {
+      content = const CircularProgressIndicator();
+    } else {
+      content = Text(
+        'Job #${_job!.id}: ${_job!.statusDescription}',
+        style: Theme.of(context).textTheme.titleMedium,
+      );
+    }
 
     return AlertDialog(
       title: const Text('Tracking Print Job...'),
-      content: SizedBox(
-        width: 250,
-        height: 100,
-        child: Center(
-          child: _error != null
-              ? Text(
-                  'Error: $_error',
-                  style: const TextStyle(color: Colors.red),
-                )
-              : _job == null
-              ? const CircularProgressIndicator()
-              : Text(
-                  'Job #${_job!.id}: ${_job!.statusDescription}',
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-        ),
-      ),
+      content: SizedBox(width: 250, height: 100, child: Center(child: content)),
       actions: <Widget>[
-        if (isJobTerminal || _error != null)
+        if (isJobTerminal || _error != null || isImplicitlyComplete)
           TextButton(
             child: const Text('Close'),
             onPressed: () => Navigator.of(context).pop(),

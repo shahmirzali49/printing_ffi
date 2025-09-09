@@ -464,17 +464,17 @@ final PrintingFfiBindings _bindings = PrintingFfiBindings(
 final _submit_raw_data_job = _dylib.lookupFunction<Int32 Function(Pointer<Utf8>, Pointer<Uint8>, Int32, Pointer<Utf8>), int Function(Pointer<Utf8>, Pointer<Uint8>, int, Pointer<Utf8>)>('submit_raw_data_job');
 
 // Manually look up print_pdf because its signature has changed and we don't want to force a ffigen run.
-final _print_pdf = _dylib.lookupFunction<
-    Bool Function(Pointer<Utf8> printerName, Pointer<Utf8> pdfFilePath, Pointer<Utf8> docName, Int32 scalingMode, Int32 copies, Pointer<Utf8> pageRange, Int32 numOptions, Pointer<Pointer<Utf8>> optionKeys,
-        Pointer<Pointer<Utf8>> optionValues),
-    bool Function(Pointer<Utf8> printerName, Pointer<Utf8> pdfFilePath, Pointer<Utf8> docName, int scalingMode, int copies, Pointer<Utf8> pageRange, int numOptions, Pointer<Pointer<Utf8>> optionKeys,
-        Pointer<Pointer<Utf8>> optionValues)>('print_pdf');
+final _print_pdf = _dylib
+    .lookupFunction<
+      Bool Function(Pointer<Utf8> printerName, Pointer<Utf8> pdfFilePath, Pointer<Utf8> docName, Int32 scalingMode, Int32 copies, Pointer<Utf8> pageRange, Int32 numOptions, Pointer<Pointer<Utf8>> optionKeys, Pointer<Pointer<Utf8>> optionValues),
+      bool Function(Pointer<Utf8> printerName, Pointer<Utf8> pdfFilePath, Pointer<Utf8> docName, int scalingMode, int copies, Pointer<Utf8> pageRange, int numOptions, Pointer<Pointer<Utf8>> optionKeys, Pointer<Pointer<Utf8>> optionValues)
+    >('print_pdf');
 
-final _submit_pdf_job = _dylib.lookupFunction<
-    Int32 Function(Pointer<Utf8> printerName, Pointer<Utf8> pdfFilePath, Pointer<Utf8> docName, Int32 scalingMode, Int32 copies, Pointer<Utf8> pageRange, Int32 numOptions, Pointer<Pointer<Utf8>> optionKeys,
-        Pointer<Pointer<Utf8>> optionValues),
-    int Function(Pointer<Utf8> printerName, Pointer<Utf8> pdfFilePath, Pointer<Utf8> docName, int scalingMode, int copies, Pointer<Utf8> pageRange, int numOptions, Pointer<Pointer<Utf8>> optionKeys,
-        Pointer<Pointer<Utf8>> optionValues)>('submit_pdf_job');
+final _submit_pdf_job = _dylib
+    .lookupFunction<
+      Int32 Function(Pointer<Utf8> printerName, Pointer<Utf8> pdfFilePath, Pointer<Utf8> docName, Int32 scalingMode, Int32 copies, Pointer<Utf8> pageRange, Int32 numOptions, Pointer<Pointer<Utf8>> optionKeys, Pointer<Pointer<Utf8>> optionValues),
+      int Function(Pointer<Utf8> printerName, Pointer<Utf8> pdfFilePath, Pointer<Utf8> docName, int scalingMode, int copies, Pointer<Utf8> pageRange, int numOptions, Pointer<Pointer<Utf8>> optionKeys, Pointer<Pointer<Utf8>> optionValues)
+    >('submit_pdf_job');
 
 // --- FFI Structs for Windows Capabilities ---
 final class _PaperSize extends Struct {
@@ -712,15 +712,41 @@ Stream<PrintJob> _streamJobStatus({
     if (controller.isClosed) return;
     try {
       final jobs = await listPrintJobs(printerName);
-      final currentJob = jobs.firstWhere((j) => j.id == jobId, orElse: () => lastJob!);
-
-      if (currentJob.rawStatus != lastJob?.rawStatus) {
-        controller.add(currentJob);
-        lastJob = currentJob;
+      PrintJob? foundJob;
+      try {
+        foundJob = jobs.firstWhere((j) => j.id == jobId);
+      } on StateError {
+        // Job not found in the current list.
+        foundJob = null;
       }
 
-      final status = currentJob.status;
-      if (status == PrintJobStatus.completed || status == PrintJobStatus.canceled || status == PrintJobStatus.aborted || status == PrintJobStatus.error) {
+      if (foundJob != null) {
+        // We found the job, so we can update its status.
+        if (foundJob.rawStatus != lastJob?.rawStatus) {
+          controller.add(foundJob);
+        }
+        lastJob = foundJob; // Update the last known state.
+
+        final status = foundJob.status;
+        if (status == PrintJobStatus.completed || status == PrintJobStatus.canceled || status == PrintJobStatus.aborted || status == PrintJobStatus.error) {
+          poller?.cancel();
+          await controller.close();
+        }
+      } else {
+        // The job is not in the active queue. If we have seen it before,
+        // it means it has now disappeared, so we can assume it's completed.
+        // We emit one final 'completed' status before closing the stream.
+        if (lastJob != null && lastJob!.status != PrintJobStatus.completed) {
+          // The job was in a non-terminal state and now it's gone.
+          // Synthesize a 'completed' status update.
+          // For CUPS, '9' is IPP_JOB_COMPLETED.
+          // For Windows, '0x00001000' is JOB_STATUS_COMPLETE.
+          final completedRawStatus = Platform.isWindows ? 0x00001000 : 9;
+          final finalJob = PrintJob(lastJob!.id, lastJob!.title, completedRawStatus);
+          if (finalJob.rawStatus != lastJob!.rawStatus) {
+            controller.add(finalJob);
+          }
+        }
         poller?.cancel();
         await controller.close();
       }
@@ -1025,6 +1051,7 @@ Future<SendPort> _helperIsolateSendPort = () async {
       if (!completer.isCompleted) completer.completeError(error);
       _failAllPendingRequests(error);
       receivePort.close();
+      return;
     }
 
     if (data is _PrintResponse) {
