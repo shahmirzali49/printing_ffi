@@ -204,6 +204,91 @@ class IsolateError extends Error {
   String toString() => 'IsolateError: $message';
 }
 
+/// Represents a page range for printing.
+///
+/// This class provides a type-safe way to define which pages of a document to print.
+/// It can represent a single page, a continuous range of pages, or a complex
+/// combination of pages and ranges.
+///
+/// Example usage:
+/// ```dart
+/// // Print only page 5
+/// final singlePage = PageRange.single(5);
+///
+/// // Print pages 2 through 7
+/// final continuousRange = PageRange.range(2, 7);
+///
+/// // Print pages 1, 3-5, and 8
+/// final complexRange = PageRange.multiple([
+///   PageRange.single(1),
+///   PageRange.range(3, 5),
+///   PageRange.single(8),
+/// ]);
+///
+/// // Parse from a string
+/// final fromString = PageRange.parse("1-3,5,7-9");
+/// ```
+class PageRange {
+  final String _value;
+
+  // Private constructor to ensure values are always validated.
+  PageRange._(this._value);
+
+  /// Creates a page range representing a single page.
+  ///
+  /// Throws an [ArgumentError] if [page] is not positive.
+  factory PageRange.single(int page) {
+    if (page <= 0) {
+      throw ArgumentError('Page number must be positive, but was $page.');
+    }
+    return PageRange._('$page');
+  }
+
+  /// Creates a page range from a [start] to an [end] page, inclusive.
+  ///
+  /// Throws an [ArgumentError] if pages are not positive or if [end] is less than [start].
+  factory PageRange.range(int start, int end) {
+    if (start <= 0) {
+      throw ArgumentError('Start page must be positive, but was $start.');
+    }
+    if (end < start) {
+      throw ArgumentError('End page ($end) cannot be less than start page ($start).');
+    }
+    return PageRange._('$start-$end');
+  }
+
+  /// Creates a complex page range by combining multiple [PageRange] objects.
+  factory PageRange.multiple(List<PageRange> ranges) {
+    if (ranges.isEmpty) {
+      throw ArgumentError('The list of ranges cannot be empty.');
+    }
+    return PageRange._(ranges.map((r) => r.toValue()).join(','));
+  }
+
+  /// Parses a page range string (e.g., "1-3,5,7-9") into a [PageRange] object.
+  ///
+  /// Throws an [ArgumentError] if the format is invalid.
+  factory PageRange.parse(String rangeString) {
+    final trimmed = rangeString.trim();
+    if (trimmed.isEmpty) {
+      throw ArgumentError('Page range string cannot be empty.');
+    }
+    // A simple regex to validate the overall structure. It's not exhaustive but catches most common errors.
+    final RegExp validPageRange = RegExp(r'^\s*\d+(-\d+)?(\s*,\s*\d+(-\d+)?)*\s*$');
+    if (!validPageRange.hasMatch(trimmed)) {
+      throw ArgumentError('Invalid page range format: "$rangeString". Use a format like "1-3,5,7-9".');
+    }
+    // Further validation could be added here (e.g., check if end > start in all sub-ranges).
+    return PageRange._(trimmed);
+  }
+
+  /// Returns the underlying string value of the page range.
+  String toValue() => _value;
+
+  @override
+  String toString() => 'PageRange("$_value")';
+}
+
 // Request classes for printing operations
 class _PrintRequest {
   final int id;
@@ -243,7 +328,7 @@ class _PrintPdfRequest {
   final Map<String, String>? cupsOptions;
   final PdfPrintScaling scaling;
   final int copies;
-  final String? pageRange;
+  final PageRange? pageRange;
 
   const _PrintPdfRequest(
     this.id,
@@ -281,7 +366,7 @@ class _SubmitPdfJobRequest {
   final Map<String, String>? cupsOptions;
   final PdfPrintScaling scaling;
   final int copies;
-  final String? pageRange;
+  final PageRange? pageRange;
 
   const _SubmitPdfJobRequest(
     this.id,
@@ -523,8 +608,10 @@ Future<bool> rawDataToPrinter(
 /// - [docName]: The name of the document to show in the print queue.
 /// - [scaling]: The scaling mode for Windows printing (defaults to [PdfPrintScaling.fitPage]).
 /// - [copies]: The number of copies to print. Defaults to 1.
-/// - [pageRange]: A string specifying the pages to print (e.g., "1-3,5,7-9").
-///   Leave empty or `null` to print all pages. **Warning**: An invalid range may cause the print to fail.
+/// - [pageRange]: A [PageRange] object specifying the pages to print.
+///   If `null`, all pages will be printed.
+///   The native layer will still validate the range against the PDF's page count,
+///   which may cause the print to fail if the range is out of bounds (e.g., printing page 100 of a 10-page document).
 /// - [cupsOptions]: A map of CUPS options (e.g., `{'media': 'A4', 'orientation-requested': '4'}`).
 ///   On macOS/Linux, `copies` and `pageRange` are automatically added to this map if provided.
 Future<bool> printPdf(
@@ -534,7 +621,7 @@ Future<bool> printPdf(
   PdfPrintScaling scaling = PdfPrintScaling.fitPage,
   Map<String, String>? cupsOptions,
   int? copies,
-  String? pageRange,
+  PageRange? pageRange,
 }) async {
   final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
   final int requestId = _nextPrintPdfRequestId++;
@@ -593,7 +680,7 @@ Stream<PrintJob> printPdfAndStreamStatus(
   PdfPrintScaling scaling = PdfPrintScaling.fitPage,
   Map<String, String>? cupsOptions,
   int? copies,
-  String? pageRange,
+  PageRange? pageRange,
   Duration pollInterval = const Duration(seconds: 2),
 }) {
   return _streamJobStatus(
@@ -844,7 +931,7 @@ Future<int> _submitPdfJob(
   PdfPrintScaling scaling = PdfPrintScaling.fitPage,
   Map<String, String>? cupsOptions,
   int? copies,
-  String? pageRange,
+  PageRange? pageRange,
 }) async {
   final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
   final int requestId = _nextSubmitPdfJobRequestId++;
@@ -1093,13 +1180,14 @@ Future<SendPort> _helperIsolateSendPort = () async {
               final namePtr = data.printerName.toNativeUtf8();
               final pathPtr = data.pdfFilePath.toNativeUtf8();
               final docNamePtr = data.docName.toNativeUtf8();
-              final pageRangePtr = data.pageRange?.toNativeUtf8() ?? nullptr;
+              final pageRangeValue = data.pageRange?.toValue();
+              final pageRangePtr = pageRangeValue?.toNativeUtf8() ?? nullptr;
               try {
                 // Handle cupsOptions for native call
                 final effectiveCupsOptions = {...?data.cupsOptions};
                 if (Platform.isMacOS || Platform.isLinux) {
                   if (data.copies > 1) effectiveCupsOptions['copies'] = data.copies.toString();
-                  if (data.pageRange != null && data.pageRange!.isNotEmpty) effectiveCupsOptions['page-ranges'] = data.pageRange!;
+                  if (pageRangeValue != null && pageRangeValue.isNotEmpty) effectiveCupsOptions['page-ranges'] = pageRangeValue;
                 }
 
                 final int numOptions = effectiveCupsOptions.length;
@@ -1217,12 +1305,13 @@ Future<SendPort> _helperIsolateSendPort = () async {
               final namePtr = data.printerName.toNativeUtf8();
               final pathPtr = data.pdfFilePath.toNativeUtf8();
               final docNamePtr = data.docName.toNativeUtf8();
-              final pageRangePtr = data.pageRange?.toNativeUtf8() ?? nullptr;
+              final pageRangeValue = data.pageRange?.toValue();
+              final pageRangePtr = pageRangeValue?.toNativeUtf8() ?? nullptr;
               try {
                 final effectiveCupsOptions = {...?data.cupsOptions};
                 if (Platform.isMacOS || Platform.isLinux) {
                   if (data.copies > 1) effectiveCupsOptions['copies'] = data.copies.toString();
-                  if (data.pageRange != null && data.pageRange!.isNotEmpty) effectiveCupsOptions['page-ranges'] = data.pageRange!;
+                  if (pageRangeValue != null && pageRangeValue.isNotEmpty) effectiveCupsOptions['page-ranges'] = pageRangeValue;
                 }
 
                 final int numOptions = effectiveCupsOptions.length;

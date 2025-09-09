@@ -1,8 +1,9 @@
+
 ## 0.0.5
 
-* **FEAT**: Added support for `copies` and `pageRange` when printing PDFs on Windows by modifying the printer's `DEVMODE` and implementing page-range parsing.
-* **FEAT**: The `copies` and `pageRange` parameters are now also passed as standard CUPS options (`copies`, `page-ranges`) on macOS and Linux for consistent cross-platform API behavior.
-* **DOCS**: Updated `printPdf` and `printPdfAndStreamStatus` documentation for the new parameters.
+* **FEAT**: Added support for `copies` and `pageRange` when printing PDFs on Windows and CUPS-based systems.
+* **FEAT**: Refactored the `pageRange` parameter to use a type-safe `PageRange` class, improving API clarity and preventing invalid format errors.
+* **DOCS**: Updated documentation for new printing parameters and the `PageRange` class.
 * **EXAMPLE**: Added UI controls for setting the number of copies and page range in the example app.
 
 ## 0.0.4

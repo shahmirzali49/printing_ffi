@@ -174,11 +174,20 @@ class _PrintingScreenState extends State<PrintingScreen> {
     Map<String, String>? cupsOptions,
     required PdfPrintScaling scaling,
     required int copies,
-    required String pageRange,
+    required String pageRangeString,
   }) async {
     if (_selectedPrinter == null) {
       _showSnackbar('No printer selected!', isError: true);
       return;
+    }
+    PageRange? pageRange;
+    if (pageRangeString.trim().isNotEmpty) {
+      try {
+        pageRange = PageRange.parse(pageRangeString);
+      } on ArgumentError catch (e) {
+        _showSnackbar('Invalid page range: ${e.message}', isError: true);
+        return;
+      }
     }
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
@@ -187,20 +196,26 @@ class _PrintingScreenState extends State<PrintingScreen> {
 
     if (result != null && result.files.single.path != null) {
       final path = result.files.single.path!;
-      _showSnackbar('Printing PDF...');
-      final success = await printPdf(
-        _selectedPrinter!.name,
-        path,
-        docName: 'My Flutter PDF',
-        cupsOptions: cupsOptions,
-        scaling: scaling,
-        copies: copies,
-        pageRange: pageRange,
-      );
-      if (success) {
-        _showSnackbar('PDF sent to printer successfully!');
-      } else {
-        _showSnackbar('Failed to print PDF.', isError: true);
+      try {
+        _showSnackbar('Printing PDF...');
+        final success = await printPdf(
+          _selectedPrinter!.name,
+          path,
+          docName: 'My Flutter PDF',
+          cupsOptions: cupsOptions,
+          scaling: scaling,
+          copies: copies,
+          pageRange: pageRange,
+        );
+        if (success) {
+          _showSnackbar('PDF sent to printer successfully!');
+        } else {
+          _showSnackbar('Failed to print PDF. The printer may be offline or the page range may be invalid for the document.', isError: true);
+        }
+      } on ArgumentError catch (e) {
+        _showSnackbar('Invalid argument: ${e.message}', isError: true);
+      } catch (e) {
+        _showSnackbar('An unexpected error occurred while printing: $e', isError: true);
       }
     }
   }
@@ -217,8 +232,17 @@ class _PrintingScreenState extends State<PrintingScreen> {
 
     if (result != null && result.files.single.path != null) {
       final copies = int.tryParse(_copiesController.text) ?? 1;
-      final pageRange = _pageRangeController.text;
+      final pageRangeString = _pageRangeController.text;
       final path = result.files.single.path!;
+      PageRange? pageRange;
+      if (pageRangeString.trim().isNotEmpty) {
+        try {
+          pageRange = PageRange.parse(pageRangeString);
+        } on ArgumentError catch (e) {
+          _showSnackbar('Invalid page range: ${e.message}', isError: true);
+          return;
+        }
+      }
       showDialog(
         context: context,
         barrierDismissible: false,
@@ -495,7 +519,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
                     onPressed: () => _printPdf(
                       scaling: _selectedScaling,
                       copies: int.tryParse(_copiesController.text) ?? 1,
-                      pageRange: _pageRangeController.text,
+                      pageRangeString: _pageRangeController.text,
                     ),
                     style: ElevatedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(
@@ -672,7 +696,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
                 cupsOptions: _selectedCupsOptions,
                 scaling: _selectedScaling,
                 copies: int.tryParse(_copiesController.text) ?? 1,
-                pageRange: _pageRangeController.text,
+                pageRangeString: _pageRangeController.text,
               ),
               style: ElevatedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(
