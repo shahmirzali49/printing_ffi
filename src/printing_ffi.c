@@ -20,6 +20,7 @@
 #ifdef _WIN32
 // Include the main Pdfium header. Ensure this is in your src/ directory.
 #include "fpdfview.h"
+#include "fpdf_ext.h"
 // Global state for Pdfium initialization
 static bool s_pdfium_initialized = false;
 #endif
@@ -713,19 +714,22 @@ FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_
         return false;
     }
 
+    // Get printable area of the printer in device units (pixels)
+    int printable_width = GetDeviceCaps(hdc, HORZRES);
+    int printable_height = GetDeviceCaps(hdc, VERTRES);
+
     bool success = true;
     // Manually loop for copies, as some drivers (like "Print to PDF") ignore the DEVMODE setting.
     for (int c = 0; c < copies && success; c++) {
         for (int i = 0; i < page_count && success; ++i) {
+            if (!pages_to_print[i]) {
+                continue;
+            }
+
             if (StartPage(hdc) <= 0) {
                 LOG("StartPage failed for page %d with error %lu", i, GetLastError());
                 success = false;
                 break;
-            }
-
-            if (!pages_to_print[i]) {
-                EndPage(hdc);
-                continue;
             }
 
             FPDF_PAGE page = FPDF_LoadPage(doc, i);
@@ -736,88 +740,18 @@ FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_
                 break;
             }
 
-            // Get printer DPI for scaling
-            int dpi_x = GetDeviceCaps(hdc, LOGPIXELSX);
-            int dpi_y = GetDeviceCaps(hdc, LOGPIXELSY);
-
-            // Render page to a bitmap at printer's resolution
-            int width = (int)(FPDF_GetPageWidthF(page) / 72.0 * dpi_x);
-            int height = (int)(FPDF_GetPageHeightF(page) / 72.0 * dpi_y);
-
-            BITMAPINFO bmi;
-            memset(&bmi, 0, sizeof(bmi));
-            bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-            bmi.bmiHeader.biWidth = width;
-            bmi.bmiHeader.biHeight = -height; // Negative for top-down DIB, which Pdfium uses.
-            bmi.bmiHeader.biPlanes = 1;
-            bmi.bmiHeader.biBitCount = 32; // BGRA format
-            bmi.bmiHeader.biCompression = BI_RGB;
-
-            void* pBitmapData = NULL;
-            HBITMAP hBitmap = CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS, &pBitmapData, NULL, 0);
-            if (!hBitmap || !pBitmapData) {
-                LOG("CreateDIBSection failed for page %d", i);
-                FPDF_ClosePage(page);
-                EndPage(hdc);
-                success = false;
-                break;
-            }
-
-            // Create a Pdfium bitmap that wraps the DIB section's buffer.
-            FPDF_BITMAP pdfBitmap = FPDFBitmap_CreateEx(width, height, FPDFBitmap_BGRA, pBitmapData, width * 4);
-            if (!pdfBitmap) {
-                LOG("FPDFBitmap_CreateEx failed for page %d", i);
-                DeleteObject(hBitmap);
-                FPDF_ClosePage(page);
-                EndPage(hdc);
-                success = false;
-                break;
-            }
-
-            // Fill with white background (Pdfium renders with transparency by default)
-            FPDFBitmap_FillRect(pdfBitmap, 0, 0, width, height, 0xFFFFFFFF);
-
-            // Render the page into the Pdfium bitmap (which is our DIB buffer)
-            FPDF_RenderPageBitmap(pdfBitmap, page, 0, 0, width, height, 0, FPDF_ANNOT);
-
-            // The DIB section is now updated. We can destroy the Pdfium bitmap wrapper.
-            FPDFBitmap_Destroy(pdfBitmap);
-
-            // Get printable area of the printer
-            int printable_width = GetDeviceCaps(hdc, HORZRES);
-            int printable_height = GetDeviceCaps(hdc, VERTRES);
-
-            // Calculate destination rectangle based on scaling mode
-            int dest_x = 0;
-            int dest_y = 0;
-            int dest_width = width;
-            int dest_height = height;
-
+            // Use the higher-level FPDF_PrintPage which correctly handles the HDC's state (including orientation).
+            int fpdf_flags = 0;
             if (scaling_mode == 0) { // 0 = Fit Page
-                float page_aspect = (float)width / (float)height;
-                float printable_aspect = (float)printable_width / (float)printable_height;
-
-                if (page_aspect > printable_aspect) {
-                    dest_width = printable_width;
-                    dest_height = (int)(printable_width / page_aspect);
-                } else {
-                    dest_height = printable_height;
-                    dest_width = (int)(printable_height * page_aspect);
-                }
-                dest_x = (printable_width - dest_width) / 2;
-                dest_y = (printable_height - dest_height) / 2;
+                fpdf_flags = FPDF_PRINT_SHRINTOFIT | FPDF_PRINT_CENTER;
             } else { // 1 = Actual Size
-                dest_x = (printable_width - dest_width) / 2;
-                dest_y = (printable_height - dest_height) / 2;
+                fpdf_flags = FPDF_PRINT_CENTER;
             }
 
-            int result = StretchDIBits(hdc, dest_x, dest_y, dest_width, dest_height, 0, 0, width, height, pBitmapData, &bmi, DIB_RGB_COLORS, SRCCOPY);
-            if (result == GDI_ERROR) {
-                LOG("StretchDIBits failed for page %d with error %lu", i, GetLastError());
-                success = false;
-            }
+            // The 'rotate' parameter is 0 because the DEVMODE has already configured the printer's orientation,
+            // and FPDF_PrintPage will respect the HDC's coordinate system.
+            FPDF_PrintPage(hdc, page, 0, 0, printable_width, printable_height, 0, fpdf_flags);
 
-            DeleteObject(hBitmap);
             FPDF_ClosePage(page);
 
             if (EndPage(hdc) <= 0) {
@@ -1720,69 +1654,39 @@ FFI_PLUGIN_EXPORT int32_t submit_pdf_job(const char* printer_name, const char* p
         return 0;
     }
 
+    // Get printable area of the printer in device units (pixels)
+    int printable_width = GetDeviceCaps(hdc, HORZRES);
+    int printable_height = GetDeviceCaps(hdc, VERTRES);
+
     bool success = true;
     // Manually loop for copies, as some drivers (like "Print to PDF") ignore the DEVMODE setting.
     for (int c = 0; c < copies && success; c++) {
         for (int i = 0; i < page_count && success; ++i) {
-            if (StartPage(hdc) <= 0) { success = false; break; }
-            if (!pages_to_print[i]) { EndPage(hdc); continue; }
+            if (!pages_to_print[i]) {
+                continue;
+            }
+            if (StartPage(hdc) <= 0) {
+                LOG("StartPage failed for page %d with error %lu", i, GetLastError());
+                success = false;
+                break;
+            }
             FPDF_PAGE page = FPDF_LoadPage(doc, i);
-            if (!page) { EndPage(hdc); success = false; break; }
-
-            int dpi_x = GetDeviceCaps(hdc, LOGPIXELSX);
-            int dpi_y = GetDeviceCaps(hdc, LOGPIXELSY);
-            int width = (int)(FPDF_GetPageWidthF(page) / 72.0 * dpi_x);
-            int height = (int)(FPDF_GetPageHeightF(page) / 72.0 * dpi_y);
-
-            BITMAPINFO bmi;
-            memset(&bmi, 0, sizeof(bmi));
-            bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-            bmi.bmiHeader.biWidth = width;
-            bmi.bmiHeader.biHeight = -height;
-            bmi.bmiHeader.biPlanes = 1;
-            bmi.bmiHeader.biBitCount = 32;
-            bmi.bmiHeader.biCompression = BI_RGB;
-
-            void* pBitmapData = NULL;
-            HBITMAP hBitmap = CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS, &pBitmapData, NULL, 0);
-            if (!hBitmap || !pBitmapData) { FPDF_ClosePage(page); EndPage(hdc); success = false; break; }
-
-            FPDF_BITMAP pdfBitmap = FPDFBitmap_CreateEx(width, height, FPDFBitmap_BGRA, pBitmapData, width * 4);
-            FPDFBitmap_FillRect(pdfBitmap, 0, 0, width, height, 0xFFFFFFFF);
-            if (!pdfBitmap) {
-                DeleteObject(hBitmap);
-                FPDF_ClosePage(page);
+            if (!page) {
+                LOG("FPDF_LoadPage failed for page %d", i);
                 EndPage(hdc);
                 success = false;
                 break;
             }
-            FPDF_RenderPageBitmap(pdfBitmap, page, 0, 0, width, height, 0, FPDF_ANNOT);
-            FPDFBitmap_Destroy(pdfBitmap);
 
-            int printable_width = GetDeviceCaps(hdc, HORZRES);
-            int printable_height = GetDeviceCaps(hdc, VERTRES);
-            int dest_x = 0, dest_y = 0, dest_width = width, dest_height = height;
-
-            if (scaling_mode == 0) { // Fit Page
-                float page_aspect = (float)width / (float)height;
-                float printable_aspect = (float)printable_width / (float)printable_height;
-                if (page_aspect > printable_aspect) {
-                    dest_width = printable_width;
-                    dest_height = (int)(printable_width / page_aspect);
-                } else {
-                    dest_height = printable_height;
-                    dest_width = (int)(printable_height * page_aspect);
-                }
-                dest_x = (printable_width - dest_width) / 2;
-                dest_y = (printable_height - dest_height) / 2;
-            } else { // Actual Size
-                dest_x = (printable_width - dest_width) / 2;
-                dest_y = (printable_height - dest_height) / 2;
+            int fpdf_flags = 0;
+            if (scaling_mode == 0) { // 0 = Fit Page
+                fpdf_flags = FPDF_PRINT_SHRINTOFIT | FPDF_PRINT_CENTER;
+            } else { // 1 = Actual Size
+                fpdf_flags = FPDF_PRINT_CENTER;
             }
 
-            if (StretchDIBits(hdc, dest_x, dest_y, dest_width, dest_height, 0, 0, width, height, pBitmapData, &bmi, DIB_RGB_COLORS, SRCCOPY) == GDI_ERROR) { success = false; }
+            FPDF_PrintPage(hdc, page, 0, 0, printable_width, printable_height, 0, fpdf_flags);
 
-            DeleteObject(hBitmap);
             FPDF_ClosePage(page);
             if (EndPage(hdc) <= 0) { success = false; }
         }

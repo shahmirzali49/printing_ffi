@@ -234,7 +234,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
     options.add(PrintQualityOption(_selectedPrintQuality));
 
     if (Platform.isWindows &&
-        _windowsCapabilities!.mediaTypes.any((t) => t.name == 'Photo')) {
+        (_windowsCapabilities?.mediaTypes.any((t) => t.name == 'Photo') ?? false)) {
       // Example of setting a specific media type if available
     }
 
