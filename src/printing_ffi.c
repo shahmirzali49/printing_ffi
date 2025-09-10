@@ -139,12 +139,46 @@ static bool parse_page_range(const char* range_str, bool* page_flags, int total_
     free(to_free);
     return true;
 }
+
+// Helper function to parse Windows-specific print options from the generic key-value array.
+static void parse_windows_options(int num_options, const char** option_keys, const char** option_values,
+                                  int* paper_size_id, int* paper_source_id, int* orientation,
+                                  int* color_mode, int* print_quality, int* media_type_id) {
+    // Set default values
+    *paper_size_id = 0;
+    *paper_source_id = 0;
+    *orientation = 0;
+    *color_mode = 0;
+    *print_quality = 0;
+    *media_type_id = 0;
+
+    for (int i = 0; i < num_options; i++) {
+        if (strcmp(option_keys[i], "paper-size-id") == 0) {
+            *paper_size_id = atoi(option_values[i]);
+        } else if (strcmp(option_keys[i], "paper-source-id") == 0) {
+            *paper_source_id = atoi(option_values[i]);
+        } else if (strcmp(option_keys[i], "orientation") == 0) {
+            if (strcmp(option_values[i], "landscape") == 0) *orientation = 2; // DMORIENT_LANDSCAPE
+            else *orientation = 1; // DMORIENT_PORTRAIT
+        } else if (strcmp(option_keys[i], "color-mode") == 0) {
+            if (strcmp(option_values[i], "monochrome") == 0) *color_mode = 1; // DMCOLOR_MONOCHROME
+            else *color_mode = 2; // DMCOLOR_COLOR
+        } else if (strcmp(option_keys[i], "print-quality") == 0) {
+            if (strcmp(option_values[i], "draft") == 0) *print_quality = -1; // DMRES_DRAFT
+            else if (strcmp(option_values[i], "low") == 0) *print_quality = -2; // DMRES_LOW
+            else if (strcmp(option_values[i], "high") == 0) *print_quality = -4; // DMRES_HIGH
+            else *print_quality = -3; // DMRES_MEDIUM / normal
+        } else if (strcmp(option_keys[i], "media-type-id") == 0) {
+            *media_type_id = atoi(option_values[i]);
+        }
+    }
+}
 #endif
 
 #ifdef _WIN32
 // Helper to get a modified DEVMODE struct for a printer.
 // The caller is responsible for freeing the returned struct.
-static DEVMODEW* get_modified_devmode(wchar_t* printer_name_w, int paper_size_id, int paper_source_id, int orientation) {
+static DEVMODEW* get_modified_devmode(wchar_t* printer_name_w, int paper_size_id, int paper_source_id, int orientation, int color_mode, int print_quality, int media_type_id) {
     if (!printer_name_w) return NULL;
 
     HANDLE hPrinter;
@@ -596,20 +630,8 @@ FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_
         LOG("Pdfium library initialized for the first time.");
     }
 
-    int paper_size_id = 0;
-    int paper_source_id = 0;
-    int orientation = 0;
-    for (int i = 0; i < num_options; i++) {
-        if (strcmp(option_keys[i], "paper-size-id") == 0) {
-            paper_size_id = atoi(option_values[i]);
-        } else if (strcmp(option_keys[i], "paper-source-id") == 0) {
-            paper_source_id = atoi(option_values[i]);
-        } else if (strcmp(option_keys[i], "orientation") == 0) {
-            if (strcmp(option_values[i], "landscape") == 0) orientation = 2;
-            else orientation = 1;
-        }
-    }
-
+    int paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id;
+    parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id);
     wchar_t* printer_name_w = to_utf16(printer_name);
     if (!printer_name_w) {
         LOG("Failed to convert printer name to UTF-16");
@@ -1606,20 +1628,8 @@ FFI_PLUGIN_EXPORT int32_t submit_pdf_job(const char* printer_name, const char* p
         LOG("Pdfium library initialized for the first time.");
     }
 
-    int paper_size_id = 0;
-    int paper_source_id = 0;
-    int orientation = 0;
-    for (int i = 0; i < num_options; i++) {
-        if (strcmp(option_keys[i], "paper-size-id") == 0) {
-            paper_size_id = atoi(option_values[i]);
-        } else if (strcmp(option_keys[i], "paper-source-id") == 0) {
-            paper_source_id = atoi(option_values[i]);
-        } else if (strcmp(option_keys[i], "orientation") == 0) {
-            if (strcmp(option_values[i], "landscape") == 0) orientation = 2;
-            else orientation = 1;
-        }
-    }
-
+    int paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id;
+    parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id);
     wchar_t* printer_name_w = to_utf16(printer_name);
     if (!printer_name_w) {
         LOG("Failed to convert printer name to UTF-16");
