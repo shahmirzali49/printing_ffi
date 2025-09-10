@@ -1707,6 +1707,13 @@ FFI_PLUGIN_EXPORT int32_t submit_pdf_job(const char* printer_name, const char* p
 
             FPDF_BITMAP pdfBitmap = FPDFBitmap_CreateEx(width, height, FPDFBitmap_BGRA, pBitmapData, width * 4);
             FPDFBitmap_FillRect(pdfBitmap, 0, 0, width, height, 0xFFFFFFFF);
+            if (!pdfBitmap) {
+                DeleteObject(hBitmap);
+                FPDF_ClosePage(page);
+                EndPage(hdc);
+                success = false;
+                break;
+            }
             FPDF_RenderPageBitmap(pdfBitmap, page, 0, 0, width, height, 0, FPDF_ANNOT);
             FPDFBitmap_Destroy(pdfBitmap);
 

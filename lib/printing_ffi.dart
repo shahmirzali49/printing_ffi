@@ -712,7 +712,7 @@ Stream<PrintJob> rawDataToPrinterAndStreamStatus(
   return _streamJobStatus(
     printerName: printerName,
     pollInterval: pollInterval,
-    submitJob: () => _submitRawDataJob(
+    submitJob: () => _sendRawDataJobRequest(
       printerName,
       data,
       docName: docName,
@@ -742,7 +742,7 @@ Stream<PrintJob> printPdfAndStreamStatus(
   return _streamJobStatus(
     printerName: printerName,
     pollInterval: pollInterval,
-    submitJob: () => _submitPdfJob(
+    submitJob: () => _sendPdfJobRequest(
       printerName,
       pdfFilePath,
       docName: docName,
@@ -1009,7 +1009,7 @@ Future<bool> cancelPrintJob(String printerName, int jobId) async {
   return completer.future;
 }
 
-Future<int> _submitRawDataJob(
+Future<int> _sendRawDataJobRequest(
   String printerName,
   Uint8List data, {
   String docName = 'Flutter Document',
@@ -1030,7 +1030,7 @@ Future<int> _submitRawDataJob(
   return completer.future;
 }
 
-Future<int> _submitPdfJob(
+Future<int> _sendPdfJobRequest(
   String printerName,
   String pdfFilePath, {
   String docName = 'Flutter PDF Document',
