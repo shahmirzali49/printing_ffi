@@ -1030,7 +1030,33 @@ FFI_PLUGIN_EXPORT bool open_printer_properties(const char* printer_name, intptr_
     LONG result = DocumentPropertiesW((HWND)hwnd, hPrinter, printer_name_w, pDevMode, pDevMode, DM_IN_BUFFER | DM_OUT_BUFFER | DM_PROMPT);
 
     if (result == IDOK) {
-        LOG("Printer properties dialog closed with OK.");
+        LOG("Printer properties dialog closed with OK. Applying changes to printer defaults.");
+
+        // To apply the changes, we need to use SetPrinter with PRINTER_INFO_2.
+        DWORD needed = 0;
+        // Get the size needed for PRINTER_INFO_2
+        GetPrinterW(hPrinter, 2, NULL, 0, &needed);
+        if (needed > 0) {
+            PRINTER_INFO_2W* pinfo2 = (PRINTER_INFO_2W*)malloc(needed);
+            if (pinfo2) {
+                // Get the current printer info
+                if (GetPrinterW(hPrinter, 2, (LPBYTE)pinfo2, needed, &needed)) {
+                    // Update the DEVMODE pointer in the PRINTER_INFO_2 struct with the user's changes.
+                    pinfo2->pDevMode = pDevMode;
+                    // Security descriptor must be NULL for SetPrinter.
+                    pinfo2->pSecurityDescriptor = NULL;
+
+                    // Apply the changes to the printer's defaults.
+                    if (!SetPrinterW(hPrinter, 2, (LPBYTE)pinfo2, 0)) {
+                        LOG("SetPrinterW failed with error %lu", GetLastError());
+                    } else {
+                        LOG("SetPrinterW succeeded. Broadcasting change.");
+                        SendMessageTimeout(HWND_BROADCAST, WM_WININICHANGE, 0, (LPARAM)L"windows", SMTO_NORMAL, 1000, NULL);
+                    }
+                }
+                free(pinfo2);
+            }
+        }
     } else if (result == IDCANCEL) {
         LOG("Printer properties dialog was cancelled.");
     } else {
