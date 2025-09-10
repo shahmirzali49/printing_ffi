@@ -211,9 +211,24 @@ static DEVMODEW* get_modified_devmode(wchar_t* printer_name_w, int paper_size_id
 
     bool modified = false;
     // A value <= 0 for IDs/orientation means "use default".
-    if (paper_size_id > 0) { pDevMode->dmFields |= DM_PAPERSIZE; pDevMode->dmPaperSize = (short)paper_size_id; modified = true; }
+    if (paper_size_id > 0) {
+        pDevMode->dmFields |= DM_PAPERSIZE;
+        pDevMode->dmPaperSize = (short)paper_size_id;
+        // Per documentation, when using dmPaperSize, dmPaperLength and dmPaperWidth should be zeroed
+        // and their corresponding field flags should be cleared to avoid conflicts with some drivers.
+        pDevMode->dmFields &= ~(DM_PAPERLENGTH | DM_PAPERWIDTH);
+        pDevMode->dmPaperLength = 0;
+        pDevMode->dmPaperWidth = 0;
+        modified = true;
+    }
     if (paper_source_id > 0) { pDevMode->dmFields |= DM_DEFAULTSOURCE; pDevMode->dmDefaultSource = (short)paper_source_id; modified = true; }
-    if (orientation > 0) { pDevMode->dmFields |= DM_ORIENTATION; pDevMode->dmOrientation = (short)orientation; modified = true; }
+    if (orientation > 0) {
+        pDevMode->dmFields |= DM_ORIENTATION;
+        pDevMode->dmOrientation = (short)orientation;
+        // Per documentation, DM_ORIENTATION requires DM_PAPERSIZE to be set. The default DEVMODE already has a valid dmPaperSize, so we just ensure the flag is set.
+        pDevMode->dmFields |= DM_PAPERSIZE;
+        modified = true;
+    }
     if (color_mode > 0) { pDevMode->dmFields |= DM_COLOR; pDevMode->dmColor = (short)color_mode; modified = true; }
     if (print_quality != 0) { pDevMode->dmFields |= DM_PRINTQUALITY; pDevMode->dmPrintQuality = (short)print_quality; modified = true; }
     if (media_type_id > 0) { pDevMode->dmFields |= DM_MEDIATYPE; pDevMode->dmMediaType = (short)media_type_id; modified = true; }

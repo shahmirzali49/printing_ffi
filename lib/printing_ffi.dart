@@ -1282,7 +1282,33 @@ Future<SendPort> _helperIsolateSendPort = () async {
                 dataPtr[i] = data.data[i];
               }
               try {
-                final options = data.options ?? {};
+                final options = {...?data.options};
+                if (Platform.isMacOS || Platform.isLinux) {
+                  // Translate generic options to CUPS/IPP standard options.
+                  if (options.containsKey('orientation')) {
+                    final orientationValue = options.remove('orientation');
+                    options['orientation-requested'] = orientationValue == 'landscape' ? '4' : '3';
+                  }
+                  if (options.containsKey('color-mode')) {
+                    final colorValue = options.remove('color-mode');
+                    options['print-color-mode'] = colorValue!;
+                  }
+                  if (options.containsKey('print-quality')) {
+                    final qualityValue = options.remove('print-quality');
+                    switch (qualityValue) {
+                      case 'draft':
+                      case 'low':
+                        options['print-quality'] = '3'; // IPP_QUALITY_DRAFT
+                        break;
+                      case 'normal':
+                        options['print-quality'] = '4'; // IPP_QUALITY_NORMAL
+                        break;
+                      case 'high':
+                        options['print-quality'] = '5'; // IPP_QUALITY_HIGH
+                        break;
+                    }
+                  }
+                }
                 final int numOptions = options.length;
                 Pointer<Pointer<Utf8>> keysPtr = nullptr;
                 Pointer<Pointer<Utf8>> valuesPtr = nullptr;
@@ -1390,10 +1416,29 @@ Future<SendPort> _helperIsolateSendPort = () async {
                 if (Platform.isMacOS || Platform.isLinux) {
                   if (data.copies > 1) options['copies'] = data.copies.toString();
                   if (pageRangeValue != null && pageRangeValue.isNotEmpty) options['page-ranges'] = pageRangeValue;
-                  // The Dart code now prepares the correct orientation key for CUPS
+                  // Translate generic options to CUPS/IPP standard options.
                   if (options.containsKey('orientation')) {
                     final orientationValue = options.remove('orientation');
                     options['orientation-requested'] = orientationValue == 'landscape' ? '4' : '3';
+                  }
+                  if (options.containsKey('color-mode')) {
+                    final colorValue = options.remove('color-mode');
+                    options['print-color-mode'] = colorValue!;
+                  }
+                  if (options.containsKey('print-quality')) {
+                    final qualityValue = options.remove('print-quality');
+                    switch (qualityValue) {
+                      case 'draft':
+                      case 'low':
+                        options['print-quality'] = '3'; // IPP_QUALITY_DRAFT
+                        break;
+                      case 'normal':
+                        options['print-quality'] = '4'; // IPP_QUALITY_NORMAL
+                        break;
+                      case 'high':
+                        options['print-quality'] = '5'; // IPP_QUALITY_HIGH
+                        break;
+                    }
                   }
                 }
 
@@ -1494,6 +1539,32 @@ Future<SendPort> _helperIsolateSendPort = () async {
               }
               try {
                 final options = {...?data.options};
+                if (Platform.isMacOS || Platform.isLinux) {
+                  // Translate generic options to CUPS/IPP standard options.
+                  if (options.containsKey('orientation')) {
+                    final orientationValue = options.remove('orientation');
+                    options['orientation-requested'] = orientationValue == 'landscape' ? '4' : '3';
+                  }
+                  if (options.containsKey('color-mode')) {
+                    final colorValue = options.remove('color-mode');
+                    options['print-color-mode'] = colorValue!;
+                  }
+                  if (options.containsKey('print-quality')) {
+                    final qualityValue = options.remove('print-quality');
+                    switch (qualityValue) {
+                      case 'draft':
+                      case 'low':
+                        options['print-quality'] = '3'; // IPP_QUALITY_DRAFT
+                        break;
+                      case 'normal':
+                        options['print-quality'] = '4'; // IPP_QUALITY_NORMAL
+                        break;
+                      case 'high':
+                        options['print-quality'] = '5'; // IPP_QUALITY_HIGH
+                        break;
+                    }
+                  }
+                }
                 final int numOptions = options.length;
                 Pointer<Pointer<Utf8>> keysPtr = nullptr;
                 Pointer<Pointer<Utf8>> valuesPtr = nullptr;
@@ -1550,10 +1621,29 @@ Future<SendPort> _helperIsolateSendPort = () async {
                 if (Platform.isMacOS || Platform.isLinux) {
                   if (data.copies > 1) options['copies'] = data.copies.toString();
                   if (pageRangeValue != null && pageRangeValue.isNotEmpty) options['page-ranges'] = pageRangeValue;
-                  // The Dart code now prepares the correct orientation key for CUPS
+                  // Translate generic options to CUPS/IPP standard options.
                   if (options.containsKey('orientation')) {
                     final orientationValue = options.remove('orientation');
                     options['orientation-requested'] = orientationValue == 'landscape' ? '4' : '3';
+                  }
+                  if (options.containsKey('color-mode')) {
+                    final colorValue = options.remove('color-mode');
+                    options['print-color-mode'] = colorValue!;
+                  }
+                  if (options.containsKey('print-quality')) {
+                    final qualityValue = options.remove('print-quality');
+                    switch (qualityValue) {
+                      case 'draft':
+                      case 'low':
+                        options['print-quality'] = '3'; // IPP_QUALITY_DRAFT
+                        break;
+                      case 'normal':
+                        options['print-quality'] = '4'; // IPP_QUALITY_NORMAL
+                        break;
+                      case 'high':
+                        options['print-quality'] = '5'; // IPP_QUALITY_HIGH
+                        break;
+                    }
                   }
                 }
 
