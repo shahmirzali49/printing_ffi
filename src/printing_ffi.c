@@ -997,14 +997,50 @@ FFI_PLUGIN_EXPORT bool open_printer_properties(const char* printer_name, intptr_
         return false;
     }
 
-    BOOL result = PrinterProperties((HWND)hwnd, hPrinter);
-    if (!result) {
-        LOG("PrinterProperties failed with error %lu", GetLastError());
+    // The modern and recommended way to show the printer properties dialog is
+    // by using DocumentProperties with the DM_PROMPT flag.
+
+    // First, get the size of the DEVMODE structure for the printer.
+    LONG devModeSize = DocumentPropertiesW(NULL, hPrinter, printer_name_w, NULL, NULL, 0);
+    if (devModeSize <= 0) {
+        LOG("DocumentProperties (get size) failed with error %lu", GetLastError());
+        ClosePrinter(hPrinter);
+        free(printer_name_w);
+        return false;
     }
 
+    DEVMODEW* pDevMode = (DEVMODEW*)malloc(devModeSize);
+    if (!pDevMode) {
+        LOG("Failed to allocate memory for DEVMODE structure.");
+        ClosePrinter(hPrinter);
+        free(printer_name_w);
+        return false;
+    }
+
+    // Get the current printer settings to populate the dialog.
+    if (DocumentPropertiesW(NULL, hPrinter, printer_name_w, pDevMode, NULL, DM_OUT_BUFFER) != IDOK) {
+        LOG("DocumentProperties (get defaults) failed with error %lu", GetLastError());
+        free(pDevMode);
+        ClosePrinter(hPrinter);
+        free(printer_name_w);
+        return false;
+    }
+
+    // Display the properties dialog. The user's changes will be written back to pDevMode.
+    LONG result = DocumentPropertiesW((HWND)hwnd, hPrinter, printer_name_w, pDevMode, pDevMode, DM_IN_BUFFER | DM_OUT_BUFFER | DM_PROMPT);
+
+    if (result == IDOK) {
+        LOG("Printer properties dialog closed with OK.");
+    } else if (result == IDCANCEL) {
+        LOG("Printer properties dialog was cancelled.");
+    } else {
+        LOG("DocumentProperties (prompt) failed with result: %ld, error: %lu", result, GetLastError());
+    }
+
+    free(pDevMode);
     ClosePrinter(hPrinter);
     free(printer_name_w);
-    return result;
+    return result == IDOK;
 #else
     (void)hwnd; // hwnd is Windows-specific
     if (!printer_name) {
