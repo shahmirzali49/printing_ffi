@@ -1,4 +1,5 @@
 {
     "dart.flutterSdkPath": "/Users/shreemanarjunsahu/.puro/envs/stable/flutter",
-    "dart.sdkPath": "/Users/shreemanarjunsahu/.puro/envs/stable/flutter/bin/cache/dart-sdk"
+    "dart.sdkPath": "/Users/shreemanarjunsahu/.puro/envs/stable/flutter/bin/cache/dart-sdk",
+    "cmake.sourceDirectory": "C:/Users/shree/Documents/GitHub/printing_ffi/src"
 }
