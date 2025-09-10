@@ -47,10 +47,16 @@ class _PrintingScreenState extends State<PrintingScreen> {
   StreamSubscription<List<PrintJob>>? _jobsSubscription;
   List<CupsOption>? _cupsOptions;
   Map<String, String> _selectedCupsOptions = {};
+  WindowsPrinterCapabilities? _windowsCapabilities;
+  WindowsPaperSize? _selectedPaperSize;
+  WindowsPaperSource? _selectedPaperSource;
+  WindowsOrientation _selectedOrientation = WindowsOrientation.portrait;
 
   bool _isLoadingPrinters = false;
   bool _isLoadingJobs = false;
   bool _isLoadingCupsOptions = false;
+  bool _isLoadingWindowsCaps = false;
+
   final TextEditingController _rawDataController = TextEditingController(
     text: 'Hello, FFI!',
   );
@@ -95,6 +101,10 @@ class _PrintingScreenState extends State<PrintingScreen> {
       _jobs = [];
       _cupsOptions = null;
       _selectedCupsOptions = {};
+      _windowsCapabilities = null;
+      _selectedPaperSize = null;
+      _selectedPaperSource = null;
+      _selectedOrientation = WindowsOrientation.portrait;
     });
     try {
       final printers = listPrinters();
@@ -125,6 +135,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
       _selectedPrinter = printer;
       _subscribeToJobs();
       _fetchCupsOptions();
+      _fetchWindowsCapabilities();
     });
   }
 
@@ -172,6 +183,49 @@ class _PrintingScreenState extends State<PrintingScreen> {
     }
   }
 
+  Future<void> _fetchWindowsCapabilities() async {
+    if (_selectedPrinter == null || !Platform.isWindows) return;
+    setState(() => _isLoadingWindowsCaps = true);
+    try {
+      final caps = await getWindowsPrinterCapabilities(_selectedPrinter!.name);
+      if (!mounted) return;
+      setState(() {
+        _windowsCapabilities = caps;
+        // Set defaults
+        if (caps?.paperSizes.isNotEmpty ?? false) {
+          _selectedPaperSize = caps!.paperSizes.first;
+        }
+        if (caps?.paperSources.isNotEmpty ?? false) {
+          _selectedPaperSource = caps!.paperSources.first;
+        }
+        _selectedOrientation = WindowsOrientation.portrait;
+      });
+    } catch (e) {
+      _showSnackbar('Failed to get Windows capabilities: $e', isError: true);
+    } finally {
+      if (mounted) setState(() => _isLoadingWindowsCaps = false);
+    }
+  }
+
+  List<PrintOption> _buildPrintOptions({Map<String, String>? cupsOptions}) {
+    final options = <PrintOption>[];
+    if (Platform.isWindows) {
+      if (_selectedPaperSize != null) {
+        options.add(WindowsPaperSizeOption(_selectedPaperSize!.id));
+      }
+      if (_selectedPaperSource != null) {
+        options.add(WindowsPaperSourceOption(_selectedPaperSource!.id));
+      }
+    }
+    options.add(OrientationOption(_selectedOrientation));
+    if (cupsOptions != null) {
+      cupsOptions.forEach((key, value) {
+        options.add(GenericCupsOption(key, value));
+      });
+    }
+    return options;
+  }
+
   Future<void> _printPdf({
     Map<String, String>? cupsOptions,
     required PdfPrintScaling scaling,
@@ -199,12 +253,13 @@ class _PrintingScreenState extends State<PrintingScreen> {
     if (result != null && result.files.single.path != null) {
       final path = result.files.single.path!;
       try {
+        final options = _buildPrintOptions(cupsOptions: cupsOptions);
         _showSnackbar('Printing PDF...');
         final success = await printPdf(
           _selectedPrinter!.name,
           path,
           docName: 'My Flutter PDF',
-          cupsOptions: cupsOptions,
+          options: options,
           scaling: scaling,
           copies: copies,
           pageRange: pageRange,
@@ -251,6 +306,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
           return;
         }
       }
+      final options = _buildPrintOptions();
       showDialog(
         context: context,
         barrierDismissible: false,
@@ -259,6 +315,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
           jobStream: printPdfAndStreamStatus(
             _selectedPrinter!.name,
             path,
+            options: options,
             scaling: _selectedScaling,
             copies: copies,
             pageRange: pageRange,
@@ -282,6 +339,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
     final zplData = '^XA^FO50,50^A0N,50,50^FD$textToPrint^FS^XZ';
     final data = Uint8List.fromList(zplData.codeUnits);
 
+    final options = _buildPrintOptions(cupsOptions: _selectedCupsOptions);
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -291,6 +349,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
           _selectedPrinter!.name,
           data,
           docName: 'My Tracked ZPL Label',
+          options: options,
         ),
       ),
     );
@@ -310,11 +369,13 @@ class _PrintingScreenState extends State<PrintingScreen> {
     final zplData = '^XA^FO50,50^A0N,50,50^FD$textToPrint^FS^XZ';
     final data = Uint8List.fromList(zplData.codeUnits);
 
+    final options = _buildPrintOptions(cupsOptions: _selectedCupsOptions);
     _showSnackbar('Sending raw ZPL data...');
     final success = await rawDataToPrinter(
       _selectedPrinter!.name,
       data,
       docName: 'My ZPL Label',
+      options: options,
     );
     if (success) {
       _showSnackbar('Raw data sent successfully!');
@@ -374,11 +435,23 @@ class _PrintingScreenState extends State<PrintingScreen> {
           child: ListView(
             children: [
               Text(
-                'Supported Paper Sizes',
+                'Paper Sizes (${capabilities.paperSizes.length})',
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               for (final paper in capabilities.paperSizes)
                 ListTile(
+                  dense: true,
+                  title: Text(paper.name),
+                  subtitle: Text('ID: ${paper.id}, ${paper.widthMillimeters.toStringAsFixed(1)} x ${paper.heightMillimeters.toStringAsFixed(1)} mm'),
+                ),
+              const Divider(),
+              Text(
+                'Paper Sources (${capabilities.paperSources.length})',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              for (final paper in capabilities.paperSources)
+                ListTile(
+                  dense: true,
                   title: Text(paper.name),
                   subtitle: Text(paper.toString()),
                 ),
@@ -496,6 +569,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
               'Standard Actions',
               style: Theme.of(context).textTheme.titleLarge,
             ),
+            _buildPlatformSettings(),
             const SizedBox(height: 16),
             Center(
               child: Column(
@@ -618,6 +692,90 @@ class _PrintingScreenState extends State<PrintingScreen> {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPlatformSettings() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 16.0),
+      child: Card(
+        elevation: 1,
+        color: Theme.of(context).colorScheme.secondaryContainer.withOpacity(0.3),
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Platform Settings',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 12),
+              if (Platform.isWindows) ...[
+                if (_isLoadingWindowsCaps)
+                  const Center(child: CircularProgressIndicator())
+                else if (_windowsCapabilities != null) ...[
+                  DropdownButtonFormField<WindowsPaperSize>(
+                    value: _selectedPaperSize,
+                    decoration: const InputDecoration(labelText: 'Paper Size (Windows)', border: OutlineInputBorder()),
+                    items: _windowsCapabilities!.paperSizes.map((p) => DropdownMenuItem(value: p, child: Text(p.name))).toList(),
+                    onChanged: (p) => setState(() => _selectedPaperSize = p),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<WindowsPaperSource>(
+                    value: _selectedPaperSource,
+                    decoration: const InputDecoration(labelText: 'Paper Source (Windows)', border: OutlineInputBorder()),
+                    items: _windowsCapabilities!.paperSources.map((s) => DropdownMenuItem(value: s, child: Text(s.name))).toList(),
+                    onChanged: (s) => setState(() => _selectedPaperSource = s),
+                  ),
+                  const SizedBox(height: 12),
+                ]
+              ],
+                DropdownButtonFormField<WindowsOrientation>(
+                  value: _selectedOrientation,
+                  decoration: const InputDecoration(labelText: 'Orientation', border: OutlineInputBorder()),
+                  items: WindowsOrientation.values
+                      .map((o) => DropdownMenuItem(
+                            value: o,
+                            child: Text(o.name[0].toUpperCase() + o.name.substring(1)),
+                          ))
+                      .toList(),
+                  onChanged: (o) => setState(() => _selectedOrientation = o ?? WindowsOrientation.portrait),
+                ),
+                const SizedBox(height: 16),
+                Center(
+                  child: ElevatedButton.icon(
+                    icon: const Icon(Icons.settings_outlined),
+                    label: const Text('Open Printer Properties'),
+                    onPressed: () async {
+                      if (_selectedPrinter == null) return;
+                      try {
+                        // For a real app, you might use the `win32` package
+                        // to get the handle of the main window. For this
+                        // example, 0 (NULL) is sufficient.
+                        final success = await openPrinterProperties(_selectedPrinter!.name, hwnd: 0);
+                        if (!success) {
+                          _showSnackbar('Could not open printer properties.', isError: true);
+                        }
+                      } catch (e) {
+                        _showSnackbar('Error opening properties: $e', isError: true);
+                      }
+                    },
+                  ),
+                ),
+              const SizedBox(height: 12),
+              if (Platform.isWindows)
+                Center(
+                  child: ElevatedButton.icon(
+                    icon: const Icon(Icons.inventory_2_outlined),
+                    label: const Text('Show All Capabilities'),
+                    onPressed: _showWindowsCapabilities,
+                  ),
+                ),
+            ],
+          ),
         ),
       ),
     );

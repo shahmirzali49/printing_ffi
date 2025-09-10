@@ -84,22 +84,43 @@ class PrintingFfiBindings {
   late final _free_printer_infoPtr = _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<PrinterInfo>)>>('free_printer_info');
   late final _free_printer_info = _free_printer_infoPtr.asFunction<void Function(ffi.Pointer<PrinterInfo>)>();
 
+  bool open_printer_properties(
+    ffi.Pointer<ffi.Char> printer_name,
+    int hwnd,
+  ) {
+    return _open_printer_properties(
+      printer_name,
+      hwnd,
+    );
+  }
+
+  late final _open_printer_propertiesPtr = _lookup<ffi.NativeFunction<ffi.Bool Function(ffi.Pointer<ffi.Char>, ffi.IntPtr)>>('open_printer_properties');
+  late final _open_printer_properties = _open_printer_propertiesPtr.asFunction<bool Function(ffi.Pointer<ffi.Char>, int)>();
+
   bool raw_data_to_printer(
     ffi.Pointer<ffi.Char> printer_name,
     ffi.Pointer<ffi.Uint8> data,
     int length,
     ffi.Pointer<ffi.Char> doc_name,
+    int num_options,
+    ffi.Pointer<ffi.Pointer<ffi.Char>> option_keys,
+    ffi.Pointer<ffi.Pointer<ffi.Char>> option_values,
   ) {
     return _raw_data_to_printer(
       printer_name,
       data,
       length,
       doc_name,
+      num_options,
+      option_keys,
+      option_values,
     );
   }
 
-  late final _raw_data_to_printerPtr = _lookup<ffi.NativeFunction<ffi.Bool Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Uint8>, ffi.Int, ffi.Pointer<ffi.Char>)>>('raw_data_to_printer');
-  late final _raw_data_to_printer = _raw_data_to_printerPtr.asFunction<bool Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Uint8>, int, ffi.Pointer<ffi.Char>)>();
+  late final _raw_data_to_printerPtr = _lookup<ffi.NativeFunction<ffi.Bool Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Uint8>, ffi.Int, ffi.Pointer<ffi.Char>, ffi.Int, ffi.Pointer<ffi.Pointer<ffi.Char>>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
+    'raw_data_to_printer',
+  );
+  late final _raw_data_to_printer = _raw_data_to_printerPtr.asFunction<bool Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Uint8>, int, ffi.Pointer<ffi.Char>, int, ffi.Pointer<ffi.Pointer<ffi.Char>>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
 
   bool print_pdf(
     ffi.Pointer<ffi.Char> printer_name,
@@ -240,17 +261,25 @@ class PrintingFfiBindings {
     ffi.Pointer<ffi.Uint8> data,
     int length,
     ffi.Pointer<ffi.Char> doc_name,
+    int num_options,
+    ffi.Pointer<ffi.Pointer<ffi.Char>> option_keys,
+    ffi.Pointer<ffi.Pointer<ffi.Char>> option_values,
   ) {
     return _submit_raw_data_job(
       printer_name,
       data,
       length,
       doc_name,
+      num_options,
+      option_keys,
+      option_values,
     );
   }
 
-  late final _submit_raw_data_jobPtr = _lookup<ffi.NativeFunction<ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Uint8>, ffi.Int, ffi.Pointer<ffi.Char>)>>('submit_raw_data_job');
-  late final _submit_raw_data_job = _submit_raw_data_jobPtr.asFunction<int Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Uint8>, int, ffi.Pointer<ffi.Char>)>();
+  late final _submit_raw_data_jobPtr = _lookup<ffi.NativeFunction<ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Uint8>, ffi.Int, ffi.Pointer<ffi.Char>, ffi.Int, ffi.Pointer<ffi.Pointer<ffi.Char>>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
+    'submit_raw_data_job',
+  );
+  late final _submit_raw_data_job = _submit_raw_data_jobPtr.asFunction<int Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Uint8>, int, ffi.Pointer<ffi.Char>, int, ffi.Pointer<ffi.Pointer<ffi.Char>>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
 
   int submit_pdf_job(
     ffi.Pointer<ffi.Char> printer_name,
@@ -362,8 +391,26 @@ final class CupsOptionList extends ffi.Struct {
   external ffi.Pointer<CupsOption> options;
 }
 
+/// Struct for a single Windows paper source (bin)
+final class PaperSource extends ffi.Struct {
+  @ffi.Short()
+  external int id;
+
+  external ffi.Pointer<ffi.Char> name;
+}
+
+final class PaperSourceList extends ffi.Struct {
+  @ffi.Int()
+  external int count;
+
+  external ffi.Pointer<PaperSource> sources;
+}
+
 /// Structs for Windows printer capabilities
 final class PaperSize extends ffi.Struct {
+  @ffi.Short()
+  external int id;
+
   external ffi.Pointer<ffi.Char> name;
 
   @ffi.Float()
@@ -397,6 +444,8 @@ final class ResolutionList extends ffi.Struct {
 
 final class WindowsPrinterCapabilities extends ffi.Struct {
   external PaperSizeList paper_sizes;
+
+  external PaperSourceList paper_sources;
 
   external ResolutionList resolutions;
 }

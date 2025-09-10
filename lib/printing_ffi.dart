@@ -134,6 +134,51 @@ enum PdfPrintScaling {
   actualSize,
 }
 
+/// Defines the orientation for printing on Windows.
+enum WindowsOrientation {
+  /// Portrait orientation (short edge is top).
+  portrait(1),
+
+  /// Landscape orientation (long edge is top).
+  landscape(2);
+
+  const WindowsOrientation(this.value);
+  final int value;
+}
+
+/// Represents a generic printing option to be passed to print functions.
+sealed class PrintOption {
+  const PrintOption();
+}
+
+/// A Windows-specific option to set the paper size by its ID.
+/// The ID can be obtained from [WindowsPrinterCapabilities].
+class WindowsPaperSizeOption extends PrintOption {
+  final int id;
+  const WindowsPaperSizeOption(this.id);
+}
+
+/// A Windows-specific option to set the paper source (tray/bin) by its ID.
+/// The ID can be obtained from [WindowsPrinterCapabilities].
+class WindowsPaperSourceOption extends PrintOption {
+  final int id;
+  const WindowsPaperSourceOption(this.id);
+}
+
+/// An option to set the page orientation.
+class OrientationOption extends PrintOption {
+  final WindowsOrientation orientation;
+  const OrientationOption(this.orientation);
+}
+
+/// A generic CUPS option, represented as a key-value pair.
+/// The available options can be discovered using [getSupportedCupsOptions].
+class GenericCupsOption extends PrintOption {
+  final String name;
+  final String value;
+  const GenericCupsOption(this.name, this.value);
+}
+
 class CupsOptionChoice {
   /// The value to be sent to CUPS (e.g., "A4", "4").
   final String choice;
@@ -163,18 +208,31 @@ class CupsOption {
 
 /// Represents a paper size supported by a Windows printer.
 class WindowsPaperSize {
+  final int id;
   final String name;
   final double widthMillimeters;
   final double heightMillimeters;
 
   WindowsPaperSize({
     required this.name,
+    required this.id,
     required this.widthMillimeters,
     required this.heightMillimeters,
   });
 
   @override
   String toString() => '$name (${widthMillimeters.toStringAsFixed(1)} x ${heightMillimeters.toStringAsFixed(1)} mm)';
+}
+
+/// Represents a paper source (bin/tray) supported by a Windows printer.
+class WindowsPaperSource {
+  final int id;
+  final String name;
+
+  WindowsPaperSource({required this.id, required this.name});
+
+  @override
+  String toString() => name;
 }
 
 /// Represents a resolution supported by a Windows printer.
@@ -191,9 +249,14 @@ class WindowsResolution {
 /// Holds the capabilities (paper sizes, resolutions) of a Windows printer.
 class WindowsPrinterCapabilities {
   final List<WindowsPaperSize> paperSizes;
+  final List<WindowsPaperSource> paperSources;
   final List<WindowsResolution> resolutions;
 
-  WindowsPrinterCapabilities({required this.paperSizes, required this.resolutions});
+  WindowsPrinterCapabilities({
+    required this.paperSizes,
+    required this.paperSources,
+    required this.resolutions,
+  });
 }
 
 /// Exception thrown when the helper isolate encounters a fatal error or exits unexpectedly.
@@ -295,8 +358,15 @@ class _PrintRequest {
   final String printerName;
   final Uint8List data;
   final String docName;
+  final Map<String, String>? options;
 
-  const _PrintRequest(this.id, this.printerName, this.data, this.docName);
+  const _PrintRequest(
+    this.id,
+    this.printerName,
+    this.data,
+    this.docName,
+    this.options,
+  );
 }
 
 class _PrintJobsRequest {
@@ -325,7 +395,7 @@ class _PrintPdfRequest {
   final String printerName;
   final String pdfFilePath;
   final String docName;
-  final Map<String, String>? cupsOptions;
+  final Map<String, String>? options;
   final PdfPrintScaling scaling;
   final int copies;
   final PageRange? pageRange;
@@ -335,7 +405,7 @@ class _PrintPdfRequest {
     this.printerName,
     this.pdfFilePath,
     this.docName,
-    this.cupsOptions,
+    this.options,
     this.scaling,
     this.copies,
     this.pageRange,
@@ -354,8 +424,15 @@ class _SubmitRawDataJobRequest {
   final String printerName;
   final Uint8List data;
   final String docName;
+  final Map<String, String>? options;
 
-  const _SubmitRawDataJobRequest(this.id, this.printerName, this.data, this.docName);
+  const _SubmitRawDataJobRequest(
+    this.id,
+    this.printerName,
+    this.data,
+    this.docName,
+    this.options,
+  );
 }
 
 class _SubmitPdfJobRequest {
@@ -363,7 +440,7 @@ class _SubmitPdfJobRequest {
   final String printerName;
   final String pdfFilePath;
   final String docName;
-  final Map<String, String>? cupsOptions;
+  final Map<String, String>? options;
   final PdfPrintScaling scaling;
   final int copies;
   final PageRange? pageRange;
@@ -373,7 +450,7 @@ class _SubmitPdfJobRequest {
     this.printerName,
     this.pdfFilePath,
     this.docName,
-    this.cupsOptions,
+    this.options,
     this.scaling,
     this.copies,
     this.pageRange,
@@ -460,60 +537,6 @@ final PrintingFfiBindings _bindings = PrintingFfiBindings(
   _dylib,
 ); // Updated to PrintingFfiBindings
 
-// Manually look up the new functions for submitting jobs.
-final _submit_raw_data_job = _dylib.lookupFunction<Int32 Function(Pointer<Utf8>, Pointer<Uint8>, Int32, Pointer<Utf8>), int Function(Pointer<Utf8>, Pointer<Uint8>, int, Pointer<Utf8>)>('submit_raw_data_job');
-
-// Manually look up print_pdf because its signature has changed and we don't want to force a ffigen run.
-final _print_pdf = _dylib
-    .lookupFunction<
-      Bool Function(Pointer<Utf8> printerName, Pointer<Utf8> pdfFilePath, Pointer<Utf8> docName, Int32 scalingMode, Int32 copies, Pointer<Utf8> pageRange, Int32 numOptions, Pointer<Pointer<Utf8>> optionKeys, Pointer<Pointer<Utf8>> optionValues),
-      bool Function(Pointer<Utf8> printerName, Pointer<Utf8> pdfFilePath, Pointer<Utf8> docName, int scalingMode, int copies, Pointer<Utf8> pageRange, int numOptions, Pointer<Pointer<Utf8>> optionKeys, Pointer<Pointer<Utf8>> optionValues)
-    >('print_pdf');
-
-final _submit_pdf_job = _dylib
-    .lookupFunction<
-      Int32 Function(Pointer<Utf8> printerName, Pointer<Utf8> pdfFilePath, Pointer<Utf8> docName, Int32 scalingMode, Int32 copies, Pointer<Utf8> pageRange, Int32 numOptions, Pointer<Pointer<Utf8>> optionKeys, Pointer<Pointer<Utf8>> optionValues),
-      int Function(Pointer<Utf8> printerName, Pointer<Utf8> pdfFilePath, Pointer<Utf8> docName, int scalingMode, int copies, Pointer<Utf8> pageRange, int numOptions, Pointer<Pointer<Utf8>> optionKeys, Pointer<Pointer<Utf8>> optionValues)
-    >('submit_pdf_job');
-
-// --- FFI Structs for Windows Capabilities ---
-final class _PaperSize extends Struct {
-  external Pointer<Utf8> name;
-  @Float()
-  external double width_mm;
-  @Float()
-  external double height_mm;
-}
-
-final class _PaperSizeList extends Struct {
-  @Int()
-  external int count;
-  external Pointer<_PaperSize> papers;
-}
-
-final class _Resolution extends Struct {
-  @Long()
-  external int x_dpi;
-  @Long()
-  external int y_dpi;
-}
-
-final class _ResolutionList extends Struct {
-  @Int()
-  external int count;
-  external Pointer<_Resolution> resolutions;
-}
-
-final class _WindowsPrinterCapabilitiesStruct extends Struct {
-  external _PaperSizeList paper_sizes;
-  external _ResolutionList resolutions;
-}
-
-// --- FFI Lookups for Windows Capabilities ---
-final _get_windows_printer_capabilities = _dylib.lookupFunction<Pointer<_WindowsPrinterCapabilitiesStruct> Function(Pointer<Utf8>), Pointer<_WindowsPrinterCapabilitiesStruct> Function(Pointer<Utf8>)>('get_windows_printer_capabilities');
-
-final _free_windows_printer_capabilities = _dylib.lookupFunction<Void Function(Pointer<_WindowsPrinterCapabilitiesStruct>), void Function(Pointer<_WindowsPrinterCapabilitiesStruct>)>('free_windows_printer_capabilities');
-
 // Example functions from template
 int sum(int a, int b) => _bindings.sum(a, b);
 
@@ -576,18 +599,44 @@ Printer _printerFromInfo(PrinterInfo info) {
   );
 }
 
+/// Opens the native printer properties dialog for the specified printer.
+///
+/// On Windows, this opens the standard system dialog for printer properties.
+///
+/// On macOS and Linux, this will attempt to open the CUPS web interface
+/// for the printer in the default web browser (e.g., `http://localhost:631/printers/My_Printer`).
+/// This requires the CUPS web interface to be enabled.
+///
+/// - [printerName]: The name of the target printer.
+/// - [hwnd]: (Windows only) The handle to the parent window. Can be obtained from packages
+///   like `win32` or by other platform-specific means. A value of 0 is often
+///   acceptable for a modeless dialog.
+Future<bool> openPrinterProperties(String printerName, {int hwnd = 0}) async {
+  // This is a synchronous call, so no need for an isolate.
+  final namePtr = printerName.toNativeUtf8();
+  try {
+    // Use the generated binding directly.
+    return _bindings.open_printer_properties(namePtr.cast(), hwnd);
+  } finally {
+    malloc.free(namePtr);
+  }
+}
+
 Future<bool> rawDataToPrinter(
   String printerName,
   Uint8List data, {
   String docName = 'Flutter Document',
+  List<PrintOption> options = const [],
 }) async {
   final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
   final int requestId = _nextPrintRequestId++;
+  final optionsMap = _buildOptions(options);
   final _PrintRequest request = _PrintRequest(
     requestId,
     printerName,
     data,
     docName,
+    optionsMap,
   );
   final Completer<bool> completer = Completer<bool>();
   _printRequests[requestId] = completer;
@@ -611,26 +660,26 @@ Future<bool> rawDataToPrinter(
 /// - [pageRange]: A [PageRange] object specifying the pages to print.
 ///   If `null`, all pages will be printed.
 ///   The native layer will still validate the range against the PDF's page count,
-///   which may cause the print to fail if the range is out of bounds (e.g., printing page 100 of a 10-page document).
-/// - [cupsOptions]: A map of CUPS options (e.g., `{'media': 'A4', 'orientation-requested': '4'}`).
-///   On macOS/Linux, `copies` and `pageRange` are automatically added to this map if provided.
+///   which may cause the print to fail if the range is out of bounds.
+/// - [options]: A list of [PrintOption] objects to configure the print job (e.g., paper size, orientation).
 Future<bool> printPdf(
   String printerName,
   String pdfFilePath, {
   String docName = 'Flutter PDF Document',
   PdfPrintScaling scaling = PdfPrintScaling.fitPage,
-  Map<String, String>? cupsOptions,
   int? copies,
   PageRange? pageRange,
+  List<PrintOption> options = const [],
 }) async {
   final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
   final int requestId = _nextPrintPdfRequestId++;
+  final optionsMap = _buildOptions(options);
   final _PrintPdfRequest request = _PrintPdfRequest(
     requestId,
     printerName,
     pdfFilePath,
     docName,
-    cupsOptions,
+    optionsMap,
     scaling,
     copies ?? 1,
     pageRange,
@@ -652,16 +701,23 @@ Future<bool> printPdf(
 /// - [data]: The raw byte data to be printed.
 /// - [docName]: The name of the document to be shown in the print queue.
 /// - [pollInterval]: The duration between status checks.
+/// - [options]: A list of [PrintOption] objects to configure the print job.
 Stream<PrintJob> rawDataToPrinterAndStreamStatus(
   String printerName,
   Uint8List data, {
   String docName = 'Flutter Raw Data',
   Duration pollInterval = const Duration(seconds: 2),
+  List<PrintOption> options = const [],
 }) {
   return _streamJobStatus(
     printerName: printerName,
     pollInterval: pollInterval,
-    submitJob: () => _submitRawDataJob(printerName, data, docName: docName),
+    submitJob: () => _submitRawDataJob(
+      printerName,
+      data,
+      docName: docName,
+      options: _buildOptions(options),
+    ),
   );
 }
 
@@ -678,9 +734,9 @@ Stream<PrintJob> printPdfAndStreamStatus(
   String pdfFilePath, {
   String docName = 'Flutter PDF Document',
   PdfPrintScaling scaling = PdfPrintScaling.fitPage,
-  Map<String, String>? cupsOptions,
   int? copies,
   PageRange? pageRange,
+  List<PrintOption> options = const [],
   Duration pollInterval = const Duration(seconds: 2),
 }) {
   return _streamJobStatus(
@@ -691,11 +747,28 @@ Stream<PrintJob> printPdfAndStreamStatus(
       pdfFilePath,
       docName: docName,
       scaling: scaling,
-      cupsOptions: cupsOptions,
       copies: copies,
       pageRange: pageRange,
+      options: _buildOptions(options),
     ),
   );
+}
+
+Map<String, String> _buildOptions(List<PrintOption> options) {
+  final Map<String, String> optionsMap = {};
+  for (final option in options) {
+    switch (option) {
+      case WindowsPaperSizeOption(id: final id):
+        optionsMap['paper-size-id'] = id.toString();
+      case WindowsPaperSourceOption(id: final id):
+        optionsMap['paper-source-id'] = id.toString();
+      case OrientationOption(orientation: final orientation):
+        optionsMap['orientation'] = orientation.name;
+      case GenericCupsOption(name: final name, value: final value):
+        optionsMap[name] = value;
+    }
+  }
+  return optionsMap;
 }
 
 /// Generic internal function to handle job submission and status polling.
@@ -810,7 +883,7 @@ Future<WindowsPrinterCapabilities?> getWindowsPrinterCapabilities(String printer
   }
   final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
   final int requestId = _nextGetWindowsCapsRequestId++;
-  final request = _GetWindowsCapsRequest(requestId, printerName);
+  final request = _GetWindowsCapsRequest(requestId, printerName); // Corrected
   final completer = Completer<WindowsPrinterCapabilities?>();
   _getWindowsCapsRequests[requestId] = completer;
   helperIsolateSendPort.send(request);
@@ -940,10 +1013,17 @@ Future<int> _submitRawDataJob(
   String printerName,
   Uint8List data, {
   String docName = 'Flutter Document',
+  Map<String, String> options = const {},
 }) async {
   final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
   final int requestId = _nextSubmitRawDataJobRequestId++;
-  final request = _SubmitRawDataJobRequest(requestId, printerName, data, docName);
+  final request = _SubmitRawDataJobRequest(
+    requestId,
+    printerName,
+    data,
+    docName,
+    options,
+  );
   final completer = Completer<int>();
   _submitRawDataJobRequests[requestId] = completer;
   helperIsolateSendPort.send(request);
@@ -955,9 +1035,9 @@ Future<int> _submitPdfJob(
   String pdfFilePath, {
   String docName = 'Flutter PDF Document',
   PdfPrintScaling scaling = PdfPrintScaling.fitPage,
-  Map<String, String>? cupsOptions,
   int? copies,
   PageRange? pageRange,
+  Map<String, String> options = const {},
 }) async {
   final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
   final int requestId = _nextSubmitPdfJobRequestId++;
@@ -966,7 +1046,7 @@ Future<int> _submitPdfJob(
     printerName,
     pdfFilePath,
     docName,
-    cupsOptions,
+    options,
     scaling,
     copies ?? 1,
     pageRange,
@@ -1137,13 +1217,43 @@ Future<SendPort> _helperIsolateSendPort = () async {
                 dataPtr[i] = data.data[i];
               }
               try {
-                final bool result = _bindings.raw_data_to_printer(
-                  namePtr.cast(),
-                  dataPtr,
-                  data.data.length,
-                  docNamePtr.cast(),
-                );
-                sendPort.send(_PrintResponse(data.id, result));
+                final options = data.options ?? {};
+                final int numOptions = options.length;
+                Pointer<Pointer<Utf8>> keysPtr = nullptr;
+                Pointer<Pointer<Utf8>> valuesPtr = nullptr;
+
+                try {
+                  if (numOptions > 0) {
+                    keysPtr = malloc<Pointer<Utf8>>(numOptions);
+                    valuesPtr = malloc<Pointer<Utf8>>(numOptions);
+                    int i = 0;
+                    for (var entry in options.entries) {
+                      keysPtr[i] = entry.key.toNativeUtf8();
+                      valuesPtr[i] = entry.value.toNativeUtf8();
+                      i++;
+                    }
+                  }
+
+                  final bool result = _bindings.raw_data_to_printer( // Use generated binding
+                    namePtr.cast(),
+                    dataPtr,
+                    data.data.length,
+                    docNamePtr.cast(),
+                    numOptions,
+                    keysPtr.cast(),
+                    valuesPtr.cast(),
+                  );
+                  sendPort.send(_PrintResponse(data.id, result));
+                } finally {
+                  if (numOptions > 0) {
+                    for (var i = 0; i < numOptions; i++) {
+                      malloc.free(keysPtr[i]);
+                      malloc.free(valuesPtr[i]);
+                    }
+                    malloc.free(keysPtr);
+                    malloc.free(valuesPtr);
+                  }
+                }
               } finally {
                 malloc.free(namePtr);
                 malloc.free(docNamePtr);
@@ -1211,13 +1321,18 @@ Future<SendPort> _helperIsolateSendPort = () async {
               final pageRangePtr = pageRangeValue?.toNativeUtf8() ?? nullptr;
               try {
                 // Handle cupsOptions for native call
-                final effectiveCupsOptions = {...?data.cupsOptions};
+                final options = {...?data.options};
                 if (Platform.isMacOS || Platform.isLinux) {
-                  if (data.copies > 1) effectiveCupsOptions['copies'] = data.copies.toString();
-                  if (pageRangeValue != null && pageRangeValue.isNotEmpty) effectiveCupsOptions['page-ranges'] = pageRangeValue;
+                  if (data.copies > 1) options['copies'] = data.copies.toString();
+                  if (pageRangeValue != null && pageRangeValue.isNotEmpty) options['page-ranges'] = pageRangeValue;
+                  // The Dart code now prepares the correct orientation key for CUPS
+                  if (options.containsKey('orientation')) {
+                    final orientationValue = options.remove('orientation');
+                    options['orientation-requested'] = orientationValue == 'landscape' ? '4' : '3';
+                  }
                 }
 
-                final int numOptions = effectiveCupsOptions.length;
+                final int numOptions = options.length;
                 Pointer<Pointer<Utf8>> keysPtr = nullptr;
                 Pointer<Pointer<Utf8>> valuesPtr = nullptr;
 
@@ -1225,14 +1340,15 @@ Future<SendPort> _helperIsolateSendPort = () async {
                   keysPtr = malloc<Pointer<Utf8>>(numOptions);
                   valuesPtr = malloc<Pointer<Utf8>>(numOptions);
                   int i = 0;
-                  for (var entry in effectiveCupsOptions.entries) {
+                  for (var entry in options.entries) {
                     keysPtr[i] = entry.key.toNativeUtf8();
                     valuesPtr[i] = entry.value.toNativeUtf8();
                     i++;
                   }
                 }
 
-                final bool result = _print_pdf(
+                final bool result = _bindings.print_pdf(
+                  // Use generated binding
                   namePtr.cast(),
                   pathPtr.cast(),
                   docNamePtr.cast(),
@@ -1312,13 +1428,43 @@ Future<SendPort> _helperIsolateSendPort = () async {
                 dataPtr[i] = data.data[i];
               }
               try {
-                final int jobId = _submit_raw_data_job(
-                  namePtr.cast(),
-                  dataPtr,
-                  data.data.length,
-                  docNamePtr.cast(),
-                );
-                sendPort.send(_SubmitJobResponse(data.id, jobId));
+                final options = {...?data.options};
+                final int numOptions = options.length;
+                Pointer<Pointer<Utf8>> keysPtr = nullptr;
+                Pointer<Pointer<Utf8>> valuesPtr = nullptr;
+
+                try {
+                  if (numOptions > 0) {
+                    keysPtr = malloc<Pointer<Utf8>>(numOptions);
+                    valuesPtr = malloc<Pointer<Utf8>>(numOptions);
+                    int i = 0;
+                    for (var entry in options.entries) {
+                      keysPtr[i] = entry.key.toNativeUtf8();
+                      valuesPtr[i] = entry.value.toNativeUtf8();
+                      i++;
+                    }
+                  }
+
+                  final int jobId = _bindings.submit_raw_data_job( // Use generated binding
+                    namePtr.cast(),
+                    dataPtr,
+                    data.data.length,
+                    docNamePtr.cast(),
+                    numOptions,
+                    keysPtr.cast(),
+                    valuesPtr.cast(),
+                  );
+                  sendPort.send(_SubmitJobResponse(data.id, jobId));
+                } finally {
+                  if (numOptions > 0) {
+                    for (var i = 0; i < numOptions; i++) {
+                      malloc.free(keysPtr[i]);
+                      malloc.free(valuesPtr[i]);
+                    }
+                    malloc.free(keysPtr);
+                    malloc.free(valuesPtr);
+                  }
+                }
               } finally {
                 malloc.free(namePtr);
                 malloc.free(docNamePtr);
@@ -1335,13 +1481,18 @@ Future<SendPort> _helperIsolateSendPort = () async {
               final pageRangeValue = data.pageRange?.toValue();
               final pageRangePtr = pageRangeValue?.toNativeUtf8() ?? nullptr;
               try {
-                final effectiveCupsOptions = {...?data.cupsOptions};
+                final options = {...?data.options};
                 if (Platform.isMacOS || Platform.isLinux) {
-                  if (data.copies > 1) effectiveCupsOptions['copies'] = data.copies.toString();
-                  if (pageRangeValue != null && pageRangeValue.isNotEmpty) effectiveCupsOptions['page-ranges'] = pageRangeValue;
+                  if (data.copies > 1) options['copies'] = data.copies.toString();
+                  if (pageRangeValue != null && pageRangeValue.isNotEmpty) options['page-ranges'] = pageRangeValue;
+                  // The Dart code now prepares the correct orientation key for CUPS
+                  if (options.containsKey('orientation')) {
+                    final orientationValue = options.remove('orientation');
+                    options['orientation-requested'] = orientationValue == 'landscape' ? '4' : '3';
+                  }
                 }
 
-                final int numOptions = effectiveCupsOptions.length;
+                final int numOptions = options.length;
                 Pointer<Pointer<Utf8>> keysPtr = nullptr;
                 Pointer<Pointer<Utf8>> valuesPtr = nullptr;
 
@@ -1349,14 +1500,15 @@ Future<SendPort> _helperIsolateSendPort = () async {
                   keysPtr = malloc<Pointer<Utf8>>(numOptions);
                   valuesPtr = malloc<Pointer<Utf8>>(numOptions);
                   int i = 0;
-                  for (var entry in effectiveCupsOptions.entries) {
+                  for (var entry in options.entries) {
                     keysPtr[i] = entry.key.toNativeUtf8();
                     valuesPtr[i] = entry.value.toNativeUtf8();
                     i++;
                   }
                 }
 
-                final int jobId = _submit_pdf_job(
+                final int jobId = _bindings.submit_pdf_job(
+                  // Use generated binding
                   namePtr.cast(),
                   pathPtr.cast(),
                   docNamePtr.cast(),
@@ -1390,7 +1542,7 @@ Future<SendPort> _helperIsolateSendPort = () async {
             try {
               final namePtr = data.printerName.toNativeUtf8();
               try {
-                final capsPtr = _get_windows_printer_capabilities(namePtr.cast());
+                final capsPtr = _bindings.get_windows_printer_capabilities(namePtr.cast());
                 if (capsPtr == nullptr) {
                   sendPort.send(_GetWindowsCapsResponse(data.id, null));
                 } else {
@@ -1401,9 +1553,20 @@ Future<SendPort> _helperIsolateSendPort = () async {
                       final paperStruct = capsStruct.paper_sizes.papers[i];
                       paperSizes.add(
                         WindowsPaperSize(
-                          name: paperStruct.name.toDartString(),
+                          id: paperStruct.id,
+                          name: paperStruct.name.cast<Utf8>().toDartString(),
                           widthMillimeters: paperStruct.width_mm,
                           heightMillimeters: paperStruct.height_mm,
+                        ),
+                      );
+                    }
+                    final paperSources = <WindowsPaperSource>[];
+                    for (var i = 0; i < capsStruct.paper_sources.count; i++) {
+                      final sourceStruct = capsStruct.paper_sources.sources[i];
+                      paperSources.add(
+                        WindowsPaperSource(
+                          id: sourceStruct.id,
+                          name: sourceStruct.name.cast<Utf8>().toDartString(),
                         ),
                       );
                     }
@@ -1419,11 +1582,12 @@ Future<SendPort> _helperIsolateSendPort = () async {
                     }
                     final capabilities = WindowsPrinterCapabilities(
                       paperSizes: paperSizes,
+                      paperSources: paperSources,
                       resolutions: resolutions,
                     );
                     sendPort.send(_GetWindowsCapsResponse(data.id, capabilities));
                   } finally {
-                    _free_windows_printer_capabilities(capsPtr);
+                    _bindings.free_windows_printer_capabilities(capsPtr);
                   }
                 }
               } finally {

@@ -67,12 +67,25 @@ typedef struct {
     CupsOption* options;
 } CupsOptionList;
 
+// Struct for a single Windows paper source (bin)
+typedef struct {
+    short id;
+    char* name;
+} PaperSource;
+
+typedef struct {
+    int count;
+    PaperSource* sources;
+} PaperSourceList;
+
 // Structs for Windows printer capabilities
 typedef struct {
+    short id;
     char* name;
     float width_mm;
     float height_mm;
 } PaperSize;
+
 
 typedef struct {
     int count;
@@ -91,6 +104,7 @@ typedef struct {
 
 typedef struct {
     PaperSizeList paper_sizes;
+    PaperSourceList paper_sources;
     ResolutionList resolutions;
 } WindowsPrinterCapabilities;
 
@@ -100,7 +114,8 @@ FFI_PLUGIN_EXPORT PrinterList* get_printers(void);
 FFI_PLUGIN_EXPORT void free_printer_list(PrinterList* printer_list);
 FFI_PLUGIN_EXPORT PrinterInfo* get_default_printer(void);
 FFI_PLUGIN_EXPORT void free_printer_info(PrinterInfo* printer_info);
-FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8_t* data, int length, const char* doc_name);
+FFI_PLUGIN_EXPORT bool open_printer_properties(const char* printer_name, intptr_t hwnd);
+FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8_t* data, int length, const char* doc_name, int num_options, const char** option_keys, const char** option_values);
 FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_path, const char* doc_name, int scaling_mode, int copies, const char* page_range, int num_options, const char** option_keys, const char** option_values);
 FFI_PLUGIN_EXPORT JobList* get_print_jobs(const char* printer_name);
 FFI_PLUGIN_EXPORT void free_job_list(JobList* job_list);
@@ -113,7 +128,7 @@ FFI_PLUGIN_EXPORT WindowsPrinterCapabilities* get_windows_printer_capabilities(c
 FFI_PLUGIN_EXPORT void free_windows_printer_capabilities(WindowsPrinterCapabilities* capabilities);
 
 // Functions that submit a job and return a job ID for status tracking.
-FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char* printer_name, const uint8_t* data, int length, const char* doc_name);
+FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char* printer_name, const uint8_t* data, int length, const char* doc_name, int num_options, const char** option_keys, const char** option_values);
 FFI_PLUGIN_EXPORT int32_t submit_pdf_job(const char* printer_name, const char* pdf_file_path, const char* doc_name, int scaling_mode, int copies, const char* page_range, int num_options, const char** option_keys, const char** option_values);
 
 #endif

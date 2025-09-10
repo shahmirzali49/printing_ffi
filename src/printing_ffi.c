@@ -81,11 +81,11 @@ static bool parse_page_range(const char* range_str, bool* page_flags, int total_
     char* str = strdup(range_str);
     if (!str) return false;
     char* to_free = str;
-    
+
     // Use strtok for non-Windows, strtok_s for Windows
     char* token;
     char* context = NULL;
-    
+
 #ifdef _WIN32
     token = strtok_s(str, ",", &context);
 #else
@@ -129,7 +129,7 @@ static bool parse_page_range(const char* range_str, bool* page_flags, int total_
         for (int i = start_page; i <= end_page; i++) {
             page_flags[i - 1] = true;
         }
-        
+
 #ifdef _WIN32
         token = strtok_s(NULL, ",", &context);
 #else
@@ -142,6 +142,58 @@ static bool parse_page_range(const char* range_str, bool* page_flags, int total_
 #endif
 
 #ifdef _WIN32
+// Helper to get a modified DEVMODE struct for a printer.
+// The caller is responsible for freeing the returned struct.
+static DEVMODEW* get_modified_devmode(wchar_t* printer_name_w, int paper_size_id, int paper_source_id, int orientation) {
+    if (!printer_name_w) return NULL;
+
+    HANDLE hPrinter;
+    if (!OpenPrinterW(printer_name_w, &hPrinter, NULL)) {
+        LOG("get_modified_devmode: OpenPrinterW failed with error %lu", GetLastError());
+        return NULL;
+    }
+
+    DEVMODEW* pDevMode = NULL;
+    LONG devModeSize = DocumentPropertiesW(NULL, hPrinter, printer_name_w, NULL, NULL, 0);
+    if (devModeSize <= 0) {
+        LOG("get_modified_devmode: DocumentPropertiesW (get size) failed with error %lu", GetLastError());
+        ClosePrinter(hPrinter);
+        return NULL;
+    }
+
+    pDevMode = (DEVMODEW*)malloc(devModeSize);
+    if (!pDevMode) {
+        ClosePrinter(hPrinter);
+        return NULL;
+    }
+
+    // Get the default DEVMODE for the printer.
+    if (DocumentPropertiesW(NULL, hPrinter, printer_name_w, pDevMode, NULL, DM_OUT_BUFFER) != IDOK) {
+        LOG("get_modified_devmode: DocumentPropertiesW (get defaults) failed with error %lu", GetLastError());
+        free(pDevMode);
+        ClosePrinter(hPrinter);
+        return NULL;
+    }
+
+    bool modified = false;
+    // A value <= 0 for IDs/orientation means "use default".
+    if (paper_size_id > 0) { pDevMode->dmFields |= DM_PAPERSIZE; pDevMode->dmPaperSize = (short)paper_size_id; modified = true; }
+    if (paper_source_id > 0) { pDevMode->dmFields |= DM_DEFAULTSOURCE; pDevMode->dmDefaultSource = (short)paper_source_id; modified = true; }
+    if (orientation > 0) { pDevMode->dmFields |= DM_ORIENTATION; pDevMode->dmOrientation = (short)orientation; modified = true; }
+
+    if (modified) {
+        // Validate and merge the changes. The driver may update the DEVMODE struct.
+        if (DocumentPropertiesW(NULL, hPrinter, printer_name_w, pDevMode, pDevMode, DM_IN_BUFFER | DM_OUT_BUFFER) != IDOK) {
+            LOG("get_modified_devmode: DocumentPropertiesW (merge) failed with error %lu. Continuing with potentially invalid settings.", GetLastError());
+        }
+    }
+
+    ClosePrinter(hPrinter);
+    return pDevMode;
+}
+#endif
+
+#ifdef _WIN32
 BOOL WINAPI DllMain(
     HINSTANCE hinstDLL,
     DWORD fdwReason,
@@ -149,7 +201,7 @@ BOOL WINAPI DllMain(
 {
     (void)hinstDLL;    // Suppress unused parameter warning
     (void)lpvReserved; // Suppress unused parameter warning
-    
+
     switch (fdwReason)
     {
     case DLL_PROCESS_DETACH:
@@ -400,25 +452,45 @@ FFI_PLUGIN_EXPORT void free_printer_info(PrinterInfo* printer_info) {
     free(printer_info);
 }
 
-FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8_t* data, int length, const char* doc_name) {
+FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8_t* data, int length, const char* doc_name, int num_options, const char** option_keys, const char** option_values) {
     LOG("raw_data_to_printer called for printer: '%s', doc: '%s', length: %d", printer_name, doc_name, length);
-    
+
     // Validate input parameters
     if (!printer_name || !data || length <= 0 || !doc_name) {
         LOG("Invalid input parameters");
         return false;
     }
-    
+
 #ifdef _WIN32
+    int paper_size_id = 0;
+    int paper_source_id = 0;
+    int orientation = 0;
+    for (int i = 0; i < num_options; i++) {
+        if (strcmp(option_keys[i], "paper-size-id") == 0) {
+            paper_size_id = atoi(option_values[i]);
+        } else if (strcmp(option_keys[i], "paper-source-id") == 0) {
+            paper_source_id = atoi(option_values[i]);
+        } else if (strcmp(option_keys[i], "orientation") == 0) {
+            if (strcmp(option_values[i], "landscape") == 0) orientation = 2;
+            else orientation = 1;
+        }
+    }
+
     HANDLE hPrinter;
     DOC_INFO_1W docInfo;
     DWORD written;
     wchar_t* printer_name_w = to_utf16(printer_name);
     if (!printer_name_w) return false;
 
-    if (!OpenPrinterW(printer_name_w, &hPrinter, NULL)) {
+    DEVMODEW* pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation);
+
+    PRINTER_DEFAULTSW printerDefaults = { NULL, pDevMode, PRINTER_ACCESS_USE };
+    printerDefaults.pDatatype = L"RAW";
+
+    if (!OpenPrinterW(printer_name_w, &hPrinter, &printerDefaults)) {
         LOG("OpenPrinterW failed with error %lu", GetLastError());
         free(printer_name_w);
+        if (pDevMode) free(pDevMode);
         return false;
     }
 
@@ -432,6 +504,7 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8
         LOG("StartDocPrinterW failed with error %lu", GetLastError());
         if (doc_name_w) free(doc_name_w);
         free(printer_name_w);
+        if (pDevMode) free(pDevMode);
         return false;
     }
     if (doc_name_w) free(doc_name_w);
@@ -441,6 +514,7 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8
         ClosePrinter(hPrinter);
         LOG("StartPagePrinter failed with error %lu", GetLastError());
         free(printer_name_w);
+        if (pDevMode) free(pDevMode);
         return false;
     }
 
@@ -449,6 +523,8 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8
     EndDocPrinter(hPrinter);
     ClosePrinter(hPrinter);
     free(printer_name_w);
+    if (pDevMode) free(pDevMode);
+
     bool success = result && written == (DWORD)length;
     if (!success) {
         LOG("WritePrinter failed. Result: %d, Bytes written: %lu, Expected: %d", result, written, length);
@@ -489,14 +565,20 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8
 
     // Add the "raw" option to tell CUPS not to filter the data.
     cups_option_t* options = NULL;
-    int num_options = 0;
-    num_options = cupsAddOption("raw", "true", num_options, &options);
+    int num_cups_options = 0;
+    num_cups_options = cupsAddOption("raw", "true", num_cups_options, &options);
 
-    int job_id = cupsPrintFile(printer_name, temp_file, doc_name, num_options, options);
+    for (int i = 0; i < num_options; i++) {
+        if (option_keys && option_keys[i] && option_values && option_values[i]) {
+            num_cups_options = cupsAddOption(option_keys[i], option_values[i], num_cups_options, &options);
+        }
+    }
+
+    int job_id = cupsPrintFile(printer_name, temp_file, doc_name, num_cups_options, options);
     if (job_id <= 0) {
         LOG("cupsPrintFile failed, error: %s", cupsLastErrorString());
     }
-    cupsFreeOptions(num_options, options);
+    cupsFreeOptions(num_cups_options, options);
     unlink(temp_file);
     LOG("raw_data_to_printer finished with job_id: %d", job_id);
     return job_id > 0;
@@ -505,13 +587,13 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8
 
 FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_path, const char* doc_name, int scaling_mode, int copies, const char* page_range, int num_options, const char** option_keys, const char** option_values) {
     LOG("print_pdf called for printer: '%s', path: '%s', doc: '%s'", printer_name, pdf_file_path, doc_name);
-    
+
     // Validate input parameters
     if (!printer_name || !pdf_file_path || !doc_name || copies <= 0) {
         LOG("Invalid input parameters");
         return false;
     }
-    
+
 #ifdef _WIN32
     if (!s_pdfium_initialized) {
         FPDF_LIBRARY_CONFIG config;
@@ -522,10 +604,19 @@ FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_
         LOG("Pdfium library initialized for the first time.");
     }
 
-    // Ignore CUPS options on Windows.
-    (void)num_options;
-    (void)option_keys;
-    (void)option_values;
+    int paper_size_id = 0;
+    int paper_source_id = 0;
+    int orientation = 0;
+    for (int i = 0; i < num_options; i++) {
+        if (strcmp(option_keys[i], "paper-size-id") == 0) {
+            paper_size_id = atoi(option_values[i]);
+        } else if (strcmp(option_keys[i], "paper-source-id") == 0) {
+            paper_source_id = atoi(option_values[i]);
+        } else if (strcmp(option_keys[i], "orientation") == 0) {
+            if (strcmp(option_values[i], "landscape") == 0) orientation = 2;
+            else orientation = 1;
+        }
+    }
 
     wchar_t* printer_name_w = to_utf16(printer_name);
     if (!printer_name_w) {
@@ -540,7 +631,7 @@ FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_
         return false;
     }
 
-    // --- Set copies via DEVMODE ---
+    // --- Set print settings via DEVMODE ---
     HANDLE hPrinter;
     if (!OpenPrinterW(printer_name_w, &hPrinter, NULL)) {
         LOG("OpenPrinterW failed with error %lu", GetLastError());
@@ -548,14 +639,40 @@ FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_
         free(printer_name_w);
         return false;
     }
+
     DEVMODEW* pDevMode = NULL;
     LONG devModeSize = DocumentPropertiesW(NULL, hPrinter, printer_name_w, NULL, NULL, 0);
     if (devModeSize > 0) {
         pDevMode = (DEVMODEW*)malloc(devModeSize);
         if (pDevMode) {
-            // Get the default DEVMODE for the printer to pass to CreateDCW.
-            // We handle copies manually, so we don't modify dmCopies here.
-            if (DocumentPropertiesW(NULL, hPrinter, printer_name_w, pDevMode, NULL, DM_OUT_BUFFER) != IDOK) {
+            // Get the default DEVMODE for the printer.
+            if (DocumentPropertiesW(NULL, hPrinter, printer_name_w, pDevMode, NULL, DM_OUT_BUFFER) == IDOK) {
+                bool modified = false;
+                // A value <= 0 for IDs/orientation means "use default".
+                if (paper_size_id > 0) {
+                    pDevMode->dmFields |= DM_PAPERSIZE;
+                    pDevMode->dmPaperSize = (short)paper_size_id;
+                    modified = true;
+                }
+                if (paper_source_id > 0) {
+                    pDevMode->dmFields |= DM_DEFAULTSOURCE;
+                    pDevMode->dmDefaultSource = (short)paper_source_id;
+                    modified = true;
+                }
+                if (orientation > 0) { // 1=Portrait, 2=Landscape
+                    pDevMode->dmFields |= DM_ORIENTATION;
+                    pDevMode->dmOrientation = (short)orientation;
+                    modified = true;
+                }
+
+                if (modified) {
+                    // Validate and merge the changes. The driver may update the DEVMODE struct.
+                    if (DocumentPropertiesW(NULL, hPrinter, printer_name_w, pDevMode, pDevMode, DM_IN_BUFFER | DM_OUT_BUFFER) != IDOK) {
+                        LOG("Failed to apply custom print settings via DEVMODE. Error: %lu. Continuing with defaults.", GetLastError());
+                    }
+                }
+            } else {
+                LOG("Failed to get default DEVMODE. Error: %lu. Print will use system defaults.", GetLastError());
                 free(pDevMode);
                 pDevMode = NULL;
             }
@@ -859,12 +976,64 @@ FFI_PLUGIN_EXPORT void free_job_list(JobList* job_list) {
     free(job_list);
 }
 
+FFI_PLUGIN_EXPORT bool open_printer_properties(const char* printer_name, intptr_t hwnd) {
+    LOG("open_printer_properties called for printer: '%s'", printer_name);
+#ifdef _WIN32
+    if (!printer_name) {
+        LOG("Printer name is null");
+        return false;
+    }
+
+    wchar_t* printer_name_w = to_utf16(printer_name);
+    if (!printer_name_w) {
+        LOG("Failed to convert printer name to UTF-16");
+        return false;
+    }
+
+    HANDLE hPrinter;
+    if (!OpenPrinterW(printer_name_w, &hPrinter, NULL)) {
+        LOG("OpenPrinterW failed with error %lu", GetLastError());
+        free(printer_name_w);
+        return false;
+    }
+
+    BOOL result = PrinterProperties((HWND)hwnd, hPrinter);
+    if (!result) {
+        LOG("PrinterProperties failed with error %lu", GetLastError());
+    }
+
+    ClosePrinter(hPrinter);
+    free(printer_name_w);
+    return result;
+#else
+    (void)hwnd; // hwnd is Windows-specific
+    if (!printer_name) {
+        LOG("Printer name is null");
+        return false;
+    }
+    char command[PATH_MAX];
+    snprintf(command, sizeof(command),
+#ifdef __APPLE__
+             "open http://localhost:631/printers/\"%s\"",
+#else // Linux
+             "xdg-open http://localhost:631/printers/\"%s\"",
+#endif
+             printer_name);
+    LOG("Executing command: %s", command);
+    int result = system(command);
+    if (result != 0) {
+        LOG("Command '%s' failed with exit code %d", command, result);
+    }
+    return result == 0;
+#endif
+}
+
 FFI_PLUGIN_EXPORT bool pause_print_job(const char* printer_name, uint32_t job_id) {
     if (!printer_name) {
         LOG("pause_print_job called with null printer name");
         return false;
     }
-    
+
     LOG("pause_print_job called for printer: '%s', job_id: %u", printer_name, job_id);
 #ifdef _WIN32
     HANDLE hPrinter;
@@ -892,7 +1061,7 @@ FFI_PLUGIN_EXPORT bool resume_print_job(const char* printer_name, uint32_t job_i
         LOG("resume_print_job called with null printer name");
         return false;
     }
-    
+
     LOG("resume_print_job called for printer: '%s', job_id: %u", printer_name, job_id);
 #ifdef _WIN32
     HANDLE hPrinter;
@@ -920,7 +1089,7 @@ FFI_PLUGIN_EXPORT bool cancel_print_job(const char* printer_name, uint32_t job_i
         LOG("cancel_print_job called with null printer name");
         return false;
     }
-    
+
     LOG("cancel_print_job called for printer: '%s', job_id: %u", printer_name, job_id);
 #ifdef _WIN32
     HANDLE hPrinter;
@@ -953,7 +1122,7 @@ FFI_PLUGIN_EXPORT CupsOptionList* get_supported_cups_options(const char* printer
         }
         return list;
     }
-    
+
     LOG("get_supported_cups_options called for printer: '%s'", printer_name);
     CupsOptionList* list = (CupsOptionList*)malloc(sizeof(CupsOptionList));
     if (!list) return NULL;
@@ -1062,7 +1231,7 @@ FFI_PLUGIN_EXPORT WindowsPrinterCapabilities* get_windows_printer_capabilities(c
         WindowsPrinterCapabilities* caps = (WindowsPrinterCapabilities*)calloc(1, sizeof(WindowsPrinterCapabilities));
         return caps;
     }
-    
+
     LOG("get_windows_printer_capabilities called for printer: '%s'", printer_name);
 #ifndef _WIN32
     // This function is only for Windows. Return an empty struct.
@@ -1139,6 +1308,7 @@ FFI_PLUGIN_EXPORT WindowsPrinterCapabilities* get_windows_printer_capabilities(c
                 caps->paper_sizes.papers = (PaperSize*)malloc(num_papers * sizeof(PaperSize));
                 if (caps->paper_sizes.papers) {
                     for (long i = 0; i < num_papers; i++) {
+                        caps->paper_sizes.papers[i].id = papers[i];
                         caps->paper_sizes.papers[i].name = to_utf8(paper_names_w[i]);
                         // Dimensions are in 0.1mm units. Convert to mm.
                         caps->paper_sizes.papers[i].width_mm = (float)paper_sizes_points[i].x / 10.0f;
@@ -1156,6 +1326,36 @@ FFI_PLUGIN_EXPORT WindowsPrinterCapabilities* get_windows_printer_capabilities(c
         if (paper_names_w) free(paper_names_w);
         if (paper_sizes_points) free(paper_sizes_points);
     }
+
+    // --- Get Paper Bins (Sources) ---
+    long num_bins = DeviceCapabilitiesW(printer_name_w, port_w, DC_BINS, NULL, NULL);
+    if (num_bins > 0) {
+        WORD* bins = (WORD*)malloc(num_bins * sizeof(WORD));
+        wchar_t (*bin_names_w)[24] = (wchar_t(*)[24])malloc(num_bins * 24 * sizeof(wchar_t));
+
+        if (bins && bin_names_w) {
+            if (DeviceCapabilitiesW(printer_name_w, port_w, DC_BINS, (LPWSTR)bins, NULL) != -1 &&
+                DeviceCapabilitiesW(printer_name_w, port_w, DC_BINNAMES, (LPWSTR)bin_names_w, NULL) != -1) {
+
+                caps->paper_sources.count = (int)num_bins;
+                caps->paper_sources.sources = (PaperSource*)malloc(num_bins * sizeof(PaperSource));
+                if (caps->paper_sources.sources) {
+                    for (long i = 0; i < num_bins; i++) {
+                        caps->paper_sources.sources[i].id = bins[i];
+                        caps->paper_sources.sources[i].name = to_utf8(bin_names_w[i]);
+                    }
+                } else {
+                    caps->paper_sources.count = 0;
+                    LOG("Failed to allocate memory for paper source details.");
+                }
+            }
+        } else {
+            LOG("Failed to allocate memory for paper source buffers.");
+        }
+        if (bins) free(bins);
+        if (bin_names_w) free(bin_names_w);
+    }
+
 
     // --- Get Resolutions ---
     long num_res = DeviceCapabilitiesW(printer_name_w, port_w, DC_ENUMRESOLUTIONS, NULL, NULL);
@@ -1196,22 +1396,42 @@ FFI_PLUGIN_EXPORT void free_windows_printer_capabilities(WindowsPrinterCapabilit
         }
         free(capabilities->paper_sizes.papers);
     }
+    if (capabilities->paper_sources.sources) {
+        for (int i = 0; i < capabilities->paper_sources.count; i++) {
+            free(capabilities->paper_sources.sources[i].name);
+        }
+        free(capabilities->paper_sources.sources);
+    }
     if (capabilities->resolutions.resolutions) {
         free(capabilities->resolutions.resolutions);
     }
     free(capabilities);
 }
 
-FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char* printer_name, const uint8_t* data, int length, const char* doc_name) {
+FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char* printer_name, const uint8_t* data, int length, const char* doc_name, int num_options, const char** option_keys, const char** option_values) {
     LOG("submit_raw_data_job called for printer: '%s', doc: '%s', length: %d", printer_name, doc_name, length);
-    
+
     // Validate input parameters
     if (!printer_name || !data || length <= 0 || !doc_name) {
         LOG("Invalid input parameters");
         return 0;
     }
-    
+
 #ifdef _WIN32
+    int paper_size_id = 0;
+    int paper_source_id = 0;
+    int orientation = 0;
+    for (int i = 0; i < num_options; i++) {
+        if (strcmp(option_keys[i], "paper-size-id") == 0) {
+            paper_size_id = atoi(option_values[i]);
+        } else if (strcmp(option_keys[i], "paper-source-id") == 0) {
+            paper_source_id = atoi(option_values[i]);
+        } else if (strcmp(option_keys[i], "orientation") == 0) {
+            if (strcmp(option_values[i], "landscape") == 0) orientation = 2;
+            else orientation = 1;
+        }
+    }
+
     HANDLE hPrinter;
     DOC_INFO_1W docInfo;
     DWORD written;
@@ -1220,9 +1440,15 @@ FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char* printer_name, const ui
     wchar_t* printer_name_w = to_utf16(printer_name);
     if (!printer_name_w) return 0;
 
-    if (!OpenPrinterW(printer_name_w, &hPrinter, NULL)) {
+    DEVMODEW* pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation);
+
+    PRINTER_DEFAULTSW printerDefaults = { NULL, pDevMode, PRINTER_ACCESS_USE };
+    printerDefaults.pDatatype = L"RAW";
+
+    if (!OpenPrinterW(printer_name_w, &hPrinter, &printerDefaults)) {
         LOG("OpenPrinterW failed with error %lu", GetLastError());
         free(printer_name_w);
+        if (pDevMode) free(pDevMode);
         return 0;
     }
 
@@ -1237,6 +1463,7 @@ FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char* printer_name, const ui
         LOG("StartDocPrinterW failed with error %lu", GetLastError());
         if (doc_name_w) free(doc_name_w);
         free(printer_name_w);
+        if (pDevMode) free(pDevMode);
         return 0;
     }
     if (doc_name_w) free(doc_name_w);
@@ -1246,6 +1473,7 @@ FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char* printer_name, const ui
         LOG("StartPagePrinter failed with error %lu", GetLastError());
         ClosePrinter(hPrinter);
         free(printer_name_w);
+        if (pDevMode) free(pDevMode);
         return 0;
     }
 
@@ -1254,6 +1482,7 @@ FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char* printer_name, const ui
     EndDocPrinter(hPrinter);
     ClosePrinter(hPrinter);
     free(printer_name_w);
+    if (pDevMode) free(pDevMode);
 
     if (!result || written != (DWORD)length) {
         LOG("WritePrinter failed. Result: %d, Bytes written: %lu, Expected: %d", result, written, length);
@@ -1292,14 +1521,20 @@ FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char* printer_name, const ui
     }
 
     cups_option_t* options = NULL;
-    int num_options = 0;
-    num_options = cupsAddOption("raw", "true", num_options, &options);
+    int num_cups_options = 0;
+    num_cups_options = cupsAddOption("raw", "true", num_cups_options, &options);
 
-    int job_id = cupsPrintFile(printer_name, temp_file, doc_name, num_options, options);
+    for (int i = 0; i < num_options; i++) {
+        if (option_keys && option_keys[i] && option_values && option_values[i]) {
+            num_cups_options = cupsAddOption(option_keys[i], option_values[i], num_cups_options, &options);
+        }
+    }
+
+    int job_id = cupsPrintFile(printer_name, temp_file, doc_name, num_cups_options, options);
     if (job_id <= 0) {
         LOG("cupsPrintFile failed, error: %s", cupsLastErrorString());
     }
-    cupsFreeOptions(num_options, options);
+    cupsFreeOptions(num_cups_options, options);
     unlink(temp_file);
     LOG("submit_raw_data_job finished with job_id: %d", job_id);
     return job_id > 0 ? job_id : 0;
@@ -1308,13 +1543,13 @@ FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char* printer_name, const ui
 
 FFI_PLUGIN_EXPORT int32_t submit_pdf_job(const char* printer_name, const char* pdf_file_path, const char* doc_name, int scaling_mode, int copies, const char* page_range, int num_options, const char** option_keys, const char** option_values) {
     LOG("submit_pdf_job called for printer: '%s', path: '%s', doc: '%s'", printer_name, pdf_file_path, doc_name);
-    
+
     // Validate input parameters
     if (!printer_name || !pdf_file_path || !doc_name || copies <= 0) {
         LOG("Invalid input parameters");
         return 0;
     }
-    
+
 #ifdef _WIN32
     if (!s_pdfium_initialized) {
         FPDF_LIBRARY_CONFIG config;
@@ -1325,9 +1560,19 @@ FFI_PLUGIN_EXPORT int32_t submit_pdf_job(const char* printer_name, const char* p
         LOG("Pdfium library initialized for the first time.");
     }
 
-    (void)num_options;
-    (void)option_keys;
-    (void)option_values;
+    int paper_size_id = 0;
+    int paper_source_id = 0;
+    int orientation = 0;
+    for (int i = 0; i < num_options; i++) {
+        if (strcmp(option_keys[i], "paper-size-id") == 0) {
+            paper_size_id = atoi(option_values[i]);
+        } else if (strcmp(option_keys[i], "paper-source-id") == 0) {
+            paper_source_id = atoi(option_values[i]);
+        } else if (strcmp(option_keys[i], "orientation") == 0) {
+            if (strcmp(option_values[i], "landscape") == 0) orientation = 2;
+            else orientation = 1;
+        }
+    }
 
     wchar_t* printer_name_w = to_utf16(printer_name);
     if (!printer_name_w) {
@@ -1342,9 +1587,9 @@ FFI_PLUGIN_EXPORT int32_t submit_pdf_job(const char* printer_name, const char* p
         return 0;
     }
 
-    // --- Set copies via DEVMODE ---
-    HANDLE hPrinterHandle;
-    if (!OpenPrinterW(printer_name_w, &hPrinterHandle, NULL)) {
+    // --- Set print settings via DEVMODE ---
+    HANDLE hPrinter;
+    if (!OpenPrinterW(printer_name_w, &hPrinter, NULL)) {
         LOG("OpenPrinterW failed with error %lu", GetLastError());
         FPDF_CloseDocument(doc);
         free(printer_name_w);
@@ -1352,19 +1597,44 @@ FFI_PLUGIN_EXPORT int32_t submit_pdf_job(const char* printer_name, const char* p
     }
 
     DEVMODEW* pDevMode = NULL;
-    LONG devModeSize = DocumentPropertiesW(NULL, hPrinterHandle, printer_name_w, NULL, NULL, 0);
+    LONG devModeSize = DocumentPropertiesW(NULL, hPrinter, printer_name_w, NULL, NULL, 0);
     if (devModeSize > 0) {
         pDevMode = (DEVMODEW*)malloc(devModeSize);
         if (pDevMode) {
-            // Get the default DEVMODE for the printer to pass to CreateDCW.
-            // We handle copies manually, so we don't modify dmCopies here.
-            if (DocumentPropertiesW(NULL, hPrinterHandle, printer_name_w, pDevMode, NULL, DM_OUT_BUFFER) != IDOK) {
+            // Get the default DEVMODE for the printer.
+            if (DocumentPropertiesW(NULL, hPrinter, printer_name_w, pDevMode, NULL, DM_OUT_BUFFER) == IDOK) {
+                bool modified = false;
+                // A value <= 0 for IDs/orientation means "use default".
+                if (paper_size_id > 0) {
+                    pDevMode->dmFields |= DM_PAPERSIZE;
+                    pDevMode->dmPaperSize = (short)paper_size_id;
+                    modified = true;
+                }
+                if (paper_source_id > 0) {
+                    pDevMode->dmFields |= DM_DEFAULTSOURCE;
+                    pDevMode->dmDefaultSource = (short)paper_source_id;
+                    modified = true;
+                }
+                if (orientation > 0) { // 1=Portrait, 2=Landscape
+                    pDevMode->dmFields |= DM_ORIENTATION;
+                    pDevMode->dmOrientation = (short)orientation;
+                    modified = true;
+                }
+
+                if (modified) {
+                    // Validate and merge the changes. The driver may update the DEVMODE struct.
+                    if (DocumentPropertiesW(NULL, hPrinter, printer_name_w, pDevMode, pDevMode, DM_IN_BUFFER | DM_OUT_BUFFER) != IDOK) {
+                        LOG("Failed to apply custom print settings via DEVMODE. Error: %lu. Continuing with defaults.", GetLastError());
+                    }
+                }
+            } else {
+                LOG("Failed to get default DEVMODE. Error: %lu. Print will use system defaults.", GetLastError());
                 free(pDevMode);
                 pDevMode = NULL;
             }
         }
     }
-    ClosePrinter(hPrinterHandle);
+    ClosePrinter(hPrinter);
 
     HDC hdc = CreateDCW(L"WINSPOOL", printer_name_w, NULL, pDevMode);
     if (pDevMode) free(pDevMode);
@@ -1484,6 +1754,7 @@ FFI_PLUGIN_EXPORT int32_t submit_pdf_job(const char* printer_name, const char* p
             num_cups_options = cupsAddOption(option_keys[i], option_values[i], num_cups_options, &options);
         }
     }
+
     int job_id = cupsPrintFile(printer_name, pdf_file_path, doc_name, num_cups_options, options);
     if (job_id <= 0) { LOG("cupsPrintFile failed, error: %s", cupsLastErrorString()); }
     cupsFreeOptions(num_cups_options, options);

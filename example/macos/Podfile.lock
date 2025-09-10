@@ -2,7 +2,7 @@ PODS:
   - file_picker (0.0.1):
     - FlutterMacOS
   - FlutterMacOS (1.0.0)
-  - printing_ffi (0.0.1):
+  - printing_ffi (0.0.2):
     - FlutterMacOS
 
 DEPENDENCIES:
@@ -21,7 +21,7 @@ EXTERNAL SOURCES:
 SPEC CHECKSUMS:
   file_picker: 7584aae6fa07a041af2b36a2655122d42f578c1a
   FlutterMacOS: d0db08ddef1a9af05a5ec4b724367152bb0500b1
-  printing_ffi: 332ad0bca9f19ea49c61f97a4624eebb43d8559c
+  printing_ffi: 58c1e8078d44e4407fdae60fc574bb2d0360f9cf
 
 PODFILE CHECKSUM: 9ab841ed6d23f85e74d528125910be926728418e
 

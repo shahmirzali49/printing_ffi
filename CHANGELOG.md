@@ -1,3 +1,10 @@
+## 0.0.6
+
+* **FEAT**: Added support for opening the native Windows printer properties dialog via `openPrinterProperties`.
+* **FEAT**: Added support for setting Paper Size, Paper Source, and Orientation on Windows for both PDF and raw data printing.
+* **FEAT**: Added support for passing generic CUPS options to raw data print jobs on macOS and Linux.
+* **REFACTOR**: Refactored the Dart FFI layer to use generated bindings directly, removing manual lookups and improving maintainability.
+* **EXAMPLE**: Updated the example app with UI controls for new Windows printing options and a button to show printer properties.
 
 ## 0.0.5
 
