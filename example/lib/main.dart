@@ -6,6 +6,13 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:printing_ffi/printing_ffi.dart';
 
+extension ColorExt on Color {
+  /// Flutter 3.29, Migration helper for withOpacity Function
+  Color withOpacityx(double value) {
+    return withValues(alpha: value);
+  }
+}
+
 void main() {
   runApp(const PrintingFfiExampleApp());
 }
@@ -442,7 +449,9 @@ class _PrintingScreenState extends State<PrintingScreen> {
                 ListTile(
                   dense: true,
                   title: Text(paper.name),
-                  subtitle: Text('ID: ${paper.id}, ${paper.widthMillimeters.toStringAsFixed(1)} x ${paper.heightMillimeters.toStringAsFixed(1)} mm'),
+                  subtitle: Text(
+                    'ID: ${paper.id}, ${paper.widthMillimeters.toStringAsFixed(1)} x ${paper.heightMillimeters.toStringAsFixed(1)} mm',
+                  ),
                 ),
               const Divider(),
               Text(
@@ -702,7 +711,9 @@ class _PrintingScreenState extends State<PrintingScreen> {
       padding: const EdgeInsets.only(top: 16.0),
       child: Card(
         elevation: 1,
-        color: Theme.of(context).colorScheme.secondaryContainer.withOpacity(0.3),
+        color: Theme.of(
+          context,
+        ).colorScheme.secondaryContainer.withOpacityx(0.3),
         child: Padding(
           padding: const EdgeInsets.all(16.0),
           child: Column(
@@ -718,53 +729,87 @@ class _PrintingScreenState extends State<PrintingScreen> {
                   const Center(child: CircularProgressIndicator())
                 else if (_windowsCapabilities != null) ...[
                   DropdownButtonFormField<WindowsPaperSize>(
-                    value: _selectedPaperSize,
-                    decoration: const InputDecoration(labelText: 'Paper Size (Windows)', border: OutlineInputBorder()),
-                    items: _windowsCapabilities!.paperSizes.map((p) => DropdownMenuItem(value: p, child: Text(p.name))).toList(),
+                    initialValue: _selectedPaperSize,
+                    decoration: const InputDecoration(
+                      labelText: 'Paper Size (Windows)',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: _windowsCapabilities!.paperSizes
+                        .map(
+                          (p) =>
+                              DropdownMenuItem(value: p, child: Text(p.name)),
+                        )
+                        .toList(),
                     onChanged: (p) => setState(() => _selectedPaperSize = p),
                   ),
                   const SizedBox(height: 12),
                   DropdownButtonFormField<WindowsPaperSource>(
-                    value: _selectedPaperSource,
-                    decoration: const InputDecoration(labelText: 'Paper Source (Windows)', border: OutlineInputBorder()),
-                    items: _windowsCapabilities!.paperSources.map((s) => DropdownMenuItem(value: s, child: Text(s.name))).toList(),
+                    initialValue: _selectedPaperSource,
+                    decoration: const InputDecoration(
+                      labelText: 'Paper Source (Windows)',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: _windowsCapabilities!.paperSources
+                        .map(
+                          (s) =>
+                              DropdownMenuItem(value: s, child: Text(s.name)),
+                        )
+                        .toList(),
                     onChanged: (s) => setState(() => _selectedPaperSource = s),
                   ),
                   const SizedBox(height: 12),
-                ]
+                ],
               ],
-                DropdownButtonFormField<WindowsOrientation>(
-                  value: _selectedOrientation,
-                  decoration: const InputDecoration(labelText: 'Orientation', border: OutlineInputBorder()),
-                  items: WindowsOrientation.values
-                      .map((o) => DropdownMenuItem(
-                            value: o,
-                            child: Text(o.name[0].toUpperCase() + o.name.substring(1)),
-                          ))
-                      .toList(),
-                  onChanged: (o) => setState(() => _selectedOrientation = o ?? WindowsOrientation.portrait),
+              DropdownButtonFormField<WindowsOrientation>(
+                initialValue: _selectedOrientation,
+                decoration: const InputDecoration(
+                  labelText: 'Orientation',
+                  border: OutlineInputBorder(),
                 ),
-                const SizedBox(height: 16),
-                Center(
-                  child: ElevatedButton.icon(
-                    icon: const Icon(Icons.settings_outlined),
-                    label: const Text('Open Printer Properties'),
-                    onPressed: () async {
-                      if (_selectedPrinter == null) return;
-                      try {
-                        // For a real app, you might use the `win32` package
-                        // to get the handle of the main window. For this
-                        // example, 0 (NULL) is sufficient.
-                        final success = await openPrinterProperties(_selectedPrinter!.name, hwnd: 0);
-                        if (!success) {
-                          _showSnackbar('Could not open printer properties.', isError: true);
-                        }
-                      } catch (e) {
-                        _showSnackbar('Error opening properties: $e', isError: true);
+                items: WindowsOrientation.values
+                    .map(
+                      (o) => DropdownMenuItem(
+                        value: o,
+                        child: Text(
+                          o.name[0].toUpperCase() + o.name.substring(1),
+                        ),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (o) => setState(
+                  () => _selectedOrientation = o ?? WindowsOrientation.portrait,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Center(
+                child: ElevatedButton.icon(
+                  icon: const Icon(Icons.settings_outlined),
+                  label: const Text('Open Printer Properties'),
+                  onPressed: () async {
+                    if (_selectedPrinter == null) return;
+                    try {
+                      // For a real app, you might use the `win32` package
+                      // to get the handle of the main window. For this
+                      // example, 0 (NULL) is sufficient.
+                      final success = await openPrinterProperties(
+                        _selectedPrinter!.name,
+                        hwnd: 0,
+                      );
+                      if (!success) {
+                        _showSnackbar(
+                          'Could not open printer properties.',
+                          isError: true,
+                        );
                       }
-                    },
-                  ),
+                    } catch (e) {
+                      _showSnackbar(
+                        'Error opening properties: $e',
+                        isError: true,
+                      );
+                    }
+                  },
                 ),
+              ),
               const SizedBox(height: 12),
               if (Platform.isWindows)
                 Center(
