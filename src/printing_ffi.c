@@ -1335,6 +1335,10 @@ FFI_PLUGIN_EXPORT WindowsPrinterCapabilities* get_windows_printer_capabilities(c
         return NULL;
     }
 
+    // Initialize new fields
+    caps->is_color_supported = false;
+    caps->is_monochrome_supported = false;
+    caps->supports_landscape = false;
     const wchar_t* port_w = pinfo2->pPortName;
     if (!port_w) {
         LOG("pPortName is NULL for printer '%s'. Cannot get capabilities.", printer_name);
@@ -1352,6 +1356,22 @@ FFI_PLUGIN_EXPORT WindowsPrinterCapabilities* get_windows_printer_capabilities(c
         return NULL;
     }
 
+    // --- Get Color Capabilities ---
+    // DC_COLORDEVICE returns 1 if the device is a color device, 0 otherwise.
+    // If it's a color device, it supports both color and monochrome.
+    // If it's not a color device, it only supports monochrome.
+    if (DeviceCapabilitiesW(printer_name_w, port_w, DC_COLORDEVICE, NULL, NULL) == 1) {
+        caps->is_color_supported = true;
+        caps->is_monochrome_supported = true;
+    } else {
+        caps->is_monochrome_supported = true; // Monochrome printers only support monochrome
+    }
+
+    // --- Get Orientation Capabilities ---
+    // DC_ORIENTATION returns 1 if the device supports landscape orientation, 0 otherwise.
+    if (DeviceCapabilitiesW(printer_name_w, port_w, DC_ORIENTATION, NULL, NULL) == 1) {
+        caps->supports_landscape = true;
+    }
     // --- Get Paper Sizes ---
     long num_papers = DeviceCapabilitiesW(printer_name_w, port_w, DC_PAPERS, NULL, NULL);
     if (num_papers > 0) {

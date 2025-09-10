@@ -304,12 +304,18 @@ class WindowsPrinterCapabilities {
   final List<WindowsPaperSource> paperSources;
   final List<WindowsMediaType> mediaTypes;
   final List<WindowsResolution> resolutions;
+  final bool isColorSupported;
+  final bool isMonochromeSupported;
+  final bool supportsLandscape;
 
   WindowsPrinterCapabilities({
     required this.paperSizes,
     required this.paperSources,
     required this.resolutions,
     required this.mediaTypes,
+    required this.isColorSupported,
+    required this.isMonochromeSupported,
+    required this.supportsLandscape,
   });
 }
 
@@ -1750,6 +1756,9 @@ Future<SendPort> _helperIsolateSendPort = () async {
                       paperSources: paperSources,
                       mediaTypes: mediaTypes,
                       resolutions: resolutions,
+                      isColorSupported: capsStruct.is_color_supported,
+                      isMonochromeSupported: capsStruct.is_monochrome_supported,
+                      supportsLandscape: capsStruct.supports_landscape,
                     );
                     sendPort.send(_GetWindowsCapsResponse(data.id, capabilities));
                   } finally {

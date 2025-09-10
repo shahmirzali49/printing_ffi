@@ -118,6 +118,10 @@ typedef struct {
     PaperSourceList paper_sources;
     ResolutionList resolutions;
     MediaTypeList media_types;
+    // New fields for color mode and orientation capabilities
+    bool is_color_supported;
+    bool is_monochrome_supported;
+    bool supports_landscape;
 } WindowsPrinterCapabilities;
 
 FFI_PLUGIN_EXPORT int sum(int a, int b);

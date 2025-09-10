@@ -812,6 +812,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
               DropdownButtonFormField<ColorMode>(
                 initialValue: _selectedColorMode,
                 decoration: const InputDecoration(
+                  // TODO: Add a tooltip to explain why options might be missing
                   labelText: 'Color Mode',
                   border: OutlineInputBorder(),
                 ),
@@ -819,6 +820,10 @@ class _PrintingScreenState extends State<PrintingScreen> {
                     .map(
                       (c) => DropdownMenuItem(
                         value: c,
+                        enabled: (c == ColorMode.color &&
+                                (_windowsCapabilities?.isColorSupported ??
+                                    false)) ||
+                            (c == ColorMode.monochrome && (_windowsCapabilities?.isMonochromeSupported ?? false)),
                         child: Text(
                           c.name[0].toUpperCase() + c.name.substring(1),
                         ),
@@ -833,6 +838,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
               DropdownButtonFormField<WindowsOrientation>(
                 initialValue: _selectedOrientation,
                 decoration: const InputDecoration(
+                  // TODO: Add a tooltip to explain why options might be missing
                   labelText: 'Orientation',
                   border: OutlineInputBorder(),
                 ),
@@ -840,6 +846,9 @@ class _PrintingScreenState extends State<PrintingScreen> {
                     .map(
                       (o) => DropdownMenuItem(
                         value: o,
+                        enabled: o == WindowsOrientation.portrait ||
+                            (_windowsCapabilities?.supportsLandscape ??
+                                false), // Only enable landscape if supported
                         child: Text(
                           o.name[0].toUpperCase() + o.name.substring(1),
                         ),

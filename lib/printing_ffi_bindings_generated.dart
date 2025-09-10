@@ -465,4 +465,14 @@ final class WindowsPrinterCapabilities extends ffi.Struct {
   external ResolutionList resolutions;
 
   external MediaTypeList media_types;
+
+  /// New fields for color mode and orientation capabilities
+  @ffi.Bool()
+  external bool is_color_supported;
+
+  @ffi.Bool()
+  external bool is_monochrome_supported;
+
+  @ffi.Bool()
+  external bool supports_landscape;
 }
