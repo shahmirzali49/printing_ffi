@@ -21,15 +21,30 @@
 // Include the main Pdfium header. Ensure this is in your src/ directory.
 #include "fpdfview.h"
 #include "fpdf_ext.h"
+#include "fpdf_ppo.h"
 // Global state for Pdfium initialization
 static bool s_pdfium_initialized = false;
 #endif
 
 // Logging macro - enabled when DEBUG_LOGGING is defined (e.g., in debug builds)
 #ifdef DEBUG_LOGGING
-#define LOG(format, ...) fprintf(stderr, "[printing_ffi] " format "\n", ##__VA_ARGS__)
+    #ifdef _WIN32
+        // On Windows, OutputDebugString is the standard way to send logs to the debugger.
+        // This is more reliable than fprintf for GUI applications.
+        #define LOG(format, ...) do { \
+            char buffer[1024]; \
+            snprintf(buffer, sizeof(buffer), "[printing_ffi] " format "\n", ##__VA_ARGS__); \
+            OutputDebugStringA(buffer); \
+        } while (0)
+    #else // macOS, Linux
+        // On POSIX systems, fprintf to stderr is standard. Add a flush to ensure logs appear immediately.
+        #define LOG(format, ...) do { \
+            fprintf(stderr, "[printing_ffi] " format "\n", ##__VA_ARGS__); \
+            fflush(stderr); \
+        } while (0)
+    #endif
 #else
-#define LOG(...)
+#    define LOG(...)
 #endif
 
 #ifdef _WIN32
