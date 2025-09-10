@@ -175,6 +175,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
 
     try {
       final options = await getSupportedCupsOptions(_selectedPrinter!.name);
+      if (!mounted) return;
       final defaultOptions = <String, String>{};
       for (final option in options) {
         defaultOptions[option.name] = option.defaultValue;
@@ -186,7 +187,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
     } catch (e) {
       _showSnackbar('Failed to get CUPS options: $e', isError: true);
     } finally {
-      setState(() => _isLoadingCupsOptions = false);
+      if (mounted) setState(() => _isLoadingCupsOptions = false);
     }
   }
 
@@ -271,6 +272,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
           copies: copies,
           pageRange: pageRange,
         );
+        if (!mounted) return;
         if (success) {
           _showSnackbar('PDF sent to printer successfully!');
         } else {
@@ -314,6 +316,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
         }
       }
       final options = _buildPrintOptions();
+      if (!mounted) return;
       showDialog(
         context: context,
         barrierDismissible: false,
@@ -384,6 +387,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
       docName: 'My ZPL Label',
       options: options,
     );
+    if (!mounted) return;
     if (success) {
       _showSnackbar('Raw data sent successfully!');
     } else {
@@ -406,6 +410,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
           success = await cancelPrintJob(_selectedPrinter!.name, jobId);
           break;
       }
+      if (!mounted) return;
       _showSnackbar(
         'Job $action ${success ? 'succeeded' : 'failed'}.',
         isError: !success,
@@ -1019,6 +1024,8 @@ class _PrintStatusDialogState extends State<_PrintStatusDialog> {
 
   Future<void> _cancelJob() async {
     if (_job == null || !mounted) return;
+    final navigator = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
     setState(() => _isCancelling = true);
     try {
       final success = await cancelPrintJob(widget.printerName, _job!.id);
@@ -1028,18 +1035,18 @@ class _PrintStatusDialogState extends State<_PrintStatusDialog> {
 
       if (success) {
         // If successful, pop the dialog and show a confirmation snackbar.
-        Navigator.of(context).pop();
-        ScaffoldMessenger.of(context).showSnackBar(
+        navigator.pop();
+        messenger.showSnackBar(
           const SnackBar(
             content: Text('Cancel command sent successfully.'),
             backgroundColor: Colors.blue,
           ),
         );
       } else {
-        Navigator.of(context).pop();
+        navigator.pop();
         // If failed, stay on the dialog and show an error.
         setState(() => _isCancelling = false);
-        ScaffoldMessenger.of(context).showSnackBar(
+        messenger.showSnackBar(
           const SnackBar(
             content: Text('Failed to send cancel command.'),
             backgroundColor: Colors.orange,
@@ -1049,9 +1056,11 @@ class _PrintStatusDialogState extends State<_PrintStatusDialog> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _isCancelling = false);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Error cancelling job: $e')));
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('Error cancelling job: $e'),
+        ),
+      );
     }
   }
 
