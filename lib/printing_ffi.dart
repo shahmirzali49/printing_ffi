@@ -146,6 +146,15 @@ enum WindowsOrientation {
   final int value;
 }
 
+/// Defines the color mode for printing.
+enum ColorMode { monochrome, color }
+
+/// Defines the quality for printing.
+///
+/// These correspond to standard driver settings. `normal` is equivalent to
+/// the driver's default medium quality.
+enum PrintQuality { draft, low, normal, high }
+
 /// The result of opening the printer properties dialog.
 enum PrinterPropertiesResult {
   /// An error occurred, or the dialog could not be opened.
@@ -182,6 +191,25 @@ class WindowsPaperSourceOption extends PrintOption {
 class OrientationOption extends PrintOption {
   final WindowsOrientation orientation;
   const OrientationOption(this.orientation);
+}
+
+/// An option to set the color mode (e.g., monochrome or color).
+class ColorModeOption extends PrintOption {
+  final ColorMode mode;
+  const ColorModeOption(this.mode);
+}
+
+/// An option to set the print quality.
+class PrintQualityOption extends PrintOption {
+  final PrintQuality quality;
+  const PrintQualityOption(this.quality);
+}
+
+/// A Windows-specific option to set the media type (e.g., "Plain Paper", "Glossy Photo") by its ID.
+/// The ID can be obtained from [WindowsPrinterCapabilities].
+class WindowsMediaTypeOption extends PrintOption {
+  final int id;
+  const WindowsMediaTypeOption(this.id);
 }
 
 /// A generic CUPS option, represented as a key-value pair.
@@ -248,6 +276,17 @@ class WindowsPaperSource {
   String toString() => name;
 }
 
+/// Represents a media type supported by a Windows printer.
+class WindowsMediaType {
+  final int id;
+  final String name;
+
+  WindowsMediaType({required this.id, required this.name});
+
+  @override
+  String toString() => name;
+}
+
 /// Represents a resolution supported by a Windows printer.
 class WindowsResolution {
   final int xdpi;
@@ -263,12 +302,14 @@ class WindowsResolution {
 class WindowsPrinterCapabilities {
   final List<WindowsPaperSize> paperSizes;
   final List<WindowsPaperSource> paperSources;
+  final List<WindowsMediaType> mediaTypes;
   final List<WindowsResolution> resolutions;
 
   WindowsPrinterCapabilities({
     required this.paperSizes,
     required this.paperSources,
     required this.resolutions,
+    required this.mediaTypes,
   });
 }
 
@@ -784,6 +825,12 @@ Map<String, String> _buildOptions(List<PrintOption> options) {
         optionsMap['orientation'] = orientation.name;
       case GenericCupsOption(name: final name, value: final value):
         optionsMap[name] = value;
+      case ColorModeOption(mode: final mode):
+        optionsMap['color-mode'] = mode.name;
+      case PrintQualityOption(quality: final quality):
+        optionsMap['print-quality'] = quality.name;
+      case WindowsMediaTypeOption(id: final id):
+        optionsMap['media-type-id'] = id.toString();
     }
   }
   return optionsMap;
@@ -1588,6 +1635,16 @@ Future<SendPort> _helperIsolateSendPort = () async {
                         ),
                       );
                     }
+                    final mediaTypes = <WindowsMediaType>[];
+                    for (var i = 0; i < capsStruct.media_types.count; i++) {
+                      final mediaStruct = capsStruct.media_types.types[i];
+                      mediaTypes.add(
+                        WindowsMediaType(
+                          id: mediaStruct.id,
+                          name: mediaStruct.name.cast<Utf8>().toDartString(),
+                        ),
+                      );
+                    }
                     final resolutions = <WindowsResolution>[];
                     for (var i = 0; i < capsStruct.resolutions.count; i++) {
                       final resStruct = capsStruct.resolutions.resolutions[i];
@@ -1601,6 +1658,7 @@ Future<SendPort> _helperIsolateSendPort = () async {
                     final capabilities = WindowsPrinterCapabilities(
                       paperSizes: paperSizes,
                       paperSources: paperSources,
+                      mediaTypes: mediaTypes,
                       resolutions: resolutions,
                     );
                     sendPort.send(_GetWindowsCapsResponse(data.id, capabilities));

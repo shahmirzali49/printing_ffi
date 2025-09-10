@@ -58,6 +58,8 @@ class _PrintingScreenState extends State<PrintingScreen> {
   WindowsPaperSize? _selectedPaperSize;
   WindowsPaperSource? _selectedPaperSource;
   WindowsOrientation _selectedOrientation = WindowsOrientation.portrait;
+  ColorMode _selectedColorMode = ColorMode.color;
+  PrintQuality _selectedPrintQuality = PrintQuality.normal;
 
   bool _isLoadingPrinters = false;
   bool _isLoadingJobs = false;
@@ -112,6 +114,8 @@ class _PrintingScreenState extends State<PrintingScreen> {
       _selectedPaperSize = null;
       _selectedPaperSource = null;
       _selectedOrientation = WindowsOrientation.portrait;
+      _selectedColorMode = ColorMode.color;
+      _selectedPrintQuality = PrintQuality.normal;
     });
     try {
       final printers = listPrinters();
@@ -226,6 +230,14 @@ class _PrintingScreenState extends State<PrintingScreen> {
       }
     }
     options.add(OrientationOption(_selectedOrientation));
+    options.add(ColorModeOption(_selectedColorMode));
+    options.add(PrintQualityOption(_selectedPrintQuality));
+
+    if (Platform.isWindows &&
+        _windowsCapabilities!.mediaTypes.any((t) => t.name == 'Photo')) {
+      // Example of setting a specific media type if available
+    }
+
     if (cupsOptions != null) {
       cupsOptions.forEach((key, value) {
         options.add(GenericCupsOption(key, value));
@@ -468,6 +480,17 @@ class _PrintingScreenState extends State<PrintingScreen> {
                   dense: true,
                   title: Text(paper.name),
                   subtitle: Text(paper.toString()),
+                ),
+              const Divider(),
+              Text(
+                'Media Types (${capabilities.mediaTypes.length})',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              for (final media in capabilities.mediaTypes)
+                ListTile(
+                  dense: true,
+                  title: Text(media.name),
+                  subtitle: Text('ID: ${media.id}'),
                 ),
               const Divider(),
               Text(
@@ -765,6 +788,48 @@ class _PrintingScreenState extends State<PrintingScreen> {
                   const SizedBox(height: 12),
                 ],
               ],
+              DropdownButtonFormField<PrintQuality>(
+                initialValue: _selectedPrintQuality,
+                decoration: const InputDecoration(
+                  labelText: 'Print Quality',
+                  border: OutlineInputBorder(),
+                ),
+                items: PrintQuality.values
+                    .map(
+                      (q) => DropdownMenuItem(
+                        value: q,
+                        child: Text(
+                          q.name[0].toUpperCase() + q.name.substring(1),
+                        ),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (q) => setState(
+                  () => _selectedPrintQuality = q ?? PrintQuality.normal,
+                ),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<ColorMode>(
+                initialValue: _selectedColorMode,
+                decoration: const InputDecoration(
+                  labelText: 'Color Mode',
+                  border: OutlineInputBorder(),
+                ),
+                items: ColorMode.values
+                    .map(
+                      (c) => DropdownMenuItem(
+                        value: c,
+                        child: Text(
+                          c.name[0].toUpperCase() + c.name.substring(1),
+                        ),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (c) =>
+                    setState(() => _selectedColorMode = c ?? ColorMode.color),
+              ),
+              const SizedBox(height: 12),
+
               DropdownButtonFormField<WindowsOrientation>(
                 initialValue: _selectedOrientation,
                 decoration: const InputDecoration(
@@ -803,12 +868,17 @@ class _PrintingScreenState extends State<PrintingScreen> {
                       if (!mounted) return;
                       switch (result) {
                         case PrinterPropertiesResult.ok:
-                          _showSnackbar('Printer properties updated successfully.');
+                          _showSnackbar(
+                            'Printer properties updated successfully.',
+                          );
                           // Refresh capabilities to reflect any changes made.
                           _fetchWindowsCapabilities();
                           break;
                         case PrinterPropertiesResult.cancel:
-                          _showSnackbar('Printer properties dialog was cancelled.', isError: false);
+                          _showSnackbar(
+                            'Printer properties dialog was cancelled.',
+                            isError: false,
+                          );
                           break;
                         case PrinterPropertiesResult.error:
                           _showSnackbar(
@@ -1068,9 +1138,7 @@ class _PrintStatusDialogState extends State<_PrintStatusDialog> {
       if (!mounted) return;
       setState(() => _isCancelling = false);
       messenger.showSnackBar(
-        SnackBar(
-          content: Text('Error cancelling job: $e'),
-        ),
+        SnackBar(content: Text('Error cancelling job: $e')),
       );
     }
   }

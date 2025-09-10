@@ -180,6 +180,9 @@ static DEVMODEW* get_modified_devmode(wchar_t* printer_name_w, int paper_size_id
     if (paper_size_id > 0) { pDevMode->dmFields |= DM_PAPERSIZE; pDevMode->dmPaperSize = (short)paper_size_id; modified = true; }
     if (paper_source_id > 0) { pDevMode->dmFields |= DM_DEFAULTSOURCE; pDevMode->dmDefaultSource = (short)paper_source_id; modified = true; }
     if (orientation > 0) { pDevMode->dmFields |= DM_ORIENTATION; pDevMode->dmOrientation = (short)orientation; modified = true; }
+    if (color_mode > 0) { pDevMode->dmFields |= DM_COLOR; pDevMode->dmColor = (short)color_mode; modified = true; }
+    if (print_quality != 0) { pDevMode->dmFields |= DM_PRINTQUALITY; pDevMode->dmPrintQuality = (short)print_quality; modified = true; }
+    if (media_type_id > 0) { pDevMode->dmFields |= DM_MEDIATYPE; pDevMode->dmMediaType = (short)media_type_id; modified = true; }
 
     if (modified) {
         // Validate and merge the changes. The driver may update the DEVMODE struct.
@@ -462,19 +465,8 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8
     }
 
 #ifdef _WIN32
-    int paper_size_id = 0;
-    int paper_source_id = 0;
-    int orientation = 0;
-    for (int i = 0; i < num_options; i++) {
-        if (strcmp(option_keys[i], "paper-size-id") == 0) {
-            paper_size_id = atoi(option_values[i]);
-        } else if (strcmp(option_keys[i], "paper-source-id") == 0) {
-            paper_source_id = atoi(option_values[i]);
-        } else if (strcmp(option_keys[i], "orientation") == 0) {
-            if (strcmp(option_values[i], "landscape") == 0) orientation = 2;
-            else orientation = 1;
-        }
-    }
+    int paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id;
+    parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id);
 
     HANDLE hPrinter;
     DOC_INFO_1W docInfo;
@@ -482,7 +474,7 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8
     wchar_t* printer_name_w = to_utf16(printer_name);
     if (!printer_name_w) return false;
 
-    DEVMODEW* pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation);
+    DEVMODEW* pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id);
 
     PRINTER_DEFAULTSW printerDefaults = { NULL, pDevMode, PRINTER_ACCESS_USE };
     printerDefaults.pDatatype = L"RAW";
@@ -640,45 +632,7 @@ FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_
         return false;
     }
 
-    DEVMODEW* pDevMode = NULL;
-    LONG devModeSize = DocumentPropertiesW(NULL, hPrinter, printer_name_w, NULL, NULL, 0);
-    if (devModeSize > 0) {
-        pDevMode = (DEVMODEW*)malloc(devModeSize);
-        if (pDevMode) {
-            // Get the default DEVMODE for the printer.
-            if (DocumentPropertiesW(NULL, hPrinter, printer_name_w, pDevMode, NULL, DM_OUT_BUFFER) == IDOK) {
-                bool modified = false;
-                // A value <= 0 for IDs/orientation means "use default".
-                if (paper_size_id > 0) {
-                    pDevMode->dmFields |= DM_PAPERSIZE;
-                    pDevMode->dmPaperSize = (short)paper_size_id;
-                    modified = true;
-                }
-                if (paper_source_id > 0) {
-                    pDevMode->dmFields |= DM_DEFAULTSOURCE;
-                    pDevMode->dmDefaultSource = (short)paper_source_id;
-                    modified = true;
-                }
-                if (orientation > 0) { // 1=Portrait, 2=Landscape
-                    pDevMode->dmFields |= DM_ORIENTATION;
-                    pDevMode->dmOrientation = (short)orientation;
-                    modified = true;
-                }
-
-                if (modified) {
-                    // Validate and merge the changes. The driver may update the DEVMODE struct.
-                    if (DocumentPropertiesW(NULL, hPrinter, printer_name_w, pDevMode, pDevMode, DM_IN_BUFFER | DM_OUT_BUFFER) != IDOK) {
-                        LOG("Failed to apply custom print settings via DEVMODE. Error: %lu. Continuing with defaults.", GetLastError());
-                    }
-                }
-            } else {
-                LOG("Failed to get default DEVMODE. Error: %lu. Print will use system defaults.", GetLastError());
-                free(pDevMode);
-                pDevMode = NULL;
-            }
-        }
-    }
-    ClosePrinter(hPrinter);
+    DEVMODEW* pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id);
 
     HDC hdc = CreateDCW(L"WINSPOOL", printer_name_w, NULL, pDevMode);
     if (pDevMode) free(pDevMode);
@@ -1425,6 +1379,34 @@ FFI_PLUGIN_EXPORT WindowsPrinterCapabilities* get_windows_printer_capabilities(c
         if (bin_names_w) free(bin_names_w);
     }
 
+    // --- Get Media Types ---
+    long num_media_types = DeviceCapabilitiesW(printer_name_w, port_w, DC_MEDIATYPES, NULL, NULL);
+    if (num_media_types > 0) {
+        DWORD* media_type_ids = (DWORD*)malloc(num_media_types * sizeof(DWORD));
+        wchar_t (*media_type_names_w)[64] = (wchar_t(*)[64])malloc(num_media_types * 64 * sizeof(wchar_t));
+
+        if (media_type_ids && media_type_names_w) {
+            if (DeviceCapabilitiesW(printer_name_w, port_w, DC_MEDIATYPES, (LPWSTR)media_type_ids, NULL) != -1 &&
+                DeviceCapabilitiesW(printer_name_w, port_w, DC_MEDIATYPENAMES, (LPWSTR)media_type_names_w, NULL) != -1) {
+
+                caps->media_types.count = (int)num_media_types;
+                caps->media_types.types = (MediaType*)malloc(num_media_types * sizeof(MediaType));
+                if (caps->media_types.types) {
+                    for (long i = 0; i < num_media_types; i++) {
+                        caps->media_types.types[i].id = (short)media_type_ids[i];
+                        caps->media_types.types[i].name = to_utf8(media_type_names_w[i]);
+                    }
+                } else {
+                    caps->media_types.count = 0;
+                    LOG("Failed to allocate memory for media type details.");
+                }
+            }
+        } else {
+            LOG("Failed to allocate memory for media type buffers.");
+        }
+        if (media_type_ids) free(media_type_ids);
+        if (media_type_names_w) free(media_type_names_w);
+    }
 
     // --- Get Resolutions ---
     long num_res = DeviceCapabilitiesW(printer_name_w, port_w, DC_ENUMRESOLUTIONS, NULL, NULL);
@@ -1471,6 +1453,12 @@ FFI_PLUGIN_EXPORT void free_windows_printer_capabilities(WindowsPrinterCapabilit
         }
         free(capabilities->paper_sources.sources);
     }
+    if (capabilities->media_types.types) {
+        for (int i = 0; i < capabilities->media_types.count; i++) {
+            free(capabilities->media_types.types[i].name);
+        }
+        free(capabilities->media_types.types);
+    }
     if (capabilities->resolutions.resolutions) {
         free(capabilities->resolutions.resolutions);
     }
@@ -1487,19 +1475,8 @@ FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char* printer_name, const ui
     }
 
 #ifdef _WIN32
-    int paper_size_id = 0;
-    int paper_source_id = 0;
-    int orientation = 0;
-    for (int i = 0; i < num_options; i++) {
-        if (strcmp(option_keys[i], "paper-size-id") == 0) {
-            paper_size_id = atoi(option_values[i]);
-        } else if (strcmp(option_keys[i], "paper-source-id") == 0) {
-            paper_source_id = atoi(option_values[i]);
-        } else if (strcmp(option_keys[i], "orientation") == 0) {
-            if (strcmp(option_values[i], "landscape") == 0) orientation = 2;
-            else orientation = 1;
-        }
-    }
+    int paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id;
+    parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id);
 
     HANDLE hPrinter;
     DOC_INFO_1W docInfo;
@@ -1509,7 +1486,7 @@ FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char* printer_name, const ui
     wchar_t* printer_name_w = to_utf16(printer_name);
     if (!printer_name_w) return 0;
 
-    DEVMODEW* pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation);
+    DEVMODEW* pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id);
 
     PRINTER_DEFAULTSW printerDefaults = { NULL, pDevMode, PRINTER_ACCESS_USE };
     printerDefaults.pDatatype = L"RAW";
@@ -1657,53 +1634,7 @@ FFI_PLUGIN_EXPORT int32_t submit_pdf_job(const char* printer_name, const char* p
     }
 
     // --- Set print settings via DEVMODE ---
-    HANDLE hPrinter;
-    if (!OpenPrinterW(printer_name_w, &hPrinter, NULL)) {
-        LOG("OpenPrinterW failed with error %lu", GetLastError());
-        FPDF_CloseDocument(doc);
-        free(printer_name_w);
-        return 0;
-    }
-
-    DEVMODEW* pDevMode = NULL;
-    LONG devModeSize = DocumentPropertiesW(NULL, hPrinter, printer_name_w, NULL, NULL, 0);
-    if (devModeSize > 0) {
-        pDevMode = (DEVMODEW*)malloc(devModeSize);
-        if (pDevMode) {
-            // Get the default DEVMODE for the printer.
-            if (DocumentPropertiesW(NULL, hPrinter, printer_name_w, pDevMode, NULL, DM_OUT_BUFFER) == IDOK) {
-                bool modified = false;
-                // A value <= 0 for IDs/orientation means "use default".
-                if (paper_size_id > 0) {
-                    pDevMode->dmFields |= DM_PAPERSIZE;
-                    pDevMode->dmPaperSize = (short)paper_size_id;
-                    modified = true;
-                }
-                if (paper_source_id > 0) {
-                    pDevMode->dmFields |= DM_DEFAULTSOURCE;
-                    pDevMode->dmDefaultSource = (short)paper_source_id;
-                    modified = true;
-                }
-                if (orientation > 0) { // 1=Portrait, 2=Landscape
-                    pDevMode->dmFields |= DM_ORIENTATION;
-                    pDevMode->dmOrientation = (short)orientation;
-                    modified = true;
-                }
-
-                if (modified) {
-                    // Validate and merge the changes. The driver may update the DEVMODE struct.
-                    if (DocumentPropertiesW(NULL, hPrinter, printer_name_w, pDevMode, pDevMode, DM_IN_BUFFER | DM_OUT_BUFFER) != IDOK) {
-                        LOG("Failed to apply custom print settings via DEVMODE. Error: %lu. Continuing with defaults.", GetLastError());
-                    }
-                }
-            } else {
-                LOG("Failed to get default DEVMODE. Error: %lu. Print will use system defaults.", GetLastError());
-                free(pDevMode);
-                pDevMode = NULL;
-            }
-        }
-    }
-    ClosePrinter(hPrinter);
+    DEVMODEW* pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id);
 
     HDC hdc = CreateDCW(L"WINSPOOL", printer_name_w, NULL, pDevMode);
     if (pDevMode) free(pDevMode);

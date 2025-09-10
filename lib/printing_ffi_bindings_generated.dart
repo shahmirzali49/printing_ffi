@@ -406,6 +406,21 @@ final class PaperSourceList extends ffi.Struct {
   external ffi.Pointer<PaperSource> sources;
 }
 
+/// Struct for a single Windows media type
+final class MediaType extends ffi.Struct {
+  @ffi.Short()
+  external int id;
+
+  external ffi.Pointer<ffi.Char> name;
+}
+
+final class MediaTypeList extends ffi.Struct {
+  @ffi.Int()
+  external int count;
+
+  external ffi.Pointer<MediaType> types;
+}
+
 /// Structs for Windows printer capabilities
 final class PaperSize extends ffi.Struct {
   @ffi.Short()
@@ -448,4 +463,6 @@ final class WindowsPrinterCapabilities extends ffi.Struct {
   external PaperSourceList paper_sources;
 
   external ResolutionList resolutions;
+
+  external MediaTypeList media_types;
 }

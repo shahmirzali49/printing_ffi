@@ -78,6 +78,17 @@ typedef struct {
     PaperSource* sources;
 } PaperSourceList;
 
+// Struct for a single Windows media type
+typedef struct {
+    short id;
+    char* name;
+} MediaType;
+
+typedef struct {
+    int count;
+    MediaType* types;
+} MediaTypeList;
+
 // Structs for Windows printer capabilities
 typedef struct {
     short id;
@@ -106,6 +117,7 @@ typedef struct {
     PaperSizeList paper_sizes;
     PaperSourceList paper_sources;
     ResolutionList resolutions;
+    MediaTypeList media_types;
 } WindowsPrinterCapabilities;
 
 FFI_PLUGIN_EXPORT int sum(int a, int b);
