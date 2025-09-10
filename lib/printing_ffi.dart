@@ -1331,7 +1331,8 @@ Future<SendPort> _helperIsolateSendPort = () async {
                     }
                   }
 
-                  final bool result = _bindings.raw_data_to_printer( // Use generated binding
+                  final bool result = _bindings.raw_data_to_printer(
+                    // Use generated binding
                     namePtr.cast(),
                     dataPtr,
                     data.data.length,
@@ -1587,7 +1588,8 @@ Future<SendPort> _helperIsolateSendPort = () async {
                     }
                   }
 
-                  final int jobId = _bindings.submit_raw_data_job( // Use generated binding
+                  final int jobId = _bindings.submit_raw_data_job(
+                    // Use generated binding
                     namePtr.cast(),
                     dataPtr,
                     data.data.length,

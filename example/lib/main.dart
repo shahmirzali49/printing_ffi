@@ -234,7 +234,8 @@ class _PrintingScreenState extends State<PrintingScreen> {
     options.add(PrintQualityOption(_selectedPrintQuality));
 
     if (Platform.isWindows &&
-        (_windowsCapabilities?.mediaTypes.any((t) => t.name == 'Photo') ?? false)) {
+        (_windowsCapabilities?.mediaTypes.any((t) => t.name == 'Photo') ??
+            false)) {
       // Example of setting a specific media type if available
     }
 
@@ -822,11 +823,13 @@ class _PrintingScreenState extends State<PrintingScreen> {
                       .map(
                         (c) => DropdownMenuItem(
                           value: c,
-                          enabled: (c == ColorMode.color &&
+                          enabled:
+                              (c == ColorMode.color &&
                                   (_windowsCapabilities?.isColorSupported ??
                                       true)) ||
                               (c == ColorMode.monochrome &&
-                                  (_windowsCapabilities?.isMonochromeSupported ??
+                                  (_windowsCapabilities
+                                          ?.isMonochromeSupported ??
                                       true)),
                           child: Text(
                             c.name[0].toUpperCase() + c.name.substring(1),
@@ -852,7 +855,8 @@ class _PrintingScreenState extends State<PrintingScreen> {
                       .map(
                         (o) => DropdownMenuItem(
                           value: o,
-                          enabled: o == WindowsOrientation.portrait ||
+                          enabled:
+                              o == WindowsOrientation.portrait ||
                               (_windowsCapabilities?.supportsLandscape ??
                                   true), // Only enable landscape if supported
                           child: Text(
