@@ -1335,19 +1335,6 @@ FFI_PLUGIN_EXPORT WindowsPrinterCapabilities* get_windows_printer_capabilities(c
         return NULL;
     }
 
-    // Initialize new fields
-    caps->is_color_supported = false;
-    caps->is_monochrome_supported = false;
-    caps->supports_landscape = false;
-    const wchar_t* port_w = pinfo2->pPortName;
-    if (!port_w) {
-        LOG("pPortName is NULL for printer '%s'. Cannot get capabilities.", printer_name);
-        free(pinfo2);
-        ClosePrinter(hPrinter);
-        free(printer_name_w);
-        return (WindowsPrinterCapabilities*)calloc(1, sizeof(WindowsPrinterCapabilities)); // Return empty capabilities struct
-    }
-
     WindowsPrinterCapabilities* caps = (WindowsPrinterCapabilities*)calloc(1, sizeof(WindowsPrinterCapabilities));
     if (!caps) {
         free(pinfo2);
@@ -1356,7 +1343,17 @@ FFI_PLUGIN_EXPORT WindowsPrinterCapabilities* get_windows_printer_capabilities(c
         return NULL;
     }
 
-    // --- Get Color Capabilities ---
+    // calloc initializes all fields to zero/false, so they are already set.
+
+    const wchar_t* port_w = pinfo2->pPortName;
+    if (!port_w) {
+        LOG("pPortName is NULL for printer '%s'. Cannot get capabilities.", printer_name);
+        free(pinfo2);
+        ClosePrinter(hPrinter);
+        free(printer_name_w);
+        return caps; // Return empty (but allocated) capabilities struct
+    }
+
     // DC_COLORDEVICE returns 1 if the device is a color device, 0 otherwise.
     // If it's a color device, it supports both color and monochrome.
     // If it's not a color device, it only supports monochrome.

@@ -809,54 +809,62 @@ class _PrintingScreenState extends State<PrintingScreen> {
                 ),
               ),
               const SizedBox(height: 12),
-              DropdownButtonFormField<ColorMode>(
-                initialValue: _selectedColorMode,
-                decoration: const InputDecoration(
-                  // TODO: Add a tooltip to explain why options might be missing
-                  labelText: 'Color Mode',
-                  border: OutlineInputBorder(),
-                ),
-                items: ColorMode.values
-                    .map(
-                      (c) => DropdownMenuItem(
-                        value: c,
-                        enabled: (c == ColorMode.color &&
-                                (_windowsCapabilities?.isColorSupported ??
-                                    false)) ||
-                            (c == ColorMode.monochrome && (_windowsCapabilities?.isMonochromeSupported ?? false)),
-                        child: Text(
-                          c.name[0].toUpperCase() + c.name.substring(1),
+              Tooltip(
+                message:
+                    'Options may be disabled if the printer does not report support. If capabilities are unknown, all options are enabled.',
+                child: DropdownButtonFormField<ColorMode>(
+                  initialValue: _selectedColorMode,
+                  decoration: const InputDecoration(
+                    labelText: 'Color Mode',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: ColorMode.values
+                      .map(
+                        (c) => DropdownMenuItem(
+                          value: c,
+                          enabled: (c == ColorMode.color &&
+                                  (_windowsCapabilities?.isColorSupported ??
+                                      true)) ||
+                              (c == ColorMode.monochrome &&
+                                  (_windowsCapabilities?.isMonochromeSupported ??
+                                      true)),
+                          child: Text(
+                            c.name[0].toUpperCase() + c.name.substring(1),
+                          ),
                         ),
-                      ),
-                    )
-                    .toList(),
-                onChanged: (c) =>
-                    setState(() => _selectedColorMode = c ?? ColorMode.color),
+                      )
+                      .toList(),
+                  onChanged: (c) =>
+                      setState(() => _selectedColorMode = c ?? ColorMode.color),
+                ),
               ),
               const SizedBox(height: 12),
-
-              DropdownButtonFormField<WindowsOrientation>(
-                initialValue: _selectedOrientation,
-                decoration: const InputDecoration(
-                  // TODO: Add a tooltip to explain why options might be missing
-                  labelText: 'Orientation',
-                  border: OutlineInputBorder(),
-                ),
-                items: WindowsOrientation.values
-                    .map(
-                      (o) => DropdownMenuItem(
-                        value: o,
-                        enabled: o == WindowsOrientation.portrait ||
-                            (_windowsCapabilities?.supportsLandscape ??
-                                false), // Only enable landscape if supported
-                        child: Text(
-                          o.name[0].toUpperCase() + o.name.substring(1),
+              Tooltip(
+                message:
+                    'Options may be disabled if the printer does not report support. If capabilities are unknown, all options are enabled.',
+                child: DropdownButtonFormField<WindowsOrientation>(
+                  initialValue: _selectedOrientation,
+                  decoration: const InputDecoration(
+                    labelText: 'Orientation',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: WindowsOrientation.values
+                      .map(
+                        (o) => DropdownMenuItem(
+                          value: o,
+                          enabled: o == WindowsOrientation.portrait ||
+                              (_windowsCapabilities?.supportsLandscape ??
+                                  true), // Only enable landscape if supported
+                          child: Text(
+                            o.name[0].toUpperCase() + o.name.substring(1),
+                          ),
                         ),
-                      ),
-                    )
-                    .toList(),
-                onChanged: (o) => setState(
-                  () => _selectedOrientation = o ?? WindowsOrientation.portrait,
+                      )
+                      .toList(),
+                  onChanged: (o) => setState(
+                    () =>
+                        _selectedOrientation = o ?? WindowsOrientation.portrait,
+                  ),
                 ),
               ),
               const SizedBox(height: 16),
