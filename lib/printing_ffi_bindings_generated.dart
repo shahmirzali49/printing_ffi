@@ -84,7 +84,7 @@ class PrintingFfiBindings {
   late final _free_printer_infoPtr = _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<PrinterInfo>)>>('free_printer_info');
   late final _free_printer_info = _free_printer_infoPtr.asFunction<void Function(ffi.Pointer<PrinterInfo>)>();
 
-  bool open_printer_properties(
+  int open_printer_properties(
     ffi.Pointer<ffi.Char> printer_name,
     int hwnd,
   ) {
@@ -94,8 +94,8 @@ class PrintingFfiBindings {
     );
   }
 
-  late final _open_printer_propertiesPtr = _lookup<ffi.NativeFunction<ffi.Bool Function(ffi.Pointer<ffi.Char>, ffi.IntPtr)>>('open_printer_properties');
-  late final _open_printer_properties = _open_printer_propertiesPtr.asFunction<bool Function(ffi.Pointer<ffi.Char>, int)>();
+  late final _open_printer_propertiesPtr = _lookup<ffi.NativeFunction<ffi.Int Function(ffi.Pointer<ffi.Char>, ffi.IntPtr)>>('open_printer_properties');
+  late final _open_printer_properties = _open_printer_propertiesPtr.asFunction<int Function(ffi.Pointer<ffi.Char>, int)>();
 
   bool raw_data_to_printer(
     ffi.Pointer<ffi.Char> printer_name,

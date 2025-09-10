@@ -796,15 +796,26 @@ class _PrintingScreenState extends State<PrintingScreen> {
                       // For a real app, you might use the `win32` package
                       // to get the handle of the main window. For this
                       // example, 0 (NULL) is sufficient.
-                      final success = await openPrinterProperties(
+                      final result = await openPrinterProperties(
                         _selectedPrinter!.name,
                         hwnd: 0,
                       );
-                      if (!success) {
-                        _showSnackbar(
-                          'Could not open printer properties.',
-                          isError: true,
-                        );
+                      if (!mounted) return;
+                      switch (result) {
+                        case PrinterPropertiesResult.ok:
+                          _showSnackbar('Printer properties updated successfully.');
+                          // Refresh capabilities to reflect any changes made.
+                          _fetchWindowsCapabilities();
+                          break;
+                        case PrinterPropertiesResult.cancel:
+                          _showSnackbar('Printer properties dialog was cancelled.', isError: false);
+                          break;
+                        case PrinterPropertiesResult.error:
+                          _showSnackbar(
+                            'Could not open printer properties.',
+                            isError: true,
+                          );
+                          break;
                       }
                     } catch (e) {
                       _showSnackbar(

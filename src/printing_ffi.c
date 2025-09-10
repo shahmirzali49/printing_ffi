@@ -976,25 +976,26 @@ FFI_PLUGIN_EXPORT void free_job_list(JobList* job_list) {
     free(job_list);
 }
 
-FFI_PLUGIN_EXPORT bool open_printer_properties(const char* printer_name, intptr_t hwnd) {
+FFI_PLUGIN_EXPORT int open_printer_properties(const char* printer_name, intptr_t hwnd) {
     LOG("open_printer_properties called for printer: '%s'", printer_name);
 #ifdef _WIN32
     if (!printer_name) {
         LOG("Printer name is null");
-        return false;
+        return 0; // Error
     }
 
     wchar_t* printer_name_w = to_utf16(printer_name);
     if (!printer_name_w) {
         LOG("Failed to convert printer name to UTF-16");
-        return false;
+        return 0; // Error
     }
 
     HANDLE hPrinter;
-    if (!OpenPrinterW(printer_name_w, &hPrinter, NULL)) {
+    PRINTER_DEFAULTSW printerDefaults = { NULL, NULL, PRINTER_ALL_ACCESS };
+    if (!OpenPrinterW(printer_name_w, &hPrinter, &printerDefaults)) {
         LOG("OpenPrinterW failed with error %lu", GetLastError());
         free(printer_name_w);
-        return false;
+        return 0; // Error
     }
 
     // The modern and recommended way to show the printer properties dialog is
@@ -1006,7 +1007,7 @@ FFI_PLUGIN_EXPORT bool open_printer_properties(const char* printer_name, intptr_
         LOG("DocumentProperties (get size) failed with error %lu", GetLastError());
         ClosePrinter(hPrinter);
         free(printer_name_w);
-        return false;
+        return 0; // Error
     }
 
     DEVMODEW* pDevMode = (DEVMODEW*)malloc(devModeSize);
@@ -1014,7 +1015,7 @@ FFI_PLUGIN_EXPORT bool open_printer_properties(const char* printer_name, intptr_
         LOG("Failed to allocate memory for DEVMODE structure.");
         ClosePrinter(hPrinter);
         free(printer_name_w);
-        return false;
+        return 0; // Error
     }
 
     // Get the current printer settings to populate the dialog.
@@ -1023,11 +1024,13 @@ FFI_PLUGIN_EXPORT bool open_printer_properties(const char* printer_name, intptr_
         free(pDevMode);
         ClosePrinter(hPrinter);
         free(printer_name_w);
-        return false;
+        return 0; // Error
     }
 
     // Display the properties dialog. The user's changes will be written back to pDevMode.
     LONG result = DocumentPropertiesW((HWND)hwnd, hPrinter, printer_name_w, pDevMode, pDevMode, DM_IN_BUFFER | DM_OUT_BUFFER | DM_PROMPT);
+
+    int return_status = 0; // Default to error
 
     if (result == IDOK) {
         LOG("Printer properties dialog closed with OK. Applying changes to printer defaults.");
@@ -1057,21 +1060,24 @@ FFI_PLUGIN_EXPORT bool open_printer_properties(const char* printer_name, intptr_
                 free(pinfo2);
             }
         }
+        return_status = 1; // OK
     } else if (result == IDCANCEL) {
         LOG("Printer properties dialog was cancelled.");
+        return_status = 2; // Cancel
     } else {
         LOG("DocumentProperties (prompt) failed with result: %ld, error: %lu", result, GetLastError());
+        return_status = 0; // Error
     }
 
     free(pDevMode);
     ClosePrinter(hPrinter);
     free(printer_name_w);
-    return result == IDOK;
+    return return_status;
 #else
     (void)hwnd; // hwnd is Windows-specific
     if (!printer_name) {
         LOG("Printer name is null");
-        return false;
+        return 0; // Error
     }
     char command[PATH_MAX];
     snprintf(command, sizeof(command),
@@ -1082,11 +1088,12 @@ FFI_PLUGIN_EXPORT bool open_printer_properties(const char* printer_name, intptr_
 #endif
              printer_name);
     LOG("Executing command: %s", command);
-    int result = system(command);
-    if (result != 0) {
-        LOG("Command '%s' failed with exit code %d", command, result);
+    int cmd_result = system(command);
+    if (cmd_result != 0) {
+        LOG("Command '%s' failed with exit code %d", command, cmd_result);
+        return 0; // Error
     }
-    return result == 0;
+    return 1; // Dispatched
 #endif
 }
 

@@ -146,6 +146,19 @@ enum WindowsOrientation {
   final int value;
 }
 
+/// The result of opening the printer properties dialog.
+enum PrinterPropertiesResult {
+  /// An error occurred, or the dialog could not be opened.
+  error,
+
+  /// The user clicked "OK" and changes were applied (Windows only).
+  /// On macOS/Linux, this indicates the browser command was dispatched successfully.
+  ok,
+
+  /// The user clicked "Cancel" (Windows only).
+  cancel,
+}
+
 /// Represents a generic printing option to be passed to print functions.
 sealed class PrintOption {
   const PrintOption();
@@ -611,12 +624,17 @@ Printer _printerFromInfo(PrinterInfo info) {
 /// - [hwnd]: (Windows only) The handle to the parent window. Can be obtained from packages
 ///   like `win32` or by other platform-specific means. A value of 0 is often
 ///   acceptable for a modeless dialog.
-Future<bool> openPrinterProperties(String printerName, {int hwnd = 0}) async {
+Future<PrinterPropertiesResult> openPrinterProperties(String printerName, {int hwnd = 0}) async {
   // This is a synchronous call, so no need for an isolate.
   final namePtr = printerName.toNativeUtf8();
   try {
     // Use the generated binding directly.
-    return _bindings.open_printer_properties(namePtr.cast(), hwnd);
+    final result = _bindings.open_printer_properties(namePtr.cast(), hwnd);
+    return switch (result) {
+      1 => PrinterPropertiesResult.ok,
+      2 => PrinterPropertiesResult.cancel,
+      _ => PrinterPropertiesResult.error,
+    };
   } finally {
     malloc.free(namePtr);
   }
