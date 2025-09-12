@@ -795,8 +795,15 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
             int dest_x, dest_y, dest_width, dest_height;
 
             if (scaling_mode == 0) { // Fit Page
-                float page_aspect = (float)width / (float)height;
-                float printable_aspect = (float)printable_width / (float)printable_height;
+                float page_aspect = 1.0f;
+                if (height != 0) {
+                    page_aspect = (float)width / (float)height;
+                }
+                float printable_aspect = 1.0f;
+                if (printable_height != 0) {
+                    printable_aspect = (float)printable_width / (float)printable_height;
+                }
+
                 if (page_aspect > printable_aspect) {
                     dest_width = printable_width;
                     dest_height = (int)(printable_width / page_aspect);
@@ -811,8 +818,15 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
                 // If the PDF page is larger than the printable area, scale down to fit.
                 // Otherwise, print at actual size.
                 if (width > printable_width || height > printable_height) {
-                    float page_aspect = (float)width / (float)height;
-                    float printable_aspect = (float)printable_width / (float)printable_height;
+                    float page_aspect = 1.0f;
+                    if (height != 0) {
+                        page_aspect = (float)width / (float)height;
+                    }
+                    float printable_aspect = 1.0f;
+                    if (printable_height != 0) {
+                        printable_aspect = (float)printable_width / (float)printable_height;
+                    }
+
                     if (page_aspect > printable_aspect) {
                         dest_width = printable_width;
                         dest_height = (int)(printable_width / page_aspect);

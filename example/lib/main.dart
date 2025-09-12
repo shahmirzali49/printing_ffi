@@ -70,7 +70,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
   final TextEditingController _rawDataController = TextEditingController(
     text: 'Hello, FFI!',
   );
-  PdfPrintScaling _selectedScaling = PdfPrintScaling.fitPage;
+  PdfPrintScaling _selectedScaling = PdfPrintScaling.shrinkToFit;
   final TextEditingController _copiesController = TextEditingController(
     text: '1',
   );
@@ -630,6 +630,10 @@ class _PrintingScreenState extends State<PrintingScreen> {
                             ButtonSegment(
                               value: PdfPrintScaling.actualSize,
                               label: Text('Actual Size'),
+                            ),
+                            ButtonSegment(
+                              value: PdfPrintScaling.shrinkToFit,
+                              label: Text('Shrink to Fit'),
                             ),
                           ],
                           selected: {_selectedScaling},
