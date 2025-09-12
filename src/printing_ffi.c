@@ -717,15 +717,14 @@ FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_
     // Manually loop for copies, as some drivers (like "Print to PDF") ignore the DEVMODE setting.
     for (int c = 0; c < copies && success; c++) {
         for (int i = 0; i < page_count && success; ++i) {
+            if (!pages_to_print[i]) {
+                continue;
+            }
+            
             if (StartPage(hdc) <= 0) {
                 LOG("StartPage failed for page %d with error %lu", i, GetLastError());
                 success = false;
                 break;
-            }
-
-            if (!pages_to_print[i]) {
-                EndPage(hdc);
-                continue;
             }
 
             FPDF_PAGE page = FPDF_LoadPage(doc, i);
