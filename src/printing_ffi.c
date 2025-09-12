@@ -626,16 +626,10 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8
 #endif
 }
 
-FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_path, const char* doc_name, int scaling_mode, int copies, const char* page_range, int num_options, const char** option_keys, const char** option_values) {
-    LOG("print_pdf called for printer: '%s', path: '%s', doc: '%s'", printer_name, pdf_file_path, doc_name);
-
-    // Validate input parameters
-    if (!printer_name || !pdf_file_path || !doc_name || copies <= 0) {
-        LOG("Invalid input parameters");
-        return false;
-    }
-
 #ifdef _WIN32
+// Common internal function for PDF printing on Windows.
+// Returns a job ID if `submit_job` is true, otherwise returns 1 for success or 0 for failure.
+static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file_path, const char* doc_name, int scaling_mode, int copies, const char* page_range, int num_options, const char** option_keys, const char** option_values, bool submit_job) {
     if (!s_pdfium_initialized) {
         FPDF_LIBRARY_CONFIG config;
         memset(&config, 0, sizeof(config));
@@ -647,80 +641,76 @@ FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_
 
     int paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id;
     parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id);
+
     wchar_t* printer_name_w = to_utf16(printer_name);
     if (!printer_name_w) {
         LOG("Failed to convert printer name to UTF-16");
-        return false;
+        return 0;
     }
 
     FPDF_DOCUMENT doc = FPDF_LoadDocument(pdf_file_path, NULL);
     if (!doc) {
         LOG("FPDF_LoadDocument failed for path: %s. Error: %ld", pdf_file_path, FPDF_GetLastError());
         free(printer_name_w);
-        return false;
-    }
-
-    // --- Set print settings via DEVMODE ---
-    HANDLE hPrinter;
-    if (!OpenPrinterW(printer_name_w, &hPrinter, NULL)) {
-        LOG("OpenPrinterW failed with error %lu", GetLastError());
-        FPDF_CloseDocument(doc);
-        free(printer_name_w);
-        return false;
+        return 0;
     }
 
     DEVMODEW* pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id);
 
     HDC hdc = CreateDCW(L"WINSPOOL", printer_name_w, NULL, pDevMode);
-    if (pDevMode) free(pDevMode);
+    if (pDevMode) free(pDevMode); // DEVMODE is copied by CreateDC, so we can free it now.
+
     if (!hdc) {
-        LOG("CreateDCA failed for printer '%s' with error %lu", printer_name, GetLastError());
+        LOG("CreateDCW failed for printer '%s' with error %lu", printer_name, GetLastError());
         FPDF_CloseDocument(doc);
         free(printer_name_w);
-        return false;
+        return 0;
     }
 
     wchar_t* doc_name_w = to_utf16(doc_name);
     DOCINFOW di = { sizeof(DOCINFOW), doc_name_w, NULL, 0 };
-    if (StartDocW(hdc, &di) <= 0) {
+    int job_id = StartDocW(hdc, &di);
+
+    if (job_id <= 0) {
         LOG("StartDocW failed with error %lu", GetLastError());
+        if (doc_name_w) free(doc_name_w);
         DeleteDC(hdc);
         FPDF_CloseDocument(doc);
-        if (doc_name_w) free(doc_name_w);
         free(printer_name_w);
-        return false;
+        return 0;
     }
+    // doc_name_w is used by the system, don't free it until EndDoc.
 
     int page_count = FPDF_GetPageCount(doc);
     bool* pages_to_print = (bool*)malloc(page_count * sizeof(bool));
     if (!pages_to_print) {
         LOG("Failed to allocate memory for page range flags.");
+        if (doc_name_w) free(doc_name_w);
         AbortDoc(hdc);
         DeleteDC(hdc);
         FPDF_CloseDocument(doc);
-        if (doc_name_w) free(doc_name_w);
         free(printer_name_w);
-        return false;
+        return 0;
     }
+
     if (!parse_page_range(page_range, pages_to_print, page_count)) {
         LOG("Invalid page range string provided: %s", page_range ? page_range : "(null)");
         free(pages_to_print);
+        if (doc_name_w) free(doc_name_w);
         AbortDoc(hdc);
         DeleteDC(hdc);
         FPDF_CloseDocument(doc);
-        if (doc_name_w) free(doc_name_w);
         free(printer_name_w);
-        return false;
+        return 0;
     }
 
     bool success = true;
-    // Manually loop for copies, as some drivers (like "Print to PDF") ignore the DEVMODE setting.
     for (int c = 0; c < copies && success; c++) {
         for (int i = 0; i < page_count && success; ++i) {
             if (!pages_to_print[i]) {
                 continue;
             }
-            
+
             if (StartPage(hdc) <= 0) {
                 LOG("StartPage failed for page %d with error %lu", i, GetLastError());
                 success = false;
@@ -735,11 +725,8 @@ FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_
                 break;
             }
 
-            // Get printer DPI for scaling
             int dpi_x = GetDeviceCaps(hdc, LOGPIXELSX);
             int dpi_y = GetDeviceCaps(hdc, LOGPIXELSY);
-
-            // Render page to a bitmap at printer's resolution
             int width = (int)(FPDF_GetPageWidthF(page) / 72.0 * dpi_x);
             int height = (int)(FPDF_GetPageHeightF(page) / 72.0 * dpi_y);
 
@@ -747,23 +734,22 @@ FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_
             memset(&bmi, 0, sizeof(bmi));
             bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
             bmi.bmiHeader.biWidth = width;
-            bmi.bmiHeader.biHeight = -height; // Negative for top-down DIB, which Pdfium uses.
+            bmi.bmiHeader.biHeight = -height; // Negative for top-down DIB
             bmi.bmiHeader.biPlanes = 1;
-            bmi.bmiHeader.biBitCount = 32; // BGRA format
+            bmi.bmiHeader.biBitCount = 24; // Using 24-bit color
             bmi.bmiHeader.biCompression = BI_RGB;
 
             void* pBitmapData = NULL;
-            HBITMAP hBitmap = CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS, &pBitmapData, NULL, 0);
+            HBITMAP hBitmap = CreateDIBSection(hdc, &bmi, DIB_RGB_COLORS, &pBitmapData, NULL, 0);
             if (!hBitmap || !pBitmapData) {
-                LOG("CreateDIBSection failed for page %d", i);
+                LOG("CreateDIBSection failed for page %d with error %lu", i, GetLastError());
                 FPDF_ClosePage(page);
                 EndPage(hdc);
                 success = false;
                 break;
             }
 
-            // Create a Pdfium bitmap that wraps the DIB section's buffer.
-            FPDF_BITMAP pdfBitmap = FPDFBitmap_CreateEx(width, height, FPDFBitmap_BGRA, pBitmapData, width * 4);
+            FPDF_BITMAP pdfBitmap = FPDFBitmap_CreateEx(width, height, FPDFBitmap_BGR, pBitmapData, width * 3);
             if (!pdfBitmap) {
                 LOG("FPDFBitmap_CreateEx failed for page %d", i);
                 DeleteObject(hBitmap);
@@ -773,29 +759,17 @@ FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_
                 break;
             }
 
-            // Fill with white background (Pdfium renders with transparency by default)
-            FPDFBitmap_FillRect(pdfBitmap, 0, 0, width, height, 0xFFFFFFFF);
-
-            // Render the page into the Pdfium bitmap (which is our DIB buffer)
+            FPDFBitmap_FillRect(pdfBitmap, 0, 0, width, height, 0xFFFFFFFF); // Fill with white
             FPDF_RenderPageBitmap(pdfBitmap, page, 0, 0, width, height, 0, FPDF_ANNOT);
-
-            // The DIB section is now updated. We can destroy the Pdfium bitmap wrapper.
             FPDFBitmap_Destroy(pdfBitmap);
 
-            // Get printable area of the printer
             int printable_width = GetDeviceCaps(hdc, HORZRES);
             int printable_height = GetDeviceCaps(hdc, VERTRES);
+            int dest_x = 0, dest_y = 0, dest_width = width, dest_height = height;
 
-            // Calculate destination rectangle based on scaling mode
-            int dest_x = 0;
-            int dest_y = 0;
-            int dest_width = width;
-            int dest_height = height;
-
-            if (scaling_mode == 0) { // 0 = Fit Page
+            if (scaling_mode == 0) { // Fit Page
                 float page_aspect = (float)width / (float)height;
                 float printable_aspect = (float)printable_width / (float)printable_height;
-
                 if (page_aspect > printable_aspect) {
                     dest_width = printable_width;
                     dest_height = (int)(printable_width / page_aspect);
@@ -805,13 +779,12 @@ FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_
                 }
                 dest_x = (printable_width - dest_width) / 2;
                 dest_y = (printable_height - dest_height) / 2;
-            } else { // 1 = Actual Size
+            } else { // Actual Size
                 dest_x = (printable_width - dest_width) / 2;
                 dest_y = (printable_height - dest_height) / 2;
             }
 
-            int result = StretchDIBits(hdc, dest_x, dest_y, dest_width, dest_height, 0, 0, width, height, pBitmapData, &bmi, DIB_RGB_COLORS, SRCCOPY);
-            if (result == GDI_ERROR) {
+            if (StretchDIBits(hdc, dest_x, dest_y, dest_width, dest_height, 0, 0, width, height, pBitmapData, &bmi, DIB_RGB_COLORS, SRCCOPY) == GDI_ERROR) {
                 LOG("StretchDIBits failed for page %d with error %lu", i, GetLastError());
                 success = false;
             }
@@ -827,6 +800,8 @@ FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_
     }
 
     free(pages_to_print);
+    if (doc_name_w) free(doc_name_w);
+
     if (success) {
         EndDoc(hdc);
     } else {
@@ -835,11 +810,29 @@ FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_
 
     DeleteDC(hdc);
     FPDF_CloseDocument(doc);
-    if (doc_name_w) free(doc_name_w);
     free(printer_name_w);
 
-    LOG("print_pdf (Pdfium/GDI) finished with result: %d", success);
-    return success;
+    if (submit_job) {
+        LOG("_print_pdf_job_win (submit) finished with result: %d, job_id: %d", success, job_id);
+        return success ? job_id : 0;
+    } else {
+        LOG("_print_pdf_job_win (print) finished with result: %d", success);
+        return success ? 1 : 0;
+    }
+}
+#endif
+
+FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_path, const char* doc_name, int scaling_mode, int copies, const char* page_range, int num_options, const char** option_keys, const char** option_values) {
+    LOG("print_pdf called for printer: '%s', path: '%s', doc: '%s'", printer_name, pdf_file_path, doc_name);
+
+    // Validate input parameters
+    if (!printer_name || !pdf_file_path || !doc_name || copies <= 0) {
+        LOG("Invalid input parameters");
+        return false;
+    }
+
+#ifdef _WIN32
+    return _print_pdf_job_win(printer_name, pdf_file_path, doc_name, scaling_mode, copies, page_range, num_options, option_keys, option_values, false) == 1;
 #else // macOS / Linux (CUPS)
     cups_option_t* options = NULL;
     int num_cups_options = 0;
@@ -1607,150 +1600,7 @@ FFI_PLUGIN_EXPORT int32_t submit_pdf_job(const char* printer_name, const char* p
     }
 
 #ifdef _WIN32
-    if (!s_pdfium_initialized) {
-        FPDF_LIBRARY_CONFIG config;
-        memset(&config, 0, sizeof(config));
-        config.version = 2;
-        FPDF_InitLibraryWithConfig(&config);
-        s_pdfium_initialized = true;
-        LOG("Pdfium library initialized for the first time.");
-    }
-
-    int paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id;
-    parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id);
-    wchar_t* printer_name_w = to_utf16(printer_name);
-    if (!printer_name_w) {
-        LOG("Failed to convert printer name to UTF-16");
-        return 0;
-    }
-
-    FPDF_DOCUMENT doc = FPDF_LoadDocument(pdf_file_path, NULL);
-    if (!doc) {
-        LOG("FPDF_LoadDocument failed for path: %s. Error: %ld", pdf_file_path, FPDF_GetLastError());
-        free(printer_name_w);
-        return 0;
-    }
-
-    // --- Set print settings via DEVMODE ---
-    DEVMODEW* pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id);
-
-    HDC hdc = CreateDCW(L"WINSPOOL", printer_name_w, NULL, pDevMode);
-    if (pDevMode) free(pDevMode);
-    if (!hdc) {
-        LOG("CreateDCA failed for printer '%s' with error %lu", printer_name, GetLastError());
-        FPDF_CloseDocument(doc);
-        free(printer_name_w);
-        return 0;
-    }
-
-    wchar_t* doc_name_w = to_utf16(doc_name);
-    DOCINFOW di = { sizeof(DOCINFOW), doc_name_w, NULL, 0 };
-    int job_id = StartDocW(hdc, &di);
-    if (job_id <= 0) {
-        LOG("StartDocW failed with error %lu", GetLastError());
-        DeleteDC(hdc);
-        FPDF_CloseDocument(doc);
-        if (doc_name_w) free(doc_name_w);
-        free(printer_name_w);
-        return 0;
-    }
-    if (doc_name_w) free(doc_name_w);
-
-    int page_count = FPDF_GetPageCount(doc);
-    bool* pages_to_print = (bool*)malloc(page_count * sizeof(bool));
-    if (!pages_to_print) {
-        LOG("Failed to allocate memory for page range flags.");
-        AbortDoc(hdc);
-        DeleteDC(hdc);
-        FPDF_CloseDocument(doc);
-        free(printer_name_w);
-        return 0;
-    }
-    if (!parse_page_range(page_range, pages_to_print, page_count)) {
-        LOG("Invalid page range string provided: %s", page_range ? page_range : "(null)");
-        free(pages_to_print);
-        AbortDoc(hdc);
-        DeleteDC(hdc);
-        FPDF_CloseDocument(doc);
-        free(printer_name_w);
-        return 0;
-    }
-
-    bool success = true;
-    // Manually loop for copies, as some drivers (like "Print to PDF") ignore the DEVMODE setting.
-    for (int c = 0; c < copies && success; c++) {
-        for (int i = 0; i < page_count && success; ++i) {
-            if (StartPage(hdc) <= 0) { success = false; break; }
-            if (!pages_to_print[i]) { EndPage(hdc); continue; }
-            FPDF_PAGE page = FPDF_LoadPage(doc, i);
-            if (!page) { EndPage(hdc); success = false; break; }
-
-            int dpi_x = GetDeviceCaps(hdc, LOGPIXELSX);
-            int dpi_y = GetDeviceCaps(hdc, LOGPIXELSY);
-            int width = (int)(FPDF_GetPageWidthF(page) / 72.0 * dpi_x);
-            int height = (int)(FPDF_GetPageHeightF(page) / 72.0 * dpi_y);
-
-            BITMAPINFO bmi;
-            memset(&bmi, 0, sizeof(bmi));
-            bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-            bmi.bmiHeader.biWidth = width;
-            bmi.bmiHeader.biHeight = -height;
-            bmi.bmiHeader.biPlanes = 1;
-            bmi.bmiHeader.biBitCount = 32;
-            bmi.bmiHeader.biCompression = BI_RGB;
-
-            void* pBitmapData = NULL;
-            HBITMAP hBitmap = CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS, &pBitmapData, NULL, 0);
-            if (!hBitmap || !pBitmapData) { FPDF_ClosePage(page); EndPage(hdc); success = false; break; }
-
-            FPDF_BITMAP pdfBitmap = FPDFBitmap_CreateEx(width, height, FPDFBitmap_BGRA, pBitmapData, width * 4);
-            FPDFBitmap_FillRect(pdfBitmap, 0, 0, width, height, 0xFFFFFFFF);
-            if (!pdfBitmap) {
-                DeleteObject(hBitmap);
-                FPDF_ClosePage(page);
-                EndPage(hdc);
-                success = false;
-                break;
-            }
-            FPDF_RenderPageBitmap(pdfBitmap, page, 0, 0, width, height, 0, FPDF_ANNOT);
-            FPDFBitmap_Destroy(pdfBitmap);
-
-            int printable_width = GetDeviceCaps(hdc, HORZRES);
-            int printable_height = GetDeviceCaps(hdc, VERTRES);
-            int dest_x = 0, dest_y = 0, dest_width = width, dest_height = height;
-
-            if (scaling_mode == 0) { // Fit Page
-                float page_aspect = (float)width / (float)height;
-                float printable_aspect = (float)printable_width / (float)printable_height;
-                if (page_aspect > printable_aspect) {
-                    dest_width = printable_width;
-                    dest_height = (int)(printable_width / page_aspect);
-                } else {
-                    dest_height = printable_height;
-                    dest_width = (int)(printable_height * page_aspect);
-                }
-                dest_x = (printable_width - dest_width) / 2;
-                dest_y = (printable_height - dest_height) / 2;
-            } else { // Actual Size
-                dest_x = (printable_width - dest_width) / 2;
-                dest_y = (printable_height - dest_height) / 2;
-            }
-
-            if (StretchDIBits(hdc, dest_x, dest_y, dest_width, dest_height, 0, 0, width, height, pBitmapData, &bmi, DIB_RGB_COLORS, SRCCOPY) == GDI_ERROR) { success = false; }
-
-            DeleteObject(hBitmap);
-            FPDF_ClosePage(page);
-            if (EndPage(hdc) <= 0) { success = false; }
-        }
-    }
-
-    free(pages_to_print);
-    if (success) { EndDoc(hdc); } else { AbortDoc(hdc); }
-    DeleteDC(hdc);
-    FPDF_CloseDocument(doc);
-    free(printer_name_w);
-    LOG("submit_pdf_job (Pdfium/GDI) finished with result: %d, job_id: %d", success, job_id);
-    return success ? job_id : 0;
+    return _print_pdf_job_win(printer_name, pdf_file_path, doc_name, scaling_mode, copies, page_range, num_options, option_keys, option_values, true);
 #else // macOS / Linux (CUPS)
     cups_option_t* options = NULL;
     int num_cups_options = 0;
