@@ -855,10 +855,6 @@ class _PrintingScreenState extends State<PrintingScreen> {
                       .map(
                         (o) => DropdownMenuItem(
                           value: o,
-                          enabled:
-                              o == WindowsOrientation.portrait ||
-                              (_windowsCapabilities?.supportsLandscape ??
-                                  true), // Only enable landscape if supported
                           child: Text(
                             o.name[0].toUpperCase() + o.name.substring(1),
                           ),
