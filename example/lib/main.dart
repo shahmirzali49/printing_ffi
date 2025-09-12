@@ -738,13 +738,139 @@ class _PrintingScreenState extends State<PrintingScreen> {
   }
 
   Widget _buildPlatformSettings() {
+    final List<Widget> windowsChildren = [];
+    if (Platform.isWindows) {
+      if (_isLoadingWindowsCaps) {
+        windowsChildren.add(const Center(child: CircularProgressIndicator()));
+      } else if (_windowsCapabilities != null) {
+        windowsChildren.addAll([
+          DropdownButtonFormField<WindowsPaperSize>(
+            initialValue: _selectedPaperSize,
+            decoration: const InputDecoration(
+              labelText: 'Paper Size (Windows)',
+              border: OutlineInputBorder(),
+            ),
+            items: _windowsCapabilities!.paperSizes
+                .map(
+                  (p) => DropdownMenuItem(value: p, child: Text(p.name)),
+                )
+                .toList(),
+            onChanged: (p) => setState(() => _selectedPaperSize = p),
+          ),
+          DropdownButtonFormField<WindowsPaperSource>(
+            initialValue: _selectedPaperSource,
+            decoration: const InputDecoration(
+              labelText: 'Paper Source (Windows)',
+              border: OutlineInputBorder(),
+            ),
+            items: _windowsCapabilities!.paperSources
+                .map(
+                  (s) => DropdownMenuItem(value: s, child: Text(s.name)),
+                )
+                .toList(),
+            onChanged: (s) => setState(() => _selectedPaperSource = s),
+          ),
+          DropdownButtonFormField<PdfPrintAlignment>(
+            initialValue: _selectedAlignment,
+            decoration: const InputDecoration(
+              labelText: 'Alignment (Windows)',
+              border: OutlineInputBorder(),
+            ),
+            items: PdfPrintAlignment.values
+                .map(
+                  (a) => DropdownMenuItem(
+                    value: a,
+                    child: Text(a.name[0].toUpperCase() + a.name.substring(1)),
+                  ),
+                )
+                .toList(),
+            onChanged: (a) =>
+                setState(() => _selectedAlignment = a ?? PdfPrintAlignment.center),
+          ),
+        ]);
+      }
+    }
+
+    final List<Widget> allChildren = [
+      ...windowsChildren,
+      DropdownButtonFormField<PrintQuality>(
+        initialValue: _selectedPrintQuality,
+        decoration: const InputDecoration(
+          labelText: 'Print Quality',
+          border: OutlineInputBorder(),
+        ),
+        items: PrintQuality.values
+            .map(
+              (q) => DropdownMenuItem(
+                value: q,
+                child: Text(
+                  q.name[0].toUpperCase() + q.name.substring(1),
+                ),
+              ),
+            )
+            .toList(),
+        onChanged: (q) => setState(
+          () => _selectedPrintQuality = q ?? PrintQuality.normal,
+        ),
+      ),
+      Tooltip(
+        message:
+            'Options may be disabled if the printer does not report support. If capabilities are unknown, all options are enabled.',
+        child: DropdownButtonFormField<ColorMode>(
+          initialValue: _selectedColorMode,
+          decoration: const InputDecoration(
+            labelText: 'Color Mode',
+            border: OutlineInputBorder(),
+          ),
+          items: ColorMode.values
+              .map(
+                (c) => DropdownMenuItem(
+                  value: c,
+                  enabled: (c == ColorMode.color &&
+                          (_windowsCapabilities?.isColorSupported ?? true)) ||
+                      (c == ColorMode.monochrome &&
+                          (_windowsCapabilities?.isMonochromeSupported ?? true)),
+                  child: Text(
+                    c.name[0].toUpperCase() + c.name.substring(1),
+                  ),
+                ),
+              )
+              .toList(),
+          onChanged: (c) =>
+              setState(() => _selectedColorMode = c ?? ColorMode.color),
+        ),
+      ),
+      Tooltip(
+        message:
+            'Options may be disabled if the printer does not report support. If capabilities are unknown, all options are enabled.',
+        child: DropdownButtonFormField<WindowsOrientation>(
+          initialValue: _selectedOrientation,
+          decoration: const InputDecoration(
+            labelText: 'Orientation',
+            border: OutlineInputBorder(),
+          ),
+          items: WindowsOrientation.values
+              .map(
+                (o) => DropdownMenuItem(
+                  value: o,
+                  child: Text(
+                    o.name[0].toUpperCase() + o.name.substring(1),
+                  ),
+                ),
+              )
+              .toList(),
+          onChanged: (o) => setState(
+            () => _selectedOrientation = o ?? WindowsOrientation.portrait,
+          ),
+        ),
+      ),
+    ];
+
     return Padding(
       padding: const EdgeInsets.only(top: 16.0),
       child: Card(
         elevation: 1,
-        color: Theme.of(
-          context,
-        ).colorScheme.secondaryContainer.withOpacityx(0.3),
+        color: Theme.of(context).colorScheme.secondaryContainer.withOpacityx(0.3),
         child: Padding(
           padding: const EdgeInsets.all(16.0),
           child: Column(
@@ -755,162 +881,17 @@ class _PrintingScreenState extends State<PrintingScreen> {
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const SizedBox(height: 12),
-              Wrap(
-                spacing: 12,
-                runSpacing: 12,
-                children: [
-                  if (Platform.isWindows) ...[
-                    if (_isLoadingWindowsCaps)
-                      const Center(child: CircularProgressIndicator())
-                    else if (_windowsCapabilities != null) ...[
-                      SizedBox(
-                        width: 200,
-                        child: DropdownButtonFormField<WindowsPaperSize>(
-                          initialValue: _selectedPaperSize,
-                          decoration: const InputDecoration(
-                            labelText: 'Paper Size (Windows)',
-                            border: OutlineInputBorder(),
-                          ),
-                          items: _windowsCapabilities!.paperSizes
-                              .map(
-                                (p) => DropdownMenuItem(
-                                  value: p,
-                                  child: Text(p.name),
-                                ),
-                              )
-                              .toList(),
-                          onChanged: (p) =>
-                              setState(() => _selectedPaperSize = p),
-                        ),
-                      ),
-                      SizedBox(
-                        width: 200,
-                        child: DropdownButtonFormField<WindowsPaperSource>(
-                          initialValue: _selectedPaperSource,
-                          decoration: const InputDecoration(
-                            labelText: 'Paper Source (Windows)',
-                            border: OutlineInputBorder(),
-                          ),
-                          items: _windowsCapabilities!.paperSources
-                              .map(
-                                (s) => DropdownMenuItem(
-                                  value: s,
-                                  child: Text(s.name),
-                                ),
-                              )
-                              .toList(),
-                          onChanged: (s) =>
-                              setState(() => _selectedPaperSource = s),
-                        ),
-                      ),
-                      SizedBox(
-                        width: 200,
-                        child: DropdownButtonFormField<PdfPrintAlignment>(
-                          initialValue: _selectedAlignment,
-                          decoration: const InputDecoration(
-                            labelText: 'Alignment (Windows)',
-                            border: OutlineInputBorder(),
-                          ),
-                          items: PdfPrintAlignment.values
-                              .map(
-                                (a) => DropdownMenuItem(
-                                  value: a,
-                                  child: Text(a.name[0].toUpperCase() +
-                                      a.name.substring(1)),
-                                ),
-                              )
-                              .toList(),
-                          onChanged: (a) => setState(() =>
-                              _selectedAlignment = a ?? PdfPrintAlignment.center),
-                        ),
-                      ),
-                    ],
-                  ],
-                  SizedBox(
-                    width: 200,
-                    child: DropdownButtonFormField<PrintQuality>(
-                      initialValue: _selectedPrintQuality,
-                      decoration: const InputDecoration(
-                        labelText: 'Print Quality',
-                        border: OutlineInputBorder(),
-                      ),
-                      items: PrintQuality.values
-                          .map(
-                            (q) => DropdownMenuItem(
-                              value: q,
-                              child: Text(
-                                q.name[0].toUpperCase() + q.name.substring(1),
-                              ),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: (q) => setState(
-                        () => _selectedPrintQuality = q ?? PrintQuality.normal,
-                      ),
-                    ),
-                  ),
-                  SizedBox(
-                    width: 200,
-                    child: Tooltip(
-                      message:
-                          'Options may be disabled if the printer does not report support. If capabilities are unknown, all options are enabled.',
-                      child: DropdownButtonFormField<ColorMode>(
-                        initialValue: _selectedColorMode,
-                        decoration: const InputDecoration(
-                          labelText: 'Color Mode',
-                          border: OutlineInputBorder(),
-                        ),
-                        items: ColorMode.values
-                            .map(
-                              (c) => DropdownMenuItem(
-                                value: c,
-                                enabled: (c == ColorMode.color &&
-                                        (_windowsCapabilities?.isColorSupported ??
-                                            true)) ||
-                                    (c == ColorMode.monochrome &&
-                                        (_windowsCapabilities
-                                                ?.isMonochromeSupported ??
-                                            true)),
-                                child: Text(
-                                  c.name[0].toUpperCase() + c.name.substring(1),
-                                ),
-                              ),
-                            )
-                            .toList(),
-                        onChanged: (c) => setState(
-                            () => _selectedColorMode = c ?? ColorMode.color),
-                      ),
-                    ),
-                  ),
-                  SizedBox(
-                    width: 200,
-                    child: Tooltip(
-                      message:
-                          'Options may be disabled if the printer does not report support. If capabilities are unknown, all options are enabled.',
-                      child: DropdownButtonFormField<WindowsOrientation>(
-                        initialValue: _selectedOrientation,
-                        decoration: const InputDecoration(
-                          labelText: 'Orientation',
-                          border: OutlineInputBorder(),
-                        ),
-                        items: WindowsOrientation.values
-                            .map(
-                              (o) => DropdownMenuItem(
-                                value: o,
-                                child: Text(
-                                  o.name[0].toUpperCase() + o.name.substring(1),
-                                ),
-                              ),
-                            )
-                            .toList(),
-                        onChanged: (o) => setState(
-                          () => _selectedOrientation =
-                              o ?? WindowsOrientation.portrait,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
+              GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                  maxCrossAxisExtent: 220,
+                  childAspectRatio: 3,
+                  crossAxisSpacing: 12,
+                  mainAxisSpacing: 12,
+                ),
+                itemCount: allChildren.length,
+                itemBuilder: (context, index) => allChildren[index],
               ),
               const SizedBox(height: 16),
               Center(
