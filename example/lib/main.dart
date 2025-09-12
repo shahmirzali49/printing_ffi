@@ -745,6 +745,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
       } else if (_windowsCapabilities != null) {
         windowsChildren.addAll([
           DropdownButtonFormField<WindowsPaperSize>(
+            isExpanded: true,
             initialValue: _selectedPaperSize,
             decoration: const InputDecoration(
               labelText: 'Paper Size (Windows)',
@@ -752,12 +753,16 @@ class _PrintingScreenState extends State<PrintingScreen> {
             ),
             items: _windowsCapabilities!.paperSizes
                 .map(
-                  (p) => DropdownMenuItem(value: p, child: Text(p.name)),
+                  (p) => DropdownMenuItem(
+                    value: p,
+                    child: Text(p.name, overflow: TextOverflow.ellipsis),
+                  ),
                 )
                 .toList(),
             onChanged: (p) => setState(() => _selectedPaperSize = p),
           ),
           DropdownButtonFormField<WindowsPaperSource>(
+            isExpanded: true,
             initialValue: _selectedPaperSource,
             decoration: const InputDecoration(
               labelText: 'Paper Source (Windows)',
@@ -765,7 +770,10 @@ class _PrintingScreenState extends State<PrintingScreen> {
             ),
             items: _windowsCapabilities!.paperSources
                 .map(
-                  (s) => DropdownMenuItem(value: s, child: Text(s.name)),
+                  (s) => DropdownMenuItem(
+                    value: s,
+                    child: Text(s.name, overflow: TextOverflow.ellipsis),
+                  ),
                 )
                 .toList(),
             onChanged: (s) => setState(() => _selectedPaperSource = s),
