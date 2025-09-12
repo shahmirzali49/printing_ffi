@@ -749,8 +749,8 @@ Future<bool> rawDataToPrinter(
 ///   The native layer will still validate the range against the PDF's page count,
 ///   which may cause the print to fail if the range is out of bounds.
 /// - [options]: A list of [PrintOption] objects to configure the print job.
-///   This can include settings like paper size, orientation, color mode,
-///   and alignment (e.g., using [AlignmentOption(PdfPrintAlignment.topLeft)]).
+///   This can include settings like paper size, orientation, and color mode.
+///   On Windows, alignment can also be configured (e.g., using [AlignmentOption(PdfPrintAlignment.topLeft)]).
 Future<bool> printPdf(
   String printerName,
   String pdfFilePath, {

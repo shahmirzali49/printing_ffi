@@ -60,6 +60,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
   WindowsOrientation _selectedOrientation = WindowsOrientation.portrait;
   ColorMode _selectedColorMode = ColorMode.color;
   PrintQuality _selectedPrintQuality = PrintQuality.normal;
+  PdfPrintAlignment _selectedAlignment = PdfPrintAlignment.center;
 
   bool _isLoadingPrinters = false;
   bool _isLoadingJobs = false;
@@ -228,6 +229,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
       if (_selectedPaperSource != null) {
         options.add(WindowsPaperSourceOption(_selectedPaperSource!.id));
       }
+      options.add(AlignmentOption(_selectedAlignment));
     }
     options.add(OrientationOption(_selectedOrientation));
     options.add(ColorModeOption(_selectedColorMode));
@@ -787,6 +789,22 @@ class _PrintingScreenState extends State<PrintingScreen> {
                     onChanged: (s) => setState(() => _selectedPaperSource = s),
                   ),
                   const SizedBox(height: 12),
+                  DropdownButtonFormField<PdfPrintAlignment>(
+                    initialValue: _selectedAlignment,
+                    decoration: const InputDecoration(
+                      labelText: 'Alignment (Windows)',
+                      border: OutlineInputBorder(),
+                    ),
+                    items: PdfPrintAlignment.values
+                        .map(
+                          (a) => DropdownMenuItem(
+                            value: a,
+                            child: Text(a.name[0].toUpperCase() + a.name.substring(1)),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (a) => setState(() => _selectedAlignment = a ?? PdfPrintAlignment.center),
+                  ),
                 ],
               ],
               DropdownButtonFormField<PrintQuality>(
