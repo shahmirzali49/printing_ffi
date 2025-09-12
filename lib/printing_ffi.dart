@@ -132,6 +132,9 @@ enum PdfPrintScaling {
 
   /// Print the page at its actual size (100% scale), centered on the paper.
   actualSize,
+
+  /// Shrink the page to fit the printable area if it's larger, otherwise print at actual size.
+  shrinkToFit,
 }
 
 /// Defines the orientation for printing on Windows.
@@ -755,7 +758,7 @@ Future<bool> printPdf(
   String printerName,
   String pdfFilePath, {
   String docName = 'Flutter PDF Document',
-  PdfPrintScaling scaling = PdfPrintScaling.fitPage,
+  PdfPrintScaling scaling = PdfPrintScaling.shrinkToFit,
   int? copies,
   PageRange? pageRange,
   List<PrintOption> options = const [],
@@ -824,7 +827,7 @@ Stream<PrintJob> printPdfAndStreamStatus(
   String printerName,
   String pdfFilePath, {
   String docName = 'Flutter PDF Document',
-  PdfPrintScaling scaling = PdfPrintScaling.fitPage,
+  PdfPrintScaling scaling = PdfPrintScaling.shrinkToFit,
   int? copies,
   PageRange? pageRange,
   List<PrintOption> options = const [],
@@ -1138,7 +1141,7 @@ Future<int> _sendPdfJobRequest(
   String printerName,
   String pdfFilePath, {
   String docName = 'Flutter PDF Document',
-  PdfPrintScaling scaling = PdfPrintScaling.fitPage,
+  PdfPrintScaling scaling = PdfPrintScaling.shrinkToFit,
   int? copies,
   PageRange? pageRange,
   Map<String, String> options = const {},

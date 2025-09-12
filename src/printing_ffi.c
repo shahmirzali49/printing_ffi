@@ -704,7 +704,7 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
         return 0;
     }
 
-    // --- Alignment --- 
+    // --- Alignment ---
     double align_x_factor = 0.5; // Default to center
     double align_y_factor = 0.5; // Default to center
 
@@ -804,9 +804,26 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
                     dest_height = printable_height;
                     dest_width = (int)(printable_height * page_aspect);
                 }
-            } else { // Actual Size
+            } else if (scaling_mode == 1) { // Actual Size
                 dest_width = width;
                 dest_height = height;
+            } else if (scaling_mode == 2) { // Shrink to Fit
+                // If the PDF page is larger than the printable area, scale down to fit.
+                // Otherwise, print at actual size.
+                if (width > printable_width || height > printable_height) {
+                    float page_aspect = (float)width / (float)height;
+                    float printable_aspect = (float)printable_width / (float)printable_height;
+                    if (page_aspect > printable_aspect) {
+                        dest_width = printable_width;
+                        dest_height = (int)(printable_width / page_aspect);
+                    } else {
+                        dest_height = printable_height;
+                        dest_width = (int)(printable_height * page_aspect);
+                    }
+                } else {
+                    dest_width = width;
+                    dest_height = height;
+                }
             }
 
             dest_x = (int)((printable_width - dest_width) * align_x_factor);
@@ -1381,7 +1398,7 @@ FFI_PLUGIN_EXPORT WindowsPrinterCapabilities* get_windows_printer_capabilities(c
     // Get PRINTER_INFO_2 to find the port name required by DeviceCapabilities
     DWORD needed = 0;
     GetPrinterW(hPrinter, 2, NULL, 0, &needed);
-    if (needed == 0) { 
+    if (needed == 0) {
         LOG("GetPrinterW (to get size) failed with error %lu", GetLastError());
         // We can still return the basic caps from DEVMODE
         free(pDevMode);
