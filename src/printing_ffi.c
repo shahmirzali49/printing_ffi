@@ -709,11 +709,26 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
     double align_y_factor = 0.5; // Default to center
 
     if (alignment) {
-        if (strstr(alignment, "left")) align_x_factor = 0.0;
-        else if (strstr(alignment, "right")) align_x_factor = 1.0;
+        char* alignment_lower = strdup(alignment);
+        if (alignment_lower) {
+            for (int i = 0; alignment_lower[i]; i++) {
+                alignment_lower[i] = tolower(alignment_lower[i]);
+            }
 
-        if (strstr(alignment, "top")) align_y_factor = 0.0;
-        else if (strstr(alignment, "bottom")) align_y_factor = 1.0;
+            if (strstr(alignment_lower, "left")) {
+                align_x_factor = 0.0;
+            } else if (strstr(alignment_lower, "right")) {
+                align_x_factor = 1.0;
+            }
+
+            if (strstr(alignment_lower, "top")) {
+                align_y_factor = 0.0;
+            } else if (strstr(alignment_lower, "bottom")) {
+                align_y_factor = 1.0;
+            }
+
+            free(alignment_lower);
+        }
     }
 
     bool success = true;
