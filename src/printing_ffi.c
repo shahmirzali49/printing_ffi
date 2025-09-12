@@ -1287,81 +1287,119 @@ FFI_PLUGIN_EXPORT void free_cups_option_list(CupsOptionList* option_list) {
 FFI_PLUGIN_EXPORT WindowsPrinterCapabilities* get_windows_printer_capabilities(const char* printer_name) {
     if (!printer_name) {
         LOG("get_windows_printer_capabilities called with null printer name");
-        WindowsPrinterCapabilities* caps = (WindowsPrinterCapabilities*)calloc(1, sizeof(WindowsPrinterCapabilities));
-        return caps;
+        return (WindowsPrinterCapabilities*)calloc(1, sizeof(WindowsPrinterCapabilities));
     }
 
     LOG("get_windows_printer_capabilities called for printer: '%s'", printer_name);
 #ifndef _WIN32
-    // This function is only for Windows. Return an empty struct.
-    WindowsPrinterCapabilities* caps = (WindowsPrinterCapabilities*)calloc(1, sizeof(WindowsPrinterCapabilities));
-    return caps;
+    return (WindowsPrinterCapabilities*)calloc(1, sizeof(WindowsPrinterCapabilities));
 #else
     wchar_t* printer_name_w = to_utf16(printer_name);
     if (!printer_name_w) {
         LOG("Failed to convert printer name to UTF-16");
-        return NULL;
+        return (WindowsPrinterCapabilities*)calloc(1, sizeof(WindowsPrinterCapabilities));
     }
 
     HANDLE hPrinter;
     if (!OpenPrinterW(printer_name_w, &hPrinter, NULL)) {
         LOG("OpenPrinterW failed with error %lu", GetLastError());
         free(printer_name_w);
+        return (WindowsPrinterCapabilities*)calloc(1, sizeof(WindowsPrinterCapabilities));
+    }
+
+    // First, get the size of the DEVMODE structure.
+    LONG devModeSize = DocumentPropertiesW(NULL, hPrinter, printer_name_w, NULL, NULL, 0);
+    if (devModeSize <= 0) {
+        LOG("DocumentProperties (get size) failed with error %lu", GetLastError());
+        ClosePrinter(hPrinter);
+        free(printer_name_w);
+        return (WindowsPrinterCapabilities*)calloc(1, sizeof(WindowsPrinterCapabilities));
+    }
+
+    DEVMODEW* pDevMode = (DEVMODEW*)malloc(devModeSize);
+    if (!pDevMode) {
+        LOG("Failed to allocate memory for DEVMODE structure.");
+        ClosePrinter(hPrinter);
+        free(printer_name_w);
+        return (WindowsPrinterCapabilities*)calloc(1, sizeof(WindowsPrinterCapabilities));
+    }
+
+    // Get the default DEVMODE for the printer.
+    if (DocumentPropertiesW(NULL, hPrinter, printer_name_w, pDevMode, NULL, DM_OUT_BUFFER) != IDOK) {
+        LOG("DocumentProperties (get defaults) failed with error %lu", GetLastError());
+        free(pDevMode);
+        ClosePrinter(hPrinter);
+        free(printer_name_w);
+        return (WindowsPrinterCapabilities*)calloc(1, sizeof(WindowsPrinterCapabilities));
+    }
+
+    WindowsPrinterCapabilities* caps = (WindowsPrinterCapabilities*)calloc(1, sizeof(WindowsPrinterCapabilities));
+    if (!caps) {
+        free(pDevMode);
+        ClosePrinter(hPrinter);
+        free(printer_name_w);
         return NULL;
+    }
+
+    // --- Check DEVMODE fields for supported features ---
+    caps->supports_landscape = (pDevMode->dmFields & DM_ORIENTATION) != 0;
+    if (pDevMode->dmFields & DM_COLOR) {
+        if (pDevMode->dmColor == DMCOLOR_COLOR) {
+            caps->is_color_supported = true;
+            caps->is_monochrome_supported = true; // Color printers can always print monochrome
+        } else {
+            caps->is_color_supported = false;
+            caps->is_monochrome_supported = true;
+        }
+    } else {
+        // If the DM_COLOR field is not supported, we can assume monochrome.
+        caps->is_color_supported = false;
+        caps->is_monochrome_supported = true;
     }
 
     // Get PRINTER_INFO_2 to find the port name required by DeviceCapabilities
     DWORD needed = 0;
     GetPrinterW(hPrinter, 2, NULL, 0, &needed);
-    if (needed == 0) { // Check if GetPrinterW failed to get needed size
+    if (needed == 0) { 
         LOG("GetPrinterW (to get size) failed with error %lu", GetLastError());
+        // We can still return the basic caps from DEVMODE
+        free(pDevMode);
         ClosePrinter(hPrinter);
         free(printer_name_w);
-        return NULL;
+        return caps;
     }
     PRINTER_INFO_2W* pinfo2 = (PRINTER_INFO_2W*)malloc(needed);
     if (!pinfo2) {
         LOG("Failed to allocate memory for PRINTER_INFO_2W");
+        free(pDevMode);
         ClosePrinter(hPrinter);
         free(printer_name_w);
-        return NULL;
+        return caps; // Return what we have
     }
     if (!GetPrinterW(hPrinter, 2, (LPBYTE)pinfo2, needed, &needed)) {
         LOG("GetPrinterW failed with error %lu", GetLastError());
         free(pinfo2);
+        free(pDevMode);
         ClosePrinter(hPrinter);
         free(printer_name_w);
-        return NULL;
+        return caps; // Return what we have
     }
 
     const wchar_t* port_w = pinfo2->pPortName;
     if (!port_w) {
-        LOG("pPortName is NULL for printer '%s'. Cannot get capabilities.", printer_name);
-        free(pinfo2);
-        ClosePrinter(hPrinter);
-        free(printer_name_w);
-        return (WindowsPrinterCapabilities*)calloc(1, sizeof(WindowsPrinterCapabilities)); // Return empty capabilities struct
-    }
+        LOG("pPortName is NULL for printer '%s'. Cannot get extended capabilities.", printer_name);
+    } else {
+        // --- Get Paper Sizes ---
+        long num_papers = DeviceCapabilitiesW(printer_name_w, port_w, DC_PAPERS, NULL, NULL);
+        if (num_papers > 0) {
+            WORD* papers = (WORD*)malloc(num_papers * sizeof(WORD));
+            wchar_t (*paper_names_w)[64] = (wchar_t(*)[64])malloc(num_papers * 64 * sizeof(wchar_t));
+            POINT* paper_sizes_points = (POINT*)malloc(num_papers * sizeof(POINT));
 
-    WindowsPrinterCapabilities* caps = (WindowsPrinterCapabilities*)calloc(1, sizeof(WindowsPrinterCapabilities));
-    if (!caps) {
-        free(pinfo2);
-        ClosePrinter(hPrinter);
-        free(printer_name_w);
-        return NULL;
-    }
-
-    // --- Get Paper Sizes ---
-    long num_papers = DeviceCapabilitiesW(printer_name_w, port_w, DC_PAPERS, NULL, NULL);
-    if (num_papers > 0) {
-        WORD* papers = (WORD*)malloc(num_papers * sizeof(WORD));
-        wchar_t (*paper_names_w)[64] = (wchar_t(*)[64])malloc(num_papers * 64 * sizeof(wchar_t));
-        POINT* paper_sizes_points = (POINT*)malloc(num_papers * sizeof(POINT));
-
-        if (papers && paper_names_w && paper_sizes_points) {
-            if (DeviceCapabilitiesW(printer_name_w, port_w, DC_PAPERS, (LPWSTR)papers, NULL) != -1 &&
-                DeviceCapabilitiesW(printer_name_w, port_w, DC_PAPERNAMES, (LPWSTR)paper_names_w, NULL) != -1 &&
-                DeviceCapabilitiesW(printer_name_w, port_w, DC_PAPERSIZE, (LPWSTR)paper_sizes_points, NULL) != -1) {
+            if (papers && paper_names_w && paper_sizes_points) {
+                DeviceCapabilitiesW(printer_name_w, port_w, DC_PAPERS, (LPWSTR)papers, NULL);
+                DeviceCapabilitiesW(printer_name_w, port_w, DC_PAPERNAMES, (LPWSTR)paper_names_w, NULL);
+                DeviceCapabilitiesW(printer_name_w, port_w, DC_PAPERSIZE, (LPWSTR)paper_sizes_points, NULL);
 
                 caps->paper_sizes.count = (int)num_papers;
                 caps->paper_sizes.papers = (PaperSize*)malloc(num_papers * sizeof(PaperSize));
@@ -1369,32 +1407,25 @@ FFI_PLUGIN_EXPORT WindowsPrinterCapabilities* get_windows_printer_capabilities(c
                     for (long i = 0; i < num_papers; i++) {
                         caps->paper_sizes.papers[i].id = papers[i];
                         caps->paper_sizes.papers[i].name = to_utf8(paper_names_w[i]);
-                        // Dimensions are in 0.1mm units. Convert to mm.
                         caps->paper_sizes.papers[i].width_mm = (float)paper_sizes_points[i].x / 10.0f;
                         caps->paper_sizes.papers[i].height_mm = (float)paper_sizes_points[i].y / 10.0f;
                     }
-                } else {
-                    caps->paper_sizes.count = 0;
-                    LOG("Failed to allocate memory for paper size details.");
                 }
             }
-        } else {
-            LOG("Failed to allocate memory for paper capabilities buffers.");
+            if (papers) free(papers);
+            if (paper_names_w) free(paper_names_w);
+            if (paper_sizes_points) free(paper_sizes_points);
         }
-        if (papers) free(papers);
-        if (paper_names_w) free(paper_names_w);
-        if (paper_sizes_points) free(paper_sizes_points);
-    }
 
-    // --- Get Paper Bins (Sources) ---
-    long num_bins = DeviceCapabilitiesW(printer_name_w, port_w, DC_BINS, NULL, NULL);
-    if (num_bins > 0) {
-        WORD* bins = (WORD*)malloc(num_bins * sizeof(WORD));
-        wchar_t (*bin_names_w)[24] = (wchar_t(*)[24])malloc(num_bins * 24 * sizeof(wchar_t));
+        // --- Get Paper Bins (Sources) ---
+        long num_bins = DeviceCapabilitiesW(printer_name_w, port_w, DC_BINS, NULL, NULL);
+        if (num_bins > 0) {
+            WORD* bins = (WORD*)malloc(num_bins * sizeof(WORD));
+            wchar_t (*bin_names_w)[24] = (wchar_t(*)[24])malloc(num_bins * 24 * sizeof(wchar_t));
 
-        if (bins && bin_names_w) {
-            if (DeviceCapabilitiesW(printer_name_w, port_w, DC_BINS, (LPWSTR)bins, NULL) != -1 &&
-                DeviceCapabilitiesW(printer_name_w, port_w, DC_BINNAMES, (LPWSTR)bin_names_w, NULL) != -1) {
+            if (bins && bin_names_w) {
+                DeviceCapabilitiesW(printer_name_w, port_w, DC_BINS, (LPWSTR)bins, NULL);
+                DeviceCapabilitiesW(printer_name_w, port_w, DC_BINNAMES, (LPWSTR)bin_names_w, NULL);
 
                 caps->paper_sources.count = (int)num_bins;
                 caps->paper_sources.sources = (PaperSource*)malloc(num_bins * sizeof(PaperSource));
@@ -1403,72 +1434,15 @@ FFI_PLUGIN_EXPORT WindowsPrinterCapabilities* get_windows_printer_capabilities(c
                         caps->paper_sources.sources[i].id = bins[i];
                         caps->paper_sources.sources[i].name = to_utf8(bin_names_w[i]);
                     }
-                } else {
-                    caps->paper_sources.count = 0;
-                    LOG("Failed to allocate memory for paper source details.");
                 }
             }
-        } else {
-            LOG("Failed to allocate memory for paper source buffers.");
-        }
-        if (bins) free(bins);
-        if (bin_names_w) free(bin_names_w);
-    }
-
-    // --- Get Media Types ---
-    long num_media_types = DeviceCapabilitiesW(printer_name_w, port_w, DC_MEDIATYPES, NULL, NULL);
-    if (num_media_types > 0) {
-        DWORD* media_type_ids = (DWORD*)malloc(num_media_types * sizeof(DWORD));
-        wchar_t (*media_type_names_w)[64] = (wchar_t(*)[64])malloc(num_media_types * 64 * sizeof(wchar_t));
-
-        if (media_type_ids && media_type_names_w) {
-            if (DeviceCapabilitiesW(printer_name_w, port_w, DC_MEDIATYPES, (LPWSTR)media_type_ids, NULL) != -1 &&
-                DeviceCapabilitiesW(printer_name_w, port_w, DC_MEDIATYPENAMES, (LPWSTR)media_type_names_w, NULL) != -1) {
-
-                caps->media_types.count = (int)num_media_types;
-                caps->media_types.types = (MediaType*)malloc(num_media_types * sizeof(MediaType));
-                if (caps->media_types.types) {
-                    for (long i = 0; i < num_media_types; i++) {
-                        caps->media_types.types[i].id = (short)media_type_ids[i];
-                        caps->media_types.types[i].name = to_utf8(media_type_names_w[i]);
-                    }
-                } else {
-                    caps->media_types.count = 0;
-                    LOG("Failed to allocate memory for media type details.");
-                }
-            }
-        } else {
-            LOG("Failed to allocate memory for media type buffers.");
-        }
-        if (media_type_ids) free(media_type_ids);
-        if (media_type_names_w) free(media_type_names_w);
-    }
-
-    // --- Get Resolutions ---
-    long num_res = DeviceCapabilitiesW(printer_name_w, port_w, DC_ENUMRESOLUTIONS, NULL, NULL);
-    if (num_res > 0) {
-        LONG* resolutions = (LONG*)malloc(num_res * 2 * sizeof(LONG));
-        if (resolutions) {
-            if (DeviceCapabilitiesW(printer_name_w, port_w, DC_ENUMRESOLUTIONS, (LPWSTR)resolutions, NULL) != -1) {
-                caps->resolutions.count = (int)num_res;
-                caps->resolutions.resolutions = (Resolution*)malloc(num_res * sizeof(Resolution));
-                if (caps->resolutions.resolutions) {
-                    for (long i = 0; i < num_res; i++) {
-                        caps->resolutions.resolutions[i].x_dpi = resolutions[i * 2];
-                        caps->resolutions.resolutions[i].y_dpi = resolutions[i * 2 + 1];
-                    }
-                } else {
-                    caps->resolutions.count = 0;
-                    LOG("Failed to allocate memory for resolution details.");
-                }
-            }
-            free(resolutions);
-        } else {
-            LOG("Failed to allocate memory for resolutions buffer.");
+            if (bins) free(bins);
+            if (bin_names_w) free(bin_names_w);
         }
     }
 
     free(pinfo2);
+    free(pDevMode);
     ClosePrinter(hPrinter);
     free(printer_name_w);
     return caps;
