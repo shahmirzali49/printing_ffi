@@ -609,98 +609,106 @@ class _PrintingScreenState extends State<PrintingScreen> {
               'Standard Actions',
               style: Theme.of(context).textTheme.titleLarge,
             ),
-            _buildPlatformSettings(),
             const SizedBox(height: 16),
-            Center(
-              child: Column(
-                children: [
-                  if (Platform.isWindows) ...[
-                    SegmentedButton<PdfPrintScaling>(
-                      segments: const [
-                        ButtonSegment(
-                          value: PdfPrintScaling.fitPage,
-                          label: Text('Fit to Page'),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: _buildPlatformSettings(),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    children: [
+                      if (Platform.isWindows) ...[
+                        SegmentedButton<PdfPrintScaling>(
+                          segments: const [
+                            ButtonSegment(
+                              value: PdfPrintScaling.fitPage,
+                              label: Text('Fit to Page'),
+                            ),
+                            ButtonSegment(
+                              value: PdfPrintScaling.actualSize,
+                              label: Text('Actual Size'),
+                            ),
+                          ],
+                          selected: {_selectedScaling},
+                          onSelectionChanged: (newSelection) {
+                            setState(() {
+                              _selectedScaling = newSelection.first;
+                            });
+                          },
                         ),
-                        ButtonSegment(
-                          value: PdfPrintScaling.actualSize,
-                          label: Text('Actual Size'),
-                        ),
+                        const SizedBox(height: 12),
                       ],
-                      selected: {_selectedScaling},
-                      onSelectionChanged: (newSelection) {
-                        setState(() {
-                          _selectedScaling = newSelection.first;
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                  ],
-                  ElevatedButton.icon(
-                    icon: const Icon(Icons.picture_as_pdf),
-                    label: const Text('Print a PDF File'),
-                    onPressed: () => _printPdf(
-                      scaling: _selectedScaling,
-                      copies: int.tryParse(_copiesController.text) ?? 1,
-                      pageRangeString: _pageRangeController.text,
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 24,
-                        vertical: 12,
+                      ElevatedButton.icon(
+                        icon: const Icon(Icons.picture_as_pdf),
+                        label: const Text('Print a PDF File'),
+                        onPressed: () => _printPdf(
+                          scaling: _selectedScaling,
+                          copies: int.tryParse(_copiesController.text) ?? 1,
+                          pageRangeString: _pageRangeController.text,
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 24,
+                            vertical: 12,
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: _copiesController,
-                            decoration: const InputDecoration(
-                              border: OutlineInputBorder(),
-                              labelText: 'Copies',
+                      const SizedBox(height: 12),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _copiesController,
+                                decoration: const InputDecoration(
+                                  border: OutlineInputBorder(),
+                                  labelText: 'Copies',
+                                ),
+                                keyboardType: TextInputType.number,
+                              ),
                             ),
-                            keyboardType: TextInputType.number,
-                          ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              flex: 2,
+                              child: TextField(
+                                controller: _pageRangeController,
+                                decoration: const InputDecoration(
+                                  border: OutlineInputBorder(),
+                                  labelText: 'Page Range',
+                                  hintText: 'e.g. 1-3, 5, 7-9',
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          flex: 2,
-                          child: TextField(
-                            controller: _pageRangeController,
-                            decoration: const InputDecoration(
-                              border: OutlineInputBorder(),
-                              labelText: 'Page Range',
-                              hintText: 'e.g. 1-3, 5, 7-9',
-                            ),
-                          ),
+                      ),
+                      const SizedBox(height: 4),
+                      const Text(
+                        'Leave page range blank to print all pages.',
+                        style: TextStyle(fontSize: 12, color: Colors.grey),
+                      ),
+                      const SizedBox(height: 12),
+                      ElevatedButton.icon(
+                        icon: const Icon(Icons.track_changes),
+                        label: const Text('Print PDF and Track Status'),
+                        onPressed: _printPdfAndTrack,
+                      ),
+                      if (Platform.isWindows) ...[
+                        const SizedBox(height: 12),
+                        ElevatedButton.icon(
+                          icon: const Icon(Icons.inventory_2_outlined),
+                          label: const Text('Show Printer Capabilities'),
+                          onPressed: _showWindowsCapabilities,
                         ),
                       ],
-                    ),
+                    ],
                   ),
-                  const SizedBox(height: 4),
-                  const Text(
-                    'Leave page range blank to print all pages.',
-                    style: TextStyle(fontSize: 12, color: Colors.grey),
-                  ),
-                  const SizedBox(height: 12),
-                  ElevatedButton.icon(
-                    icon: const Icon(Icons.track_changes),
-                    label: const Text('Print PDF and Track Status'),
-                    onPressed: _printPdfAndTrack,
-                  ),
-                  if (Platform.isWindows) ...[
-                    const SizedBox(height: 12),
-                    ElevatedButton.icon(
-                      icon: const Icon(Icons.inventory_2_outlined),
-                      label: const Text('Show Printer Capabilities'),
-                      onPressed: _showWindowsCapabilities,
-                    ),
-                  ],
-                ],
-              ),
+                ),
+              ],
             ),
             const Divider(height: 32),
             Text(
