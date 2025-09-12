@@ -629,7 +629,7 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8
 #ifdef _WIN32
 // Common internal function for PDF printing on Windows.
 // Returns a job ID if `submit_job` is true, otherwise returns 1 for success or 0 for failure.
-static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file_path, const char* doc_name, int scaling_mode, int copies, const char* page_range, int num_options, const char** option_keys, const char** option_values, bool submit_job) {
+static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file_path, const char* doc_name, int scaling_mode, int copies, const char* page_range, const char* alignment, int num_options, const char** option_keys, const char** option_values, bool submit_job) {
     if (!s_pdfium_initialized) {
         FPDF_LIBRARY_CONFIG config;
         memset(&config, 0, sizeof(config));
@@ -704,6 +704,18 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
         return 0;
     }
 
+    // --- Alignment --- 
+    double align_x_factor = 0.5; // Default to center
+    double align_y_factor = 0.5; // Default to center
+
+    if (alignment) {
+        if (strstr(alignment, "left")) align_x_factor = 0.0;
+        else if (strstr(alignment, "right")) align_x_factor = 1.0;
+
+        if (strstr(alignment, "top")) align_y_factor = 0.0;
+        else if (strstr(alignment, "bottom")) align_y_factor = 1.0;
+    }
+
     bool success = true;
     for (int c = 0; c < copies && success; c++) {
         for (int i = 0; i < page_count && success; ++i) {
@@ -765,7 +777,7 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
 
             int printable_width = GetDeviceCaps(hdc, HORZRES);
             int printable_height = GetDeviceCaps(hdc, VERTRES);
-            int dest_x = 0, dest_y = 0, dest_width = width, dest_height = height;
+            int dest_x, dest_y, dest_width, dest_height;
 
             if (scaling_mode == 0) { // Fit Page
                 float page_aspect = (float)width / (float)height;
@@ -777,12 +789,13 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
                     dest_height = printable_height;
                     dest_width = (int)(printable_height * page_aspect);
                 }
-                dest_x = (printable_width - dest_width) / 2;
-                dest_y = (printable_height - dest_height) / 2;
             } else { // Actual Size
-                dest_x = (printable_width - dest_width) / 2;
-                dest_y = (printable_height - dest_height) / 2;
+                dest_width = width;
+                dest_height = height;
             }
+
+            dest_x = (int)((printable_width - dest_width) * align_x_factor);
+            dest_y = (int)((printable_height - dest_height) * align_y_factor);
 
             if (StretchDIBits(hdc, dest_x, dest_y, dest_width, dest_height, 0, 0, width, height, pBitmapData, &bmi, DIB_RGB_COLORS, SRCCOPY) == GDI_ERROR) {
                 LOG("StretchDIBits failed for page %d with error %lu", i, GetLastError());
@@ -822,7 +835,7 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
 }
 #endif
 
-FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_path, const char* doc_name, int scaling_mode, int copies, const char* page_range, int num_options, const char** option_keys, const char** option_values) {
+FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_path, const char* doc_name, int scaling_mode, int copies, const char* page_range, int num_options, const char** option_keys, const char** option_values, const char* alignment) {
     LOG("print_pdf called for printer: '%s', path: '%s', doc: '%s'", printer_name, pdf_file_path, doc_name);
 
     // Validate input parameters
@@ -832,7 +845,7 @@ FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_
     }
 
 #ifdef _WIN32
-    return _print_pdf_job_win(printer_name, pdf_file_path, doc_name, scaling_mode, copies, page_range, num_options, option_keys, option_values, false) == 1;
+    return _print_pdf_job_win(printer_name, pdf_file_path, doc_name, scaling_mode, copies, page_range, alignment, num_options, option_keys, option_values, false) == 1;
 #else // macOS / Linux (CUPS)
     cups_option_t* options = NULL;
     int num_cups_options = 0;
@@ -1590,7 +1603,7 @@ FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char* printer_name, const ui
 #endif
 }
 
-FFI_PLUGIN_EXPORT int32_t submit_pdf_job(const char* printer_name, const char* pdf_file_path, const char* doc_name, int scaling_mode, int copies, const char* page_range, int num_options, const char** option_keys, const char** option_values) {
+FFI_PLUGIN_EXPORT int32_t submit_pdf_job(const char* printer_name, const char* pdf_file_path, const char* doc_name, int scaling_mode, int copies, const char* page_range, int num_options, const char** option_keys, const char** option_values, const char* alignment) {
     LOG("submit_pdf_job called for printer: '%s', path: '%s', doc: '%s'", printer_name, pdf_file_path, doc_name);
 
     // Validate input parameters
@@ -1600,7 +1613,7 @@ FFI_PLUGIN_EXPORT int32_t submit_pdf_job(const char* printer_name, const char* p
     }
 
 #ifdef _WIN32
-    return _print_pdf_job_win(printer_name, pdf_file_path, doc_name, scaling_mode, copies, page_range, num_options, option_keys, option_values, true);
+    return _print_pdf_job_win(printer_name, pdf_file_path, doc_name, scaling_mode, copies, page_range, alignment, num_options, option_keys, option_values, true);
 #else // macOS / Linux (CUPS)
     cups_option_t* options = NULL;
     int num_cups_options = 0;

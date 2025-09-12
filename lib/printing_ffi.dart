@@ -155,6 +155,19 @@ enum ColorMode { monochrome, color }
 /// the driver's default medium quality.
 enum PrintQuality { draft, low, normal, high }
 
+/// Defines the alignment for PDF printing on Windows.
+enum PdfPrintAlignment {
+  center,
+  left,
+  right,
+  top,
+  bottom,
+  topLeft,
+  topRight,
+  bottomLeft,
+  bottomRight,
+}
+
 /// The result of opening the printer properties dialog.
 enum PrinterPropertiesResult {
   /// An error occurred, or the dialog could not be opened.
@@ -218,6 +231,12 @@ class GenericCupsOption extends PrintOption {
   final String name;
   final String value;
   const GenericCupsOption(this.name, this.value);
+}
+
+/// A Windows-specific option to set the alignment of the printed content.
+class AlignmentOption extends PrintOption {
+  final PdfPrintAlignment alignment;
+  const AlignmentOption(this.alignment);
 }
 
 class CupsOptionChoice {
@@ -459,6 +478,7 @@ class _PrintPdfRequest {
   final PdfPrintScaling scaling;
   final int copies;
   final PageRange? pageRange;
+  final String alignment;
 
   const _PrintPdfRequest(
     this.id,
@@ -469,6 +489,7 @@ class _PrintPdfRequest {
     this.scaling,
     this.copies,
     this.pageRange,
+    this.alignment,
   );
 }
 
@@ -504,6 +525,7 @@ class _SubmitPdfJobRequest {
   final PdfPrintScaling scaling;
   final int copies;
   final PageRange? pageRange;
+  final String alignment;
 
   const _SubmitPdfJobRequest(
     this.id,
@@ -514,6 +536,7 @@ class _SubmitPdfJobRequest {
     this.scaling,
     this.copies,
     this.pageRange,
+    this.alignment,
   );
 }
 
@@ -714,8 +737,7 @@ Future<bool> rawDataToPrinter(
 /// On Windows, this uses the bundled `pdfium` library to render the PDF and
 /// print it directly, offering robust and self-contained functionality.
 ///
-/// On macOS and Linux, CUPS handles PDF printing natively. You can pass
-/// CUPS-specific options via the [cupsOptions] map.
+/// On macOS and Linux, CUPS handles PDF printing natively.
 ///
 /// - [printerName]: The name of the target printer.
 /// - [pdfFilePath]: The local path to the PDF file.
@@ -726,7 +748,9 @@ Future<bool> rawDataToPrinter(
 ///   If `null`, all pages will be printed.
 ///   The native layer will still validate the range against the PDF's page count,
 ///   which may cause the print to fail if the range is out of bounds.
-/// - [options]: A list of [PrintOption] objects to configure the print job (e.g., paper size, orientation).
+/// - [options]: A list of [PrintOption] objects to configure the print job.
+///   This can include settings like paper size, orientation, color mode,
+///   and alignment (e.g., using [AlignmentOption(PdfPrintAlignment.topLeft)]).
 Future<bool> printPdf(
   String printerName,
   String pdfFilePath, {
@@ -739,6 +763,7 @@ Future<bool> printPdf(
   final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
   final int requestId = _nextPrintPdfRequestId++;
   final optionsMap = _buildOptions(options);
+  final alignment = optionsMap.remove('alignment') ?? 'center';
   final _PrintPdfRequest request = _PrintPdfRequest(
     requestId,
     printerName,
@@ -748,6 +773,7 @@ Future<bool> printPdf(
     scaling,
     copies ?? 1,
     pageRange,
+    alignment,
   );
   final Completer<bool> completer = Completer<bool>();
   _printPdfRequests[requestId] = completer;
@@ -807,15 +833,20 @@ Stream<PrintJob> printPdfAndStreamStatus(
   return _streamJobStatus(
     printerName: printerName,
     pollInterval: pollInterval,
-    submitJob: () => _sendPdfJobRequest(
-      printerName,
-      pdfFilePath,
-      docName: docName,
-      scaling: scaling,
-      copies: copies,
-      pageRange: pageRange,
-      options: _buildOptions(options),
-    ),
+    submitJob: () {
+      final optionsMap = _buildOptions(options);
+      final alignment = optionsMap.remove('alignment') ?? 'center';
+      return _sendPdfJobRequest(
+        printerName,
+        pdfFilePath,
+        docName: docName,
+        scaling: scaling,
+        copies: copies,
+        pageRange: pageRange,
+        options: optionsMap,
+        alignment: alignment,
+      );
+    },
   );
 }
 
@@ -837,6 +868,8 @@ Map<String, String> _buildOptions(List<PrintOption> options) {
         optionsMap['print-quality'] = quality.name;
       case WindowsMediaTypeOption(id: final id):
         optionsMap['media-type-id'] = id.toString();
+      case AlignmentOption(alignment: final alignment):
+        optionsMap['alignment'] = alignment.name;
     }
   }
   return optionsMap;
@@ -1109,6 +1142,7 @@ Future<int> _sendPdfJobRequest(
   int? copies,
   PageRange? pageRange,
   Map<String, String> options = const {},
+  String alignment = 'center',
 }) async {
   final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
   final int requestId = _nextSubmitPdfJobRequestId++;
@@ -1121,6 +1155,7 @@ Future<int> _sendPdfJobRequest(
     scaling,
     copies ?? 1,
     pageRange,
+    alignment,
   );
   final completer = Completer<int>();
   _submitPdfJobRequests[requestId] = completer;
@@ -1416,6 +1451,7 @@ Future<SendPort> _helperIsolateSendPort = () async {
               final pathPtr = data.pdfFilePath.toNativeUtf8();
               final docNamePtr = data.docName.toNativeUtf8();
               final pageRangeValue = data.pageRange?.toValue();
+              final alignmentPtr = data.alignment.toNativeUtf8();
               final pageRangePtr = pageRangeValue?.toNativeUtf8() ?? nullptr;
               try {
                 // Handle cupsOptions for native call
@@ -1475,6 +1511,7 @@ Future<SendPort> _helperIsolateSendPort = () async {
                   numOptions,
                   keysPtr.cast(),
                   valuesPtr.cast(),
+                  alignmentPtr.cast(),
                 );
                 sendPort.send(_PrintPdfResponse(data.id, result));
 
@@ -1491,6 +1528,7 @@ Future<SendPort> _helperIsolateSendPort = () async {
                 malloc.free(pathPtr);
                 malloc.free(docNamePtr);
                 if (pageRangePtr != nullptr) malloc.free(pageRangePtr);
+                malloc.free(alignmentPtr);
               }
             } catch (e, s) {
               sendPort.send(_ErrorResponse(data.id, e, s));
@@ -1623,6 +1661,7 @@ Future<SendPort> _helperIsolateSendPort = () async {
               final pathPtr = data.pdfFilePath.toNativeUtf8();
               final docNamePtr = data.docName.toNativeUtf8();
               final pageRangeValue = data.pageRange?.toValue();
+              final alignmentPtr = data.alignment.toNativeUtf8();
               final pageRangePtr = pageRangeValue?.toNativeUtf8() ?? nullptr;
               try {
                 final options = {...?data.options};
@@ -1681,6 +1720,7 @@ Future<SendPort> _helperIsolateSendPort = () async {
                   numOptions,
                   keysPtr.cast(),
                   valuesPtr.cast(),
+                  alignmentPtr.cast(),
                 );
                 sendPort.send(_SubmitJobResponse(data.id, jobId));
 
@@ -1697,6 +1737,7 @@ Future<SendPort> _helperIsolateSendPort = () async {
                 malloc.free(pathPtr);
                 malloc.free(docNamePtr);
                 if (pageRangePtr != nullptr) malloc.free(pageRangePtr);
+                malloc.free(alignmentPtr);
               }
             } catch (e, s) {
               sendPort.send(_ErrorResponse(data.id, e, s));
