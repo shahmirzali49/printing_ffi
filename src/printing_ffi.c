@@ -888,10 +888,20 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
 
             int dpi_x = GetDeviceCaps(hdc, LOGPIXELSX);
             int dpi_y = GetDeviceCaps(hdc, LOGPIXELSY);
-            LOG("print_pdf_job_win: Device DPI: %d x %d. Printable Area: %d x %d", dpi_x, dpi_y, GetDeviceCaps(hdc, HORZRES), GetDeviceCaps(hdc, VERTRES));
+            int printable_width_pixels = GetDeviceCaps(hdc, HORZRES);
+            int printable_height_pixels = GetDeviceCaps(hdc, VERTRES);
+            int paper_width_pixels = GetDeviceCaps(hdc, PHYSICALWIDTH);
+            int paper_height_pixels = GetDeviceCaps(hdc, PHYSICALHEIGHT);
+
+            LOG("print_pdf_job_win: Page %d: PDF Dimensions (pt): %.2f x %.2f", i, pdf_width_pt, pdf_height_pt);
+            LOG("print_pdf_job_win: Page %d: Device DPI: %d x %d", i, dpi_x, dpi_y);
+            LOG("print_pdf_job_win: Page %d: Printable Area (pixels): %d x %d", i, printable_width_pixels, printable_height_pixels);
+            LOG("print_pdf_job_win: Page %d: Physical Paper (pixels): %d x %d", i, paper_width_pixels, paper_height_pixels);
+
             // Render the bitmap using the device's specific DPI for each axis to avoid distortion.
             int bitmap_width = (int)(pdf_width_pt / 72.0f * dpi_x);
             int bitmap_height = (int)(pdf_height_pt / 72.0f * dpi_y);
+            LOG("print_pdf_job_win: Page %d: Bitmap Dimensions (pixels): %d x %d", i, bitmap_width, bitmap_height);
 
             BITMAPINFO bmi;
             memset(&bmi, 0, sizeof(bmi));
@@ -932,12 +942,6 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
             FPDF_RenderPageBitmap(pdfBitmap, page, 0, 0, bitmap_width, bitmap_height, 0, FPDF_ANNOT);
             FPDFBitmap_Destroy(pdfBitmap);
 
-            int printable_width = GetDeviceCaps(hdc, HORZRES);
-            int printable_height = GetDeviceCaps(hdc, VERTRES);
-            int dest_x, dest_y, dest_width, dest_height;
-
-            // --- REVISED SCALING LOGIC ---
-            // scaling_mode: 0=FitToPrintableArea, 1=ActualSize, 2=ShrinkToFit, 3=FitToPaper, 4=Custom
             if (scaling_mode == 0) { // Fit to Printable Area (formerly Fit Page)
                 // Calculate aspect ratio based on device-dependent pixel dimensions to avoid distortion.
                 float page_aspect = 1.0f;
@@ -946,22 +950,24 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
                 }
 
                 float printable_aspect = 1.0f;
-                if (printable_height != 0) {
-                    printable_aspect = (float)printable_width / (float)printable_height;
+                if (printable_height_pixels != 0) {
+                    printable_aspect = (float)printable_width_pixels / (float)printable_height_pixels;
                 }
 
                 if (page_aspect > printable_aspect) {
-                     dest_width = printable_width;
-                     dest_height = (int)(printable_width / page_aspect);
+                     dest_width = printable_width_pixels;
+                     dest_height = (int)(printable_width_pixels / page_aspect);
                 } else {
-                     dest_height = printable_height;
-                     dest_width = (int)(printable_height * page_aspect);
+                     dest_height = printable_height_pixels;
+                     dest_width = (int)(printable_height_pixels * page_aspect);
                 }
+                LOG("print_pdf_job_win: Page %d: ScalingMode=FitToPrintableArea, PageAspect=%.2f, PrintableAspect=%.2f, Dest=(%d,%d)", i, page_aspect, printable_aspect, dest_width, dest_height);
 
             } else if (scaling_mode == 1) { // Actual Size
                 // Calculate actual size in device pixels
                 dest_width = (int)(pdf_width_pt / 72.0f * dpi_x);
                 dest_height = (int)(pdf_height_pt / 72.0f * dpi_y);
+                LOG("print_pdf_job_win: Page %d: ScalingMode=ActualSize, Dest=(%d,%d)", i, dest_width, dest_height);
 
             } else if (scaling_mode == 2) { // Shrink to Fit
                 // If the PDF page is larger than the printable area, scale down to fit.
@@ -969,7 +975,7 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
                 int pdf_pixel_width = (int)(pdf_width_pt / 72.0f * dpi_x);
                 int pdf_pixel_height = (int)(pdf_height_pt / 72.0f * dpi_y);
 
-                if (pdf_pixel_width > printable_width || pdf_pixel_height > printable_height) {
+                if (pdf_pixel_width > printable_width_pixels || pdf_pixel_height > printable_height_pixels) {
                     // Calculate aspect ratio based on device-dependent pixel dimensions.
                     float page_aspect = 1.0f;
                     if (bitmap_height > 0) {
@@ -977,20 +983,22 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
                     }
 
                     float printable_aspect = 1.0f;
-                    if (printable_height != 0) {
-                        printable_aspect = (float)printable_width / (float)printable_height;
+                    if (printable_height_pixels != 0) {
+                        printable_aspect = (float)printable_width_pixels / (float)printable_height_pixels;
                     }
 
                     if (page_aspect > printable_aspect) {
-                         dest_width = printable_width;
-                         dest_height = (int)(printable_width / page_aspect);
+                         dest_width = printable_width_pixels;
+                         dest_height = (int)(printable_width_pixels / page_aspect);
                     } else {
-                         dest_height = printable_height;
-                         dest_width = (int)(printable_height * page_aspect);
+                         dest_height = printable_height_pixels;
+                         dest_width = (int)(printable_height_pixels * page_aspect);
                     }
+                    LOG("print_pdf_job_win: Page %d: ScalingMode=ShrinkToFit (scaled), PageAspect=%.2f, PrintableAspect=%.2f, Dest=(%d,%d)", i, page_aspect, printable_aspect, dest_width, dest_height);
                 } else {
                     dest_width = pdf_pixel_width;
                     dest_height = pdf_pixel_height;
+                    LOG("print_pdf_job_win: Page %d: ScalingMode=ShrinkToFit (actual size), Dest=(%d,%d)", i, dest_width, dest_height);
                 }
             } else if (scaling_mode == 3) { // Fit to Paper
                 int paper_width = GetDeviceCaps(hdc, PHYSICALWIDTH);
@@ -1013,6 +1021,7 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
                     dest_height = paper_height;
                     dest_width = (int)(paper_height * page_aspect);
                 }
+                LOG("print_pdf_job_win: Page %d: ScalingMode=FitToPaper, PageAspect=%.2f, PaperAspect=%.2f, Dest=(%d,%d)", i, page_aspect, paper_aspect, dest_width, dest_height);
             } else if (scaling_mode == 4) { // Custom Scale
                 // Calculate actual size in device pixels first
                 int pdf_pixel_width = (int)(pdf_width_pt / 72.0f * dpi_x);
@@ -1020,6 +1029,7 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
                 // Apply custom scale factor
                 dest_width = (int)(pdf_pixel_width * custom_scale);
                 dest_height = (int)(pdf_pixel_height * custom_scale);
+                LOG("print_pdf_job_win: Page %d: ScalingMode=CustomScale (%.2f), Dest=(%d,%d)", i, custom_scale, dest_width, dest_height);
             } else { // Default to Fit to Printable Area
                 // Calculate aspect ratio based on device-dependent pixel dimensions.
                 float page_aspect = 1.0f;
@@ -1028,17 +1038,18 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
                 }
 
                 float printable_aspect = 1.0f;
-                if (printable_height != 0) {
-                    printable_aspect = (float)printable_width / (float)printable_height;
+                if (printable_height_pixels != 0) {
+                    printable_aspect = (float)printable_width_pixels / (float)printable_height_pixels;
                 }
 
                 if (page_aspect > printable_aspect) {
-                     dest_width = printable_width;
-                     dest_height = (int)(printable_width / page_aspect);
+                     dest_width = printable_width_pixels;
+                     dest_height = (int)(printable_width_pixels / page_aspect);
                 } else {
-                     dest_height = printable_height;
-                     dest_width = (int)(printable_height * page_aspect);
+                     dest_height = printable_height_pixels;
+                     dest_width = (int)(printable_height_pixels * page_aspect);
                 }
+                LOG("print_pdf_job_win: Page %d: ScalingMode=Default (FitToPrintableArea), PageAspect=%.2f, PrintableAspect=%.2f, Dest=(%d,%d)", i, page_aspect, printable_aspect, dest_width, dest_height);
             }
 
             if (scaling_mode == 3) { // Fit to Paper alignment is relative to physical paper
@@ -1049,11 +1060,11 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
                 dest_x = (int)((paper_width - dest_width) * align_x_factor) - offset_x;
                 dest_y = (int)((paper_height - dest_height) * align_y_factor) - offset_y;
             } else { // All other modes are relative to the printable area
-                dest_x = (int)((printable_width - dest_width) * align_x_factor);
-                dest_y = (int)((printable_height - dest_height) * align_y_factor);
+                dest_x = (int)((printable_width_pixels - dest_width) * align_x_factor);
+                dest_y = (int)((printable_height_pixels - dest_height) * align_y_factor);
             }
 
-            LOG("print_pdf_job_win: Page %d: ScalingMode=%d, DestRect=(%d,%d, %dx%d)", i, scaling_mode, dest_x, dest_y, dest_width, dest_height);
+            LOG("print_pdf_job_win: Page %d: Final DestRect=(%d,%d, %dx%d)", i, dest_x, dest_y, dest_width, dest_height);
             if (StretchDIBits(hdc, dest_x, dest_y, dest_width, dest_height, 0, 0, bitmap_width, bitmap_height, pBitmapData, &bmi, DIB_RGB_COLORS, SRCCOPY) == GDI_ERROR) {
                 set_last_error("Failed to draw page %d to the printer device context. Error: %lu.", i + 1, GetLastError());
                 LOG("print_pdf_job_win: StretchDIBits failed for page %d with error %lu", i, GetLastError());
