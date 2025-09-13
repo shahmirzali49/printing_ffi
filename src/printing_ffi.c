@@ -221,10 +221,16 @@ static DEVMODEW* get_modified_devmode(wchar_t* printer_name_w, int paper_size_id
     }
     if (paper_source_id > 0) { pDevMode->dmFields |= DM_DEFAULTSOURCE; pDevMode->dmDefaultSource = (short)paper_source_id; modified = true; }
     if (orientation > 0) {
+        // If changing orientation, swap paper dimensions to give the driver a hint.
+        // The driver should correct this if it's wrong, but some drivers need the help.
+        if ((pDevMode->dmFields & DM_ORIENTATION) && pDevMode->dmOrientation != (short)orientation) {
+            short temp = pDevMode->dmPaperWidth;
+            pDevMode->dmPaperWidth = pDevMode->dmPaperLength;
+            pDevMode->dmPaperLength = temp;
+        }
         pDevMode->dmFields |= DM_ORIENTATION;
         pDevMode->dmOrientation = (short)orientation;
-        // Per documentation, DM_ORIENTATION requires DM_PAPERSIZE to be set. The default DEVMODE already has a valid dmPaperSize, so we just ensure the flag is set.
-        pDevMode->dmFields |= DM_PAPERSIZE;
+        pDevMode->dmFields |= DM_PAPERSIZE; // Ensure paper size is considered with orientation
         modified = true;
     }
     if (color_mode > 0) { pDevMode->dmFields |= DM_COLOR; pDevMode->dmColor = (short)color_mode; modified = true; }
@@ -752,11 +758,19 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
                 break;
             }
 
-            // --- FIX: Use PDF aspect ratio directly and render to non-distorted bitmap ---
+            // --- Get PDF page dimensions, accounting for page rotation ---
             float pdf_width_pt = FPDF_GetPageWidthF(page);
             float pdf_height_pt = FPDF_GetPageHeightF(page);
+
+            int rotation = FPDFPage_GetRotation(page);
+            if (rotation == 1 || rotation == 3) { // 90 or 270 degrees, swap dimensions
+                float temp = pdf_width_pt;
+                pdf_width_pt = pdf_height_pt;
+                pdf_height_pt = temp;
+            }
+
             float page_aspect = 1.0f;
-            if (pdf_height_pt > 0) {
+            if (pdf_height_pt > 0) { // Avoid division by zero
                 page_aspect = pdf_width_pt / pdf_height_pt;
             }
 
