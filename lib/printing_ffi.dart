@@ -2,8 +2,8 @@ import 'dart:async';
 import 'dart:ffi';
 import 'dart:io';
 import 'dart:isolate';
-import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
+import 'package:flutter/foundation.dart';
 import 'printing_ffi_bindings_generated.dart';
 
 class Printer {
@@ -126,12 +126,87 @@ class PrintJob {
 }
 
 /// Defines the scaling behavior for PDF printing on Windows.
-enum PdfPrintScaling {
-  /// Scale the page to fit the printable area of the paper, maintaining aspect ratio.
-  fitPage,
+sealed class PdfPrintScaling {
+  /// The integer value passed to the native code.
+  final int nativeValue;
+  const PdfPrintScaling(this.nativeValue);
 
-  /// Print the page at its actual size (100% scale), centered on the paper.
-  actualSize,
+  /// **Fit to Printable Area**
+  ///
+  /// Scales the page (up or down) to fit perfectly within the printer's
+  /// **printable area**, maintaining the aspect ratio. The printable area is
+  /// the physical paper size minus any unprintable hardware margins.
+  ///
+  /// This is the safest scaling option to ensure no content is ever clipped.
+  static const PdfPrintScaling fitToPrintableArea = _PdfPrintScalingValue(0);
+
+  @Deprecated('Use fitToPrintableArea instead. This will be removed in a future version.')
+  static const PdfPrintScaling fitPage = fitToPrintableArea;
+
+  /// **Actual Size**
+  ///
+  /// Prints the page without any scaling (100% scale). The content is centered
+  /// on the paper. If the page is larger than the printable area, the content
+  /// will be cropped.
+  static const PdfPrintScaling actualSize = _PdfPrintScalingValue(1);
+
+  /// **Shrink to Fit**
+  ///
+  /// A conditional scaling mode:
+  /// - If the page at its actual size is **larger** than the printable area, it
+  ///   is scaled down to fit (behaving like `fitToPrintableArea`).
+  /// - If the page at its actual size is **smaller** than or equal to the
+  ///   printable area, it is printed without scaling (behaving like `actualSize`).
+  ///
+  /// This is useful for ensuring large documents are not cropped while preserving
+  /// the original size of smaller documents.
+  static const PdfPrintScaling shrinkToFit = _PdfPrintScalingValue(2);
+
+  /// **Fit to Paper**
+  ///
+  /// Scales the page (up or down) to fit the **entire physical paper size**,
+  /// maintaining the aspect ratio.
+  ///
+  /// **Warning:** Content near the edges of the PDF page may be clipped by the
+  /// printer's unprintable hardware margins. This mode is different from
+  /// `fitToPrintableArea`, which respects these margins.
+  static const PdfPrintScaling fitToPaper = _PdfPrintScalingValue(3);
+
+  /// **Custom Scale**
+  ///
+  /// Applies a custom scaling factor to the page.
+  ///
+  /// - [scale]: The scaling factor (e.g., 1.0 for 100%, 0.5 for 50%). Must be a positive number.
+  const factory PdfPrintScaling.custom(double scale) = _PdfPrintScalingCustom;
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    if (other is! PdfPrintScaling || runtimeType != other.runtimeType) return false;
+    if (other is _PdfPrintScalingCustom && this is _PdfPrintScalingCustom) {
+      return (this as _PdfPrintScalingCustom).scale == other.scale;
+    }
+    return nativeValue == other.nativeValue;
+  }
+
+  @override
+  int get hashCode => nativeValue.hashCode;
+}
+
+class _PdfPrintScalingValue extends PdfPrintScaling {
+  const _PdfPrintScalingValue(super.nativeValue);
+}
+
+final class _PdfPrintScalingCustom extends PdfPrintScaling {
+  const _PdfPrintScalingCustom(this.scale) : super(4);
+
+  final double scale;
+
+  @override
+  bool operator ==(Object other) => identical(this, other) || other is _PdfPrintScalingCustom && runtimeType == other.runtimeType && scale == other.scale;
+
+  @override
+  int get hashCode => Object.hash(nativeValue, scale);
 }
 
 /// Defines the orientation for printing on Windows.
@@ -154,6 +229,19 @@ enum ColorMode { monochrome, color }
 /// These correspond to standard driver settings. `normal` is equivalent to
 /// the driver's default medium quality.
 enum PrintQuality { draft, low, normal, high }
+
+/// Defines the alignment for PDF printing on Windows.
+enum PdfPrintAlignment {
+  center,
+  left,
+  right,
+  top,
+  bottom,
+  topLeft,
+  topRight,
+  bottomLeft,
+  bottomRight,
+}
 
 /// The result of opening the printer properties dialog.
 enum PrinterPropertiesResult {
@@ -218,6 +306,12 @@ class GenericCupsOption extends PrintOption {
   final String name;
   final String value;
   const GenericCupsOption(this.name, this.value);
+}
+
+/// A Windows-specific option to set the alignment of the printed content.
+class AlignmentOption extends PrintOption {
+  final PdfPrintAlignment alignment;
+  const AlignmentOption(this.alignment);
 }
 
 class CupsOptionChoice {
@@ -317,6 +411,18 @@ class WindowsPrinterCapabilities {
     required this.isMonochromeSupported,
     required this.supportsLandscape,
   });
+}
+
+/// An exception thrown when a native printing operation fails.
+///
+/// Contains a detailed message from the underlying native printing system
+/// (e.g., CUPS or Windows Spooler).
+class PrintingFfiException implements Exception {
+  final String message;
+  PrintingFfiException(this.message);
+
+  @override
+  String toString() => 'PrintingFfiException: $message';
 }
 
 /// Exception thrown when the helper isolate encounters a fatal error or exits unexpectedly.
@@ -459,6 +565,7 @@ class _PrintPdfRequest {
   final PdfPrintScaling scaling;
   final int copies;
   final PageRange? pageRange;
+  final String alignment;
 
   const _PrintPdfRequest(
     this.id,
@@ -469,6 +576,7 @@ class _PrintPdfRequest {
     this.scaling,
     this.copies,
     this.pageRange,
+    this.alignment,
   );
 }
 
@@ -504,6 +612,7 @@ class _SubmitPdfJobRequest {
   final PdfPrintScaling scaling;
   final int copies;
   final PageRange? pageRange;
+  final String alignment;
 
   const _SubmitPdfJobRequest(
     this.id,
@@ -514,6 +623,7 @@ class _SubmitPdfJobRequest {
     this.scaling,
     this.copies,
     this.pageRange,
+    this.alignment,
   );
 }
 
@@ -597,6 +707,48 @@ final PrintingFfiBindings _bindings = PrintingFfiBindings(
   _dylib,
 ); // Updated to PrintingFfiBindings
 
+final _getLastError = _dylib.lookup<NativeFunction<Pointer<Utf8> Function()>>('get_last_error').asFunction<Pointer<Utf8> Function()>();
+
+// --- Initialization and Logging ---
+
+// Define the C function signature for registering the callback
+typedef _RegisterLogCallbackNative = Void Function(Pointer<NativeFunction<Void Function(Pointer<Char>)>>);
+// Define the Dart function signature
+typedef _RegisterLogCallback = void Function(Pointer<NativeFunction<Void Function(Pointer<Char>)>>);
+
+/// A function that handles log messages from the native side.
+typedef LogHandler = void Function(String message);
+
+// The user-provided log handler.
+LogHandler? _customLogHandler;
+
+/// Top-level function to handle logs from native code.
+/// This must be a top-level or static function to be used with `Pointer.fromFunction`.
+void _logHandler(Pointer<Char> message) {
+  final logMessage = message.cast<Utf8>().toDartString();
+  if (_customLogHandler != null) {
+    _customLogHandler!(logMessage);
+  } else {
+    // Default behavior if no handler is provided.
+    debugPrint(logMessage);
+  }
+}
+
+/// Initializes the printing_ffi plugin.
+///
+/// This function sets up necessary configurations, such as registering a
+/// log handler to receive debug messages from the native code. It's recommended
+/// to call this once when your application starts. An optional [logHandler]
+/// can be provided to process log messages from the native layer.
+void initializePrintingFfi({LogHandler? logHandler}) {
+  _customLogHandler = logHandler;
+  final registerer = _dylib.lookup<NativeFunction<_RegisterLogCallbackNative>>('register_log_callback').asFunction<_RegisterLogCallback>();
+  // Use Pointer.fromFunction to get a pointer to our top-level log handler.
+  // This is the correct and most efficient way to create a callback from a
+  // static or top-level function.
+  registerer(Pointer.fromFunction<Void Function(Pointer<Char>)>(_logHandler));
+}
+
 // Example functions from template
 int sum(int a, int b) => _bindings.sum(a, b);
 
@@ -662,6 +814,7 @@ Printer _printerFromInfo(PrinterInfo info) {
 /// Opens the native printer properties dialog for the specified printer.
 ///
 /// On Windows, this opens the standard system dialog for printer properties.
+/// Changes made by the user are applied to the printer's default settings.
 ///
 /// On macOS and Linux, this will attempt to open the CUPS web interface
 /// for the printer in the default web browser (e.g., `http://localhost:631/printers/My_Printer`).
@@ -671,6 +824,9 @@ Printer _printerFromInfo(PrinterInfo info) {
 /// - [hwnd]: (Windows only) The handle to the parent window. Can be obtained from packages
 ///   like `win32` or by other platform-specific means. A value of 0 is often
 ///   acceptable for a modeless dialog.
+///
+/// Returns a [PrinterPropertiesResult] indicating whether the user confirmed
+/// the changes, cancelled the dialog, or an error occurred.
 Future<PrinterPropertiesResult> openPrinterProperties(String printerName, {int hwnd = 0}) async {
   // This is a synchronous call, so no need for an isolate.
   final namePtr = printerName.toNativeUtf8();
@@ -687,6 +843,18 @@ Future<PrinterPropertiesResult> openPrinterProperties(String printerName, {int h
   }
 }
 
+/// Sends raw data directly to the specified printer.
+///
+/// This is useful for printing formats like ZPL, ESC/POS, or other
+/// printer-specific command languages without any intermediate processing.
+///
+/// - [printerName]: The name of the target printer.
+/// - [data]: The raw byte data to be printed.
+/// - [docName]: The name of the document to show in the print queue.
+/// - [options]: A list of [PrintOption] objects to configure the print job.
+///
+/// Returns `true` if the data was sent successfully. Throws a
+/// [PrintingFfiException] on failure.
 Future<bool> rawDataToPrinter(
   String printerName,
   Uint8List data, {
@@ -714,24 +882,25 @@ Future<bool> rawDataToPrinter(
 /// On Windows, this uses the bundled `pdfium` library to render the PDF and
 /// print it directly, offering robust and self-contained functionality.
 ///
-/// On macOS and Linux, CUPS handles PDF printing natively. You can pass
-/// CUPS-specific options via the [cupsOptions] map.
+/// On macOS and Linux, CUPS handles PDF printing natively.
 ///
 /// - [printerName]: The name of the target printer.
 /// - [pdfFilePath]: The local path to the PDF file.
 /// - [docName]: The name of the document to show in the print queue.
-/// - [scaling]: The scaling mode for Windows printing (defaults to [PdfPrintScaling.fitPage]).
+/// - [scaling]: The scaling mode for Windows printing (defaults to [PdfPrintScaling.shrinkToFit]).
 /// - [copies]: The number of copies to print. Defaults to 1.
 /// - [pageRange]: A [PageRange] object specifying the pages to print.
 ///   If `null`, all pages will be printed.
 ///   The native layer will still validate the range against the PDF's page count,
 ///   which may cause the print to fail if the range is out of bounds.
-/// - [options]: A list of [PrintOption] objects to configure the print job (e.g., paper size, orientation).
+/// - [options]: A list of [PrintOption] objects to configure the print job.
+///   This can include settings like paper size, orientation, and color mode.
+///   On Windows, alignment can also be configured (e.g., using [AlignmentOption(PdfPrintAlignment.topLeft)]).
 Future<bool> printPdf(
   String printerName,
   String pdfFilePath, {
   String docName = 'Flutter PDF Document',
-  PdfPrintScaling scaling = PdfPrintScaling.fitPage,
+  PdfPrintScaling scaling = PdfPrintScaling.shrinkToFit,
   int? copies,
   PageRange? pageRange,
   List<PrintOption> options = const [],
@@ -739,6 +908,7 @@ Future<bool> printPdf(
   final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
   final int requestId = _nextPrintPdfRequestId++;
   final optionsMap = _buildOptions(options);
+  final alignment = optionsMap.remove('alignment') ?? 'center';
   final _PrintPdfRequest request = _PrintPdfRequest(
     requestId,
     printerName,
@@ -748,6 +918,7 @@ Future<bool> printPdf(
     scaling,
     copies ?? 1,
     pageRange,
+    alignment,
   );
   final Completer<bool> completer = Completer<bool>();
   _printPdfRequests[requestId] = completer;
@@ -798,7 +969,7 @@ Stream<PrintJob> printPdfAndStreamStatus(
   String printerName,
   String pdfFilePath, {
   String docName = 'Flutter PDF Document',
-  PdfPrintScaling scaling = PdfPrintScaling.fitPage,
+  PdfPrintScaling scaling = PdfPrintScaling.shrinkToFit,
   int? copies,
   PageRange? pageRange,
   List<PrintOption> options = const [],
@@ -807,15 +978,20 @@ Stream<PrintJob> printPdfAndStreamStatus(
   return _streamJobStatus(
     printerName: printerName,
     pollInterval: pollInterval,
-    submitJob: () => _sendPdfJobRequest(
-      printerName,
-      pdfFilePath,
-      docName: docName,
-      scaling: scaling,
-      copies: copies,
-      pageRange: pageRange,
-      options: _buildOptions(options),
-    ),
+    submitJob: () {
+      final optionsMap = _buildOptions(options);
+      final alignment = optionsMap.remove('alignment') ?? 'center';
+      return _sendPdfJobRequest(
+        printerName,
+        pdfFilePath,
+        docName: docName,
+        scaling: scaling,
+        copies: copies,
+        pageRange: pageRange,
+        options: optionsMap,
+        alignment: alignment,
+      );
+    },
   );
 }
 
@@ -837,6 +1013,8 @@ Map<String, String> _buildOptions(List<PrintOption> options) {
         optionsMap['print-quality'] = quality.name;
       case WindowsMediaTypeOption(id: final id):
         optionsMap['media-type-id'] = id.toString();
+      case AlignmentOption(alignment: final alignment):
+        optionsMap['alignment'] = alignment.name;
     }
   }
   return optionsMap;
@@ -961,6 +1139,11 @@ Future<WindowsPrinterCapabilities?> getWindowsPrinterCapabilities(String printer
   return completer.future;
 }
 
+/// Fetches the current list of print jobs for a given printer.
+///
+/// - [printerName]: The name of the target printer.
+///
+/// Returns a list of [PrintJob] objects currently in the queue.
 Future<List<PrintJob>> listPrintJobs(String printerName) async {
   final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
   final int requestId = _nextPrintJobsRequestId++;
@@ -1035,6 +1218,10 @@ Stream<List<PrintJob>> listPrintJobsStream(
   return controller.stream;
 }
 
+/// Pauses a specific print job.
+///
+/// - [printerName]: The name of the printer where the job is queued.
+/// - [jobId]: The ID of the job to pause.
 Future<bool> pausePrintJob(String printerName, int jobId) async {
   final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
   final int requestId = _nextPrintJobActionRequestId++;
@@ -1050,6 +1237,10 @@ Future<bool> pausePrintJob(String printerName, int jobId) async {
   return completer.future;
 }
 
+/// Resumes a paused print job.
+///
+/// - [printerName]: The name of the printer where the job is queued.
+/// - [jobId]: The ID of the job to resume.
 Future<bool> resumePrintJob(String printerName, int jobId) async {
   final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
   final int requestId = _nextPrintJobActionRequestId++;
@@ -1065,6 +1256,10 @@ Future<bool> resumePrintJob(String printerName, int jobId) async {
   return completer.future;
 }
 
+/// Cancels a print job.
+///
+/// - [printerName]: The name of the printer where the job is queued.
+/// - [jobId]: The ID of the job to cancel.
 Future<bool> cancelPrintJob(String printerName, int jobId) async {
   final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
   final int requestId = _nextPrintJobActionRequestId++;
@@ -1105,10 +1300,11 @@ Future<int> _sendPdfJobRequest(
   String printerName,
   String pdfFilePath, {
   String docName = 'Flutter PDF Document',
-  PdfPrintScaling scaling = PdfPrintScaling.fitPage,
+  PdfPrintScaling scaling = PdfPrintScaling.shrinkToFit,
   int? copies,
   PageRange? pageRange,
   Map<String, String> options = const {},
+  String alignment = 'center',
 }) async {
   final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
   final int requestId = _nextSubmitPdfJobRequestId++;
@@ -1121,6 +1317,7 @@ Future<int> _sendPdfJobRequest(
     scaling,
     copies ?? 1,
     pageRange,
+    alignment,
   );
   final completer = Completer<int>();
   _submitPdfJobRequests[requestId] = completer;
@@ -1341,7 +1538,12 @@ Future<SendPort> _helperIsolateSendPort = () async {
                     keysPtr.cast(),
                     valuesPtr.cast(),
                   );
-                  sendPort.send(_PrintResponse(data.id, result));
+                if (result) {
+                  sendPort.send(_PrintResponse(data.id, true));
+                } else {
+                  final errorMsg = _getLastError().toDartString();
+                  sendPort.send(_ErrorResponse(data.id, PrintingFfiException(errorMsg), StackTrace.current));
+                }
                 } finally {
                   if (numOptions > 0) {
                     for (var i = 0; i < numOptions; i++) {
@@ -1416,10 +1618,14 @@ Future<SendPort> _helperIsolateSendPort = () async {
               final pathPtr = data.pdfFilePath.toNativeUtf8();
               final docNamePtr = data.docName.toNativeUtf8();
               final pageRangeValue = data.pageRange?.toValue();
+              final alignmentPtr = data.alignment.toNativeUtf8();
               final pageRangePtr = pageRangeValue?.toNativeUtf8() ?? nullptr;
               try {
                 // Handle cupsOptions for native call
                 final options = {...?data.options};
+                if (data.scaling is _PdfPrintScalingCustom) {
+                  options['custom-scale-factor'] = (data.scaling as _PdfPrintScalingCustom).scale.toString();
+                }
                 if (Platform.isMacOS || Platform.isLinux) {
                   if (data.copies > 1) options['copies'] = data.copies.toString();
                   if (pageRangeValue != null && pageRangeValue.isNotEmpty) options['page-ranges'] = pageRangeValue;
@@ -1469,14 +1675,20 @@ Future<SendPort> _helperIsolateSendPort = () async {
                   namePtr.cast(),
                   pathPtr.cast(),
                   docNamePtr.cast(),
-                  data.scaling.index,
+                  data.scaling.nativeValue,
                   data.copies,
                   pageRangePtr.cast(),
                   numOptions,
                   keysPtr.cast(),
                   valuesPtr.cast(),
+                  alignmentPtr.cast(),
                 );
-                sendPort.send(_PrintPdfResponse(data.id, result));
+                if (result) {
+                  sendPort.send(_PrintPdfResponse(data.id, true));
+                } else {
+                  final errorMsg = _getLastError().toDartString();
+                  sendPort.send(_ErrorResponse(data.id, PrintingFfiException(errorMsg), StackTrace.current));
+                }
 
                 if (numOptions > 0) {
                   for (var i = 0; i < numOptions; i++) {
@@ -1491,6 +1703,7 @@ Future<SendPort> _helperIsolateSendPort = () async {
                 malloc.free(pathPtr);
                 malloc.free(docNamePtr);
                 if (pageRangePtr != nullptr) malloc.free(pageRangePtr);
+                malloc.free(alignmentPtr);
               }
             } catch (e, s) {
               sendPort.send(_ErrorResponse(data.id, e, s));
@@ -1598,7 +1811,12 @@ Future<SendPort> _helperIsolateSendPort = () async {
                     keysPtr.cast(),
                     valuesPtr.cast(),
                   );
-                  sendPort.send(_SubmitJobResponse(data.id, jobId));
+                  if (jobId > 0) {
+                    sendPort.send(_SubmitJobResponse(data.id, jobId));
+                  } else {
+                    final errorMsg = _getLastError().toDartString();
+                    sendPort.send(_ErrorResponse(data.id, PrintingFfiException(errorMsg), StackTrace.current));
+                  }
                 } finally {
                   if (numOptions > 0) {
                     for (var i = 0; i < numOptions; i++) {
@@ -1623,9 +1841,13 @@ Future<SendPort> _helperIsolateSendPort = () async {
               final pathPtr = data.pdfFilePath.toNativeUtf8();
               final docNamePtr = data.docName.toNativeUtf8();
               final pageRangeValue = data.pageRange?.toValue();
+              final alignmentPtr = data.alignment.toNativeUtf8();
               final pageRangePtr = pageRangeValue?.toNativeUtf8() ?? nullptr;
               try {
                 final options = {...?data.options};
+                if (data.scaling is _PdfPrintScalingCustom) {
+                  options['custom-scale-factor'] = (data.scaling as _PdfPrintScalingCustom).scale.toString();
+                }
                 if (Platform.isMacOS || Platform.isLinux) {
                   if (data.copies > 1) options['copies'] = data.copies.toString();
                   if (pageRangeValue != null && pageRangeValue.isNotEmpty) options['page-ranges'] = pageRangeValue;
@@ -1675,14 +1897,20 @@ Future<SendPort> _helperIsolateSendPort = () async {
                   namePtr.cast(),
                   pathPtr.cast(),
                   docNamePtr.cast(),
-                  data.scaling.index,
+                  data.scaling.nativeValue,
                   data.copies,
                   pageRangePtr.cast(),
                   numOptions,
                   keysPtr.cast(),
                   valuesPtr.cast(),
+                  alignmentPtr.cast(),
                 );
-                sendPort.send(_SubmitJobResponse(data.id, jobId));
+                if (jobId > 0) {
+                  sendPort.send(_SubmitJobResponse(data.id, jobId));
+                } else {
+                  final errorMsg = _getLastError().toDartString();
+                  sendPort.send(_ErrorResponse(data.id, PrintingFfiException(errorMsg), StackTrace.current));
+                }
 
                 if (numOptions > 0) {
                   for (var i = 0; i < numOptions; i++) {
@@ -1697,6 +1925,7 @@ Future<SendPort> _helperIsolateSendPort = () async {
                 malloc.free(pathPtr);
                 malloc.free(docNamePtr);
                 if (pageRangePtr != nullptr) malloc.free(pageRangePtr);
+                malloc.free(alignmentPtr);
               }
             } catch (e, s) {
               sendPort.send(_ErrorResponse(data.id, e, s));

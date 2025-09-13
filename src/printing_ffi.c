@@ -20,16 +20,64 @@
 #ifdef _WIN32
 // Include the main Pdfium header. Ensure this is in your src/ directory.
 #include "fpdfview.h"
+#include "fpdf_edit.h"
 // Global state for Pdfium initialization
 static bool s_pdfium_initialized = false;
 #endif
+// Global function pointer for the log callback.
+static log_callback_t s_log_callback = NULL;
 
 // Logging macro - enabled when DEBUG_LOGGING is defined (e.g., in debug builds)
 #ifdef DEBUG_LOGGING
-#define LOG(format, ...) fprintf(stderr, "[printing_ffi] " format "\n", ##__VA_ARGS__)
+#define LOG(format, ...) do { \
+    char log_message[1024]; \
+    snprintf(log_message, sizeof(log_message), "[printing_ffi] " format, ##__VA_ARGS__); \
+    if (s_log_callback != NULL) { \
+        s_log_callback(log_message); \
+    } else { \
+        fprintf(stderr, "%s\n", log_message); \
+    } \
+} while (0)
 #else
 #define LOG(...)
 #endif
+
+// --- Last Error Handling ---
+
+// Use thread-local storage for the last error message to ensure thread safety.
+#ifdef _WIN32
+__declspec(thread) static char* g_last_error_message = NULL;
+#else // macOS, Linux
+static __thread char* g_last_error_message = NULL;
+#endif
+
+// Internal helper to set the last error message for the current thread.
+static void set_last_error(const char* format, ...) {
+    // Free the previous error message if it exists
+    if (g_last_error_message) {
+        free(g_last_error_message);
+        g_last_error_message = NULL;
+    }
+
+    va_list args;
+    va_start(args, format);
+
+    // Determine the required buffer size
+    va_list args_copy;
+    va_copy(args_copy, args);
+    int size = vsnprintf(NULL, 0, format, args_copy);
+    va_end(args_copy);
+
+    if (size >= 0) {
+        g_last_error_message = (char*)malloc(size + 1);
+        if (g_last_error_message) vsnprintf(g_last_error_message, size + 1, format, args);
+    }
+    va_end(args);
+}
+
+FFI_PLUGIN_EXPORT void register_log_callback(log_callback_t callback) {
+    s_log_callback = callback;
+}
 
 #ifdef _WIN32
 // Helper to convert UTF-8 char* to wchar_t*
@@ -98,29 +146,37 @@ static bool parse_page_range(const char* range_str, bool* page_flags, int total_
         char* end = token + strlen(token) - 1;
         while (end > token && isspace((unsigned char)*end)) *end-- = '\0';
 
-        if (strlen(token) == 0) {
-#ifdef _WIN32
-            token = strtok_s(NULL, ",", &context);
-#else
-            token = strtok(NULL, ",");
-#endif
-            continue;
+        if (strlen(token) == 0) goto next_token;
+
+        // Make a copy of the token for parsing, so we can use the original for error messages.
+        char* token_copy = strdup(token);
+        if (!token_copy) {
+            free(to_free);
+            return false;
         }
 
         int start_page, end_page;
-        char* dash = strchr(token, '-');
+        char* dash = strchr(token_copy, '-');
 
         if (dash) { // It's a range like "3-5"
             *dash = '\0';
-            start_page = atoi(token);
+            start_page = atoi(token_copy);
             end_page = atoi(dash + 1);
         } else { // It's a single page like "7"
-            start_page = end_page = atoi(token);
+            start_page = end_page = atoi(token_copy);
         }
 
+        free(token_copy); // Clean up the copy
+
         // Validate input
-        if (start_page < 1 || end_page < start_page || end_page > total_pages || start_page > total_pages) {
-            LOG("Invalid page range value: start=%d, end=%d, total=%d", start_page, end_page, total_pages);
+        // The page count must be positive.
+        // The start page must be at least 1.
+        // The end page must not be less than the start page.
+        // The end page must not exceed the total number of pages in the document.
+        if (total_pages <= 0 || start_page < 1 || end_page < start_page || end_page > total_pages) {
+            // Use the original, unmodified token for the error message.
+            set_last_error("Page range '%s' is invalid for a document with %d pages.", token, total_pages);
+            LOG("Invalid page range value: '%s' for a document with %d pages.", token, total_pages);
             free(to_free);
             return false; // Invalid range
         }
@@ -130,6 +186,7 @@ static bool parse_page_range(const char* range_str, bool* page_flags, int total_
             page_flags[i - 1] = true;
         }
 
+next_token:
 #ifdef _WIN32
         token = strtok_s(NULL, ",", &context);
 #else
@@ -143,7 +200,7 @@ static bool parse_page_range(const char* range_str, bool* page_flags, int total_
 // Helper function to parse Windows-specific print options from the generic key-value array.
 static void parse_windows_options(int num_options, const char** option_keys, const char** option_values,
                                   int* paper_size_id, int* paper_source_id, int* orientation,
-                                  int* color_mode, int* print_quality, int* media_type_id) {
+                                  int* color_mode, int* print_quality, int* media_type_id, double* custom_scale) {
     // Set default values
     *paper_size_id = 0;
     *paper_source_id = 0;
@@ -151,6 +208,7 @@ static void parse_windows_options(int num_options, const char** option_keys, con
     *color_mode = 0;
     *print_quality = 0;
     *media_type_id = 0;
+    *custom_scale = 1.0; // Default to 100%
 
     for (int i = 0; i < num_options; i++) {
         if (strcmp(option_keys[i], "paper-size-id") == 0) {
@@ -161,8 +219,13 @@ static void parse_windows_options(int num_options, const char** option_keys, con
             if (strcmp(option_values[i], "landscape") == 0) *orientation = 2; // DMORIENT_LANDSCAPE
             else *orientation = 1; // DMORIENT_PORTRAIT
         } else if (strcmp(option_keys[i], "color-mode") == 0) {
-            if (strcmp(option_values[i], "monochrome") == 0) *color_mode = 1; // DMCOLOR_MONOCHROME
-            else *color_mode = 2; // DMCOLOR_COLOR
+            if (strcmp(option_values[i], "monochrome") == 0) {
+                *color_mode = 1; // DMCOLOR_MONOCHROME
+                // For monochrome, also ensure print quality is set to trigger driver update.
+                // If it's not already being set, use a neutral value.
+                if (*print_quality == 0) *print_quality = -3; // DMRES_MEDIUM
+            } else
+                *color_mode = 2; // DMCOLOR_COLOR
         } else if (strcmp(option_keys[i], "print-quality") == 0) {
             if (strcmp(option_values[i], "draft") == 0) *print_quality = -1; // DMRES_DRAFT
             else if (strcmp(option_values[i], "low") == 0) *print_quality = -2; // DMRES_LOW
@@ -170,6 +233,8 @@ static void parse_windows_options(int num_options, const char** option_keys, con
             else *print_quality = -3; // DMRES_MEDIUM / normal
         } else if (strcmp(option_keys[i], "media-type-id") == 0) {
             *media_type_id = atoi(option_values[i]);
+        } else if (strcmp(option_keys[i], "custom-scale-factor") == 0) {
+            *custom_scale = atof(option_values[i]);
         }
     }
 }
@@ -180,6 +245,8 @@ static void parse_windows_options(int num_options, const char** option_keys, con
 // The caller is responsible for freeing the returned struct.
 static DEVMODEW* get_modified_devmode(wchar_t* printer_name_w, int paper_size_id, int paper_source_id, int orientation, int color_mode, int print_quality, int media_type_id) {
     if (!printer_name_w) return NULL;
+    LOG("get_modified_devmode: Creating DEVMODE for '%ls' with paper_id:%d, source_id:%d, orientation:%d, color:%d, quality:%d, media_id:%d",
+        printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id);
 
     HANDLE hPrinter;
     if (!OpenPrinterW(printer_name_w, &hPrinter, NULL)) {
@@ -190,13 +257,14 @@ static DEVMODEW* get_modified_devmode(wchar_t* printer_name_w, int paper_size_id
     DEVMODEW* pDevMode = NULL;
     LONG devModeSize = DocumentPropertiesW(NULL, hPrinter, printer_name_w, NULL, NULL, 0);
     if (devModeSize <= 0) {
-        LOG("get_modified_devmode: DocumentPropertiesW (get size) failed with error %lu", GetLastError());
+        LOG("get_modified_devmode: DocumentPropertiesW (get size) failed with error %lu. Size was %ld.", GetLastError(), devModeSize);
         ClosePrinter(hPrinter);
         return NULL;
     }
 
     pDevMode = (DEVMODEW*)malloc(devModeSize);
     if (!pDevMode) {
+        LOG("get_modified_devmode: Failed to allocate memory for DEVMODE.");
         ClosePrinter(hPrinter);
         return NULL;
     }
@@ -208,36 +276,59 @@ static DEVMODEW* get_modified_devmode(wchar_t* printer_name_w, int paper_size_id
         ClosePrinter(hPrinter);
         return NULL;
     }
+    LOG("get_modified_devmode: Successfully retrieved default DEVMODE.");
 
     bool modified = false;
     // A value <= 0 for IDs/orientation means "use default".
     if (paper_size_id > 0) {
+        LOG("get_modified_devmode: Setting dmPaperSize to %d.", paper_size_id);
         pDevMode->dmFields |= DM_PAPERSIZE;
         pDevMode->dmPaperSize = (short)paper_size_id;
-        // Per documentation, when using dmPaperSize, dmPaperLength and dmPaperWidth should be zeroed
-        // and their corresponding field flags should be cleared to avoid conflicts with some drivers.
-        pDevMode->dmFields &= ~(DM_PAPERLENGTH | DM_PAPERWIDTH);
-        pDevMode->dmPaperLength = 0;
-        pDevMode->dmPaperWidth = 0;
         modified = true;
     }
-    if (paper_source_id > 0) { pDevMode->dmFields |= DM_DEFAULTSOURCE; pDevMode->dmDefaultSource = (short)paper_source_id; modified = true; }
+    if (paper_source_id > 0) {
+        LOG("get_modified_devmode: Setting dmDefaultSource to %d.", paper_source_id);
+        pDevMode->dmFields |= DM_DEFAULTSOURCE; pDevMode->dmDefaultSource = (short)paper_source_id; modified = true;
+    }
     if (orientation > 0) {
+        LOG("get_modified_devmode: Setting dmOrientation to %d.", orientation);
+        // If changing orientation, swap paper dimensions to give the driver a hint.
+        // The driver should correct this if it's wrong, but some drivers need the help.
+        if ((pDevMode->dmFields & DM_ORIENTATION) && pDevMode->dmOrientation != (short)orientation) {
+            LOG("get_modified_devmode: Swapping paper width (%d) and length (%d) for orientation change.", pDevMode->dmPaperWidth, pDevMode->dmPaperLength);
+            short temp = pDevMode->dmPaperWidth;
+            pDevMode->dmPaperWidth = pDevMode->dmPaperLength;
+            pDevMode->dmPaperLength = temp;
+        }
         pDevMode->dmFields |= DM_ORIENTATION;
         pDevMode->dmOrientation = (short)orientation;
-        // Per documentation, DM_ORIENTATION requires DM_PAPERSIZE to be set. The default DEVMODE already has a valid dmPaperSize, so we just ensure the flag is set.
-        pDevMode->dmFields |= DM_PAPERSIZE;
+        pDevMode->dmFields |= DM_PAPERSIZE; // Ensure paper size is considered with orientation
         modified = true;
     }
-    if (color_mode > 0) { pDevMode->dmFields |= DM_COLOR; pDevMode->dmColor = (short)color_mode; modified = true; }
-    if (print_quality != 0) { pDevMode->dmFields |= DM_PRINTQUALITY; pDevMode->dmPrintQuality = (short)print_quality; modified = true; }
-    if (media_type_id > 0) { pDevMode->dmFields |= DM_MEDIATYPE; pDevMode->dmMediaType = (short)media_type_id; modified = true; }
+    if (color_mode > 0) {
+        LOG("get_modified_devmode: Setting dmColor to %d.", color_mode);
+        pDevMode->dmFields |= DM_COLOR; pDevMode->dmColor = (short)color_mode; modified = true;
+    }
+    if (print_quality != 0) {
+        LOG("get_modified_devmode: Setting dmPrintQuality to %d.", print_quality);
+        pDevMode->dmFields |= DM_PRINTQUALITY; pDevMode->dmPrintQuality = (short)print_quality; modified = true;
+    }
+    if (media_type_id > 0) {
+        LOG("get_modified_devmode: Setting dmMediaType to %d.", media_type_id);
+        pDevMode->dmFields |= DM_MEDIATYPE; pDevMode->dmMediaType = (short)media_type_id; modified = true;
+    }
 
     if (modified) {
+        LOG("get_modified_devmode: DEVMODE was modified. Validating with driver...");
         // Validate and merge the changes. The driver may update the DEVMODE struct.
-        if (DocumentPropertiesW(NULL, hPrinter, printer_name_w, pDevMode, pDevMode, DM_IN_BUFFER | DM_OUT_BUFFER) != IDOK) {
-            LOG("get_modified_devmode: DocumentPropertiesW (merge) failed with error %lu. Continuing with potentially invalid settings.", GetLastError());
+        LONG result = DocumentPropertiesW(NULL, hPrinter, printer_name_w, pDevMode, pDevMode, DM_IN_BUFFER | DM_OUT_BUFFER);
+        if (result != IDOK) {
+            LOG("get_modified_devmode: DocumentPropertiesW (merge) failed with result %ld and error %lu. The driver may have rejected the settings. Continuing anyway.", result, GetLastError());
+        } else {
+            LOG("get_modified_devmode: Driver accepted and merged DEVMODE changes.");
         }
+    } else {
+        LOG("get_modified_devmode: No modifications requested, using default DEVMODE.");
     }
 
     ClosePrinter(hPrinter);
@@ -515,7 +606,8 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8
 
 #ifdef _WIN32
     int paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id;
-    parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id);
+    double custom_scale; // Dummy for raw printing
+    parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id, &custom_scale);
 
     HANDLE hPrinter;
     DOC_INFO_1W docInfo;
@@ -626,7 +718,359 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8
 #endif
 }
 
-FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_path, const char* doc_name, int scaling_mode, int copies, const char* page_range, int num_options, const char** option_keys, const char** option_values) {
+#ifdef _WIN32
+// Common internal function for PDF printing on Windows.
+// Returns a job ID if `submit_job` is true, otherwise returns 1 for success or 0 for failure.
+static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file_path, const char* doc_name, int scaling_mode, int copies, const char* page_range, const char* alignment, int num_options, const char** option_keys, const char** option_values, bool submit_job) {
+    LOG("print_pdf_job_win: Initializing for printer '%s', path '%s'", printer_name, pdf_file_path);
+    if (!s_pdfium_initialized) {
+        FPDF_LIBRARY_CONFIG config;
+        memset(&config, 0, sizeof(config));
+        config.version = 2;
+        FPDF_InitLibraryWithConfig(&config);
+        s_pdfium_initialized = true;
+        LOG("Pdfium library initialized for the first time.");
+    }
+    // Clear any previous errors at the start of an operation.
+    set_last_error("");
+
+    double custom_scale;
+    int paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id;
+    parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id, &custom_scale);
+
+    wchar_t* printer_name_w = to_utf16(printer_name);
+    if (!printer_name_w) {
+        set_last_error("Failed to convert printer name to UTF-16.");
+        LOG("print_pdf_job_win: Failed to convert printer name to UTF-16");
+        return 0;
+    }
+
+    FPDF_DOCUMENT doc = FPDF_LoadDocument(pdf_file_path, NULL);
+    if (!doc) {
+        set_last_error("Failed to load PDF document at path '%s'. Error code: %ld. The file may be missing, corrupt, or password-protected.", pdf_file_path, FPDF_GetLastError());
+        LOG("print_pdf_job_win: FPDF_LoadDocument failed for path: %s. Error: %ld", pdf_file_path, FPDF_GetLastError());
+        free(printer_name_w);
+        return 0;
+    }
+    LOG("print_pdf_job_win: PDF document loaded successfully.");
+
+    DEVMODEW* pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id);
+
+    HDC hdc = CreateDCW(L"WINSPOOL", printer_name_w, NULL, pDevMode);
+    if (pDevMode) free(pDevMode); // DEVMODE is copied by CreateDC, so we can free it now.
+
+    if (!hdc) {
+        set_last_error("Failed to create device context (CreateDCW) for printer '%s'. Error: %lu. This often indicates an invalid printer name or driver issue.", printer_name, GetLastError());
+        LOG("print_pdf_job_win: CreateDCW failed for printer '%s' with error %lu. This often indicates an invalid DEVMODE.", printer_name, GetLastError());
+        FPDF_CloseDocument(doc);
+        free(printer_name_w);
+        return 0;
+    }
+
+    wchar_t* doc_name_w = to_utf16(doc_name);
+    DOCINFOW di = { sizeof(DOCINFOW), doc_name_w, NULL, 0 };
+    int job_id = StartDocW(hdc, &di);
+
+    if (job_id <= 0) {
+        set_last_error("Failed to start print document (StartDocW). Error: %lu.", GetLastError());
+        LOG("print_pdf_job_win: StartDocW failed with error %lu", GetLastError());
+        if (doc_name_w) free(doc_name_w);
+        DeleteDC(hdc);
+        FPDF_CloseDocument(doc);
+        free(printer_name_w);
+        return 0;
+    }
+    // doc_name_w is used by the system, don't free it until EndDoc.
+    LOG("print_pdf_job_win: StartDocW succeeded with Job ID: %d", job_id);
+
+    int page_count = FPDF_GetPageCount(doc);
+    if (page_count <= 0) {
+        set_last_error("Could not get page count from the PDF document. The file may be empty, corrupt, or in an unsupported format. (Page count: %d)", page_count);
+        LOG("print_pdf_job_win: FPDF_GetPageCount returned %d. Aborting.", page_count);
+        if (doc_name_w) free(doc_name_w);
+        AbortDoc(hdc);
+        DeleteDC(hdc);
+        FPDF_CloseDocument(doc);
+        free(printer_name_w);
+        // We don't need to free pages_to_print as it's not allocated yet.
+        return 0;
+    }
+
+    LOG("print_pdf_job_win: PDF has %d pages.", page_count);    bool* pages_to_print = (bool*)malloc(page_count * sizeof(bool));
+    if (!pages_to_print) {
+        set_last_error("Failed to allocate memory for page range flags.");
+        LOG("print_pdf_job_win: Failed to allocate memory for page range flags.");
+        if (doc_name_w) free(doc_name_w);
+        AbortDoc(hdc);
+        DeleteDC(hdc);
+        FPDF_CloseDocument(doc);
+        free(printer_name_w);
+        return 0;
+    }
+
+    if (!parse_page_range(page_range, pages_to_print, page_count)) {
+        // If parse_page_range fails, it now sets a specific error. If it's still empty, provide a generic one.
+        if (g_last_error_message == NULL || strlen(g_last_error_message) == 0)
+            set_last_error("Invalid page range format: '%s'. Use a format like '1-3,5,7-9'.", page_range ? page_range : "");
+        LOG("print_pdf_job_win: Invalid page range string provided: %s", page_range ? page_range : "(null)");
+        free(pages_to_print);
+        if (doc_name_w) free(doc_name_w);
+        AbortDoc(hdc);
+        DeleteDC(hdc);
+        FPDF_CloseDocument(doc);
+        free(printer_name_w);
+        return 0;
+    }
+    LOG("print_pdf_job_win: Page range parsed successfully. Copies: %d.", copies);
+
+    // --- Alignment ---
+    double align_x_factor = 0.5; // Default to center
+    double align_y_factor = 0.5; // Default to center
+
+    if (alignment) {
+        char* alignment_lower = strdup(alignment);
+        if (alignment_lower) {
+            for (int i = 0; alignment_lower[i]; i++) {
+                alignment_lower[i] = tolower(alignment_lower[i]);
+            }
+
+            if (strstr(alignment_lower, "left")) {
+                align_x_factor = 0.0;
+            } else if (strstr(alignment_lower, "right")) {
+                align_x_factor = 1.0;
+            }
+
+            if (strstr(alignment_lower, "top")) {
+                align_y_factor = 0.0;
+            } else if (strstr(alignment_lower, "bottom")) {
+                align_y_factor = 1.0;
+            }
+
+            free(alignment_lower);
+        }
+    }
+
+    bool success = true;
+    for (int c = 0; c < copies && success; c++) {
+        LOG("print_pdf_job_win: Starting copy %d of %d.", c + 1, copies);
+        for (int i = 0; i < page_count && success; ++i) {
+            if (!pages_to_print[i]) {
+                continue;
+            }
+            LOG("print_pdf_job_win: Printing page %d (0-indexed).", i);
+
+            // Declare destination rectangle variables for the current page.
+            int dest_x = 0, dest_y = 0, dest_width = 0, dest_height = 0;
+
+            FPDF_PAGE page = FPDF_LoadPage(doc, i);
+            if (!page) {
+                set_last_error("Failed to load PDF page %d.", i + 1);
+                LOG("print_pdf_job_win: FPDF_LoadPage failed for page %d", i);
+                success = false;
+                break;
+            }
+
+            if (StartPage(hdc) <= 0) {
+                set_last_error("Failed to start page %d. Error: %lu.", i + 1, GetLastError());
+                LOG("print_pdf_job_win: StartPage failed for page %d with error %lu", i, GetLastError());
+                // Clean up the page resource before breaking from the loop.
+                FPDF_ClosePage(page);
+                success = false;
+                break;
+            }
+
+            // --- Get PDF page dimensions and rotation ---
+            float pdf_width_pt = FPDF_GetPageWidthF(page);
+            float pdf_height_pt = FPDF_GetPageHeightF(page);
+
+            int rotation = FPDFPage_GetRotation(page);
+            if (rotation == 1 || rotation == 3) { // 90 or 270 degrees, swap dimensions
+                float temp = pdf_width_pt;
+                pdf_width_pt = pdf_height_pt;
+                pdf_height_pt = temp;
+            }
+
+            int dpi_x = GetDeviceCaps(hdc, LOGPIXELSX);
+            int dpi_y = GetDeviceCaps(hdc, LOGPIXELSY);
+            int printable_width_pixels = GetDeviceCaps(hdc, HORZRES);
+            int printable_height_pixels = GetDeviceCaps(hdc, VERTRES);
+            int paper_width_pixels = GetDeviceCaps(hdc, PHYSICALWIDTH);
+            int paper_height_pixels = GetDeviceCaps(hdc, PHYSICALHEIGHT);
+
+            LOG("print_pdf_job_win: Page %d: PDF Dimensions (pt): %.2f x %.2f", i, pdf_width_pt, pdf_height_pt);
+            LOG("print_pdf_job_win: Page %d: Device DPI: %d x %d", i, dpi_x, dpi_y);
+            LOG("print_pdf_job_win: Page %d: Printable Area (pixels): %d x %d", i, printable_width_pixels, printable_height_pixels);
+            LOG("print_pdf_job_win: Page %d: Physical Paper (pixels): %d x %d", i, paper_width_pixels, paper_height_pixels);
+
+            // Render the bitmap using the device's specific DPI for each axis to avoid distortion.
+            int bitmap_width = (int)(pdf_width_pt / 72.0f * dpi_x);
+            int bitmap_height = (int)(pdf_height_pt / 72.0f * dpi_y);
+            LOG("print_pdf_job_win: Page %d: Bitmap Dimensions (pixels): %d x %d", i, bitmap_width, bitmap_height);
+
+            BITMAPINFO bmi;
+            memset(&bmi, 0, sizeof(bmi));
+            bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+            bmi.bmiHeader.biWidth = bitmap_width;
+            bmi.bmiHeader.biHeight = -bitmap_height; // Negative for top-down DIB
+            bmi.bmiHeader.biPlanes = 1;
+            bmi.bmiHeader.biBitCount = 32; // Using 32-bit BGRA for alignment safety, as in the original working code.
+            bmi.bmiHeader.biCompression = BI_RGB;
+
+            void* pBitmapData = NULL;
+            HBITMAP hBitmap = CreateDIBSection(hdc, &bmi, DIB_RGB_COLORS, &pBitmapData, NULL, 0);
+            if (!hBitmap || !pBitmapData) {
+                set_last_error("Failed to create bitmap for rendering page %d. Error: %lu.", i + 1, GetLastError());
+                LOG("print_pdf_job_win: CreateDIBSection failed for page %d with error %lu", i, GetLastError());
+                FPDF_ClosePage(page);
+                EndPage(hdc);
+                success = false;
+                break;
+            }
+
+            FPDF_BITMAP pdfBitmap = FPDFBitmap_CreateEx(bitmap_width, bitmap_height, FPDFBitmap_BGRA, pBitmapData, bitmap_width * 4);
+            if (!pdfBitmap) {
+                set_last_error("Failed to create PDFium bitmap for page %d.", i + 1);
+                LOG("print_pdf_job_win: FPDFBitmap_CreateEx failed for page %d", i);
+                DeleteObject(hBitmap);
+                FPDF_ClosePage(page);
+                EndPage(hdc);
+                success = false;
+                break;
+            }
+
+            FPDFBitmap_FillRect(pdfBitmap, 0, 0, bitmap_width, bitmap_height, 0xFFFFFFFF); // Fill with white
+            // Pass the rotation value to PDFium so it handles rendering the page correctly.
+            // IMPORTANT: We have already swapped the width/height to create a correctly-oriented
+            // bitmap. We must now render the page with NO additional rotation, so we pass 0.
+            // The page content itself will be correctly oriented within the unrotated bitmap.
+            FPDF_RenderPageBitmap(pdfBitmap, page, 0, 0, bitmap_width, bitmap_height, 0, FPDF_ANNOT);
+            FPDFBitmap_Destroy(pdfBitmap);
+
+            if (scaling_mode == 0) { // Fit to Printable Area (formerly Fit Page)
+                _scale_to_fit(bitmap_width, bitmap_height, printable_width_pixels, printable_height_pixels, &dest_width, &dest_height);
+                LOG("print_pdf_job_win: Page %d: ScalingMode=FitToPrintableArea, Dest=(%d,%d)", i, dest_width, dest_height);
+
+            } else if (scaling_mode == 1) { // Actual Size
+                // Calculate actual size in device pixels
+                dest_width = (int)(pdf_width_pt / 72.0f * dpi_x);
+                dest_height = (int)(pdf_height_pt / 72.0f * dpi_y);
+                LOG("print_pdf_job_win: Page %d: ScalingMode=ActualSize, Dest=(%d,%d)", i, dest_width, dest_height);
+
+            } else if (scaling_mode == 2) { // Shrink to Fit
+                // If the PDF page is larger than the printable area, scale down to fit.
+                // Otherwise, print at actual size.
+                int pdf_pixel_width = (int)(pdf_width_pt / 72.0f * dpi_x);
+                int pdf_pixel_height = (int)(pdf_height_pt / 72.0f * dpi_y);
+
+                if (pdf_pixel_width > printable_width_pixels || pdf_pixel_height > printable_height_pixels) {
+                    _scale_to_fit(bitmap_width, bitmap_height, printable_width_pixels, printable_height_pixels, &dest_width, &dest_height);
+                    LOG("print_pdf_job_win: Page %d: ScalingMode=ShrinkToFit (scaled), Dest=(%d,%d)", i, dest_width, dest_height);
+                } else {
+                    dest_width = pdf_pixel_width;
+                    dest_height = pdf_pixel_height;
+                    LOG("print_pdf_job_win: Page %d: ScalingMode=ShrinkToFit (actual size), Dest=(%d,%d)", i, dest_width, dest_height);
+                }
+            } else if (scaling_mode == 3) { // Fit to Paper
+                int paper_width = GetDeviceCaps(hdc, PHYSICALWIDTH);
+                int paper_height = GetDeviceCaps(hdc, PHYSICALHEIGHT);
+                _scale_to_fit(bitmap_width, bitmap_height, paper_width, paper_height, &dest_width, &dest_height);
+                LOG("print_pdf_job_win: Page %d: ScalingMode=FitToPaper, Dest=(%d,%d)", i, dest_width, dest_height);
+            } else if (scaling_mode == 4) { // Custom Scale
+                // Calculate actual size in device pixels first
+                int pdf_pixel_width = (int)(pdf_width_pt / 72.0f * dpi_x);
+                int pdf_pixel_height = (int)(pdf_height_pt / 72.0f * dpi_y);
+                // Apply custom scale factor
+                dest_width = (int)(pdf_pixel_width * custom_scale);
+                dest_height = (int)(pdf_pixel_height * custom_scale);
+                LOG("print_pdf_job_win: Page %d: ScalingMode=CustomScale (%.2f), Dest=(%d,%d)", i, custom_scale, dest_width, dest_height);
+            } else { // Default to Fit to Printable Area
+                _scale_to_fit(bitmap_width, bitmap_height, printable_width_pixels, printable_height_pixels, &dest_width, &dest_height);
+                LOG("print_pdf_job_win: Page %d: ScalingMode=Default (FitToPrintableArea), Dest=(%d,%d)", i, dest_width, dest_height);
+            }
+
+            if (scaling_mode == 3) { // Fit to Paper alignment is relative to physical paper
+                int paper_width = GetDeviceCaps(hdc, PHYSICALWIDTH);
+                int paper_height = GetDeviceCaps(hdc, PHYSICALHEIGHT);
+                int offset_x = GetDeviceCaps(hdc, PHYSICALOFFSETX);
+                int offset_y = GetDeviceCaps(hdc, PHYSICALOFFSETY);
+                dest_x = (int)((paper_width - dest_width) * align_x_factor) - offset_x;
+                dest_y = (int)((paper_height - dest_height) * align_y_factor) - offset_y;
+            } else { // All other modes are relative to the printable area
+                dest_x = (int)((printable_width_pixels - dest_width) * align_x_factor);
+                dest_y = (int)((printable_height_pixels - dest_height) * align_y_factor);
+            }
+
+            LOG("print_pdf_job_win: Page %d: Final DestRect=(%d,%d, %dx%d)", i, dest_x, dest_y, dest_width, dest_height);
+            if (StretchDIBits(hdc, dest_x, dest_y, dest_width, dest_height, 0, 0, bitmap_width, bitmap_height, pBitmapData, &bmi, DIB_RGB_COLORS, SRCCOPY) == GDI_ERROR) {
+                set_last_error("Failed to draw page %d to the printer device context. Error: %lu.", i + 1, GetLastError());
+                LOG("print_pdf_job_win: StretchDIBits failed for page %d with error %lu", i, GetLastError());
+                success = false;
+            }
+
+            DeleteObject(hBitmap);
+            FPDF_ClosePage(page);
+
+            if (EndPage(hdc) <= 0) {
+                set_last_error("Failed to end page %d. Error: %lu.", i + 1, GetLastError());
+                LOG("print_pdf_job_win: EndPage failed for page %d with error %lu", i, GetLastError());
+                success = false;
+            }
+        }
+    }
+
+    free(pages_to_print);
+    if (doc_name_w) free(doc_name_w);
+
+    if (success) {
+        LOG("print_pdf_job_win: All pages processed successfully. Calling EndDoc.");
+        EndDoc(hdc);
+    } else {
+        LOG("print_pdf_job_win: A failure occurred. Calling AbortDoc.");
+        AbortDoc(hdc);
+    }
+
+    DeleteDC(hdc);
+    FPDF_CloseDocument(doc);
+    free(printer_name_w);
+
+    if (submit_job) {
+        LOG("_print_pdf_job_win (submit) finished with result: %d, job_id: %d", success, job_id);
+        return success ? job_id : 0;
+    } else {
+        LOG("_print_pdf_job_win (print) finished with result: %d", success);
+        return success ? 1 : 0;
+    }
+}
+#endif
+
+#ifdef _WIN32
+// Internal helper to calculate the destination rectangle for scaling content to fit a target area.
+static void _scale_to_fit(int src_width, int src_height, int target_width, int target_height, int* dest_width, int* dest_height) {
+    float page_aspect = 1.0f;
+    if (src_height > 0) {
+        page_aspect = (float)src_width / (float)src_height;
+    }
+
+    float target_aspect = 1.0f;
+    if (target_height != 0) {
+        target_aspect = (float)target_width / (float)target_height;
+    }
+
+    if (page_aspect > target_aspect) {
+        *dest_width = target_width;
+        *dest_height = (int)(target_width / page_aspect);
+    } else {
+        *dest_height = target_height;
+        *dest_width = (int)(target_height * page_aspect);
+    }
+}
+#endif
+
+FFI_PLUGIN_EXPORT const char* get_last_error() {
+    return g_last_error_message ? g_last_error_message : "";
+}
+
+FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_path, const char* doc_name, int scaling_mode, int copies, const char* page_range, int num_options, const char** option_keys, const char** option_values, const char* alignment) {
     LOG("print_pdf called for printer: '%s', path: '%s', doc: '%s'", printer_name, pdf_file_path, doc_name);
 
     // Validate input parameters
@@ -636,210 +1080,7 @@ FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_
     }
 
 #ifdef _WIN32
-    if (!s_pdfium_initialized) {
-        FPDF_LIBRARY_CONFIG config;
-        memset(&config, 0, sizeof(config));
-        config.version = 2;
-        FPDF_InitLibraryWithConfig(&config);
-        s_pdfium_initialized = true;
-        LOG("Pdfium library initialized for the first time.");
-    }
-
-    int paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id;
-    parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id);
-    wchar_t* printer_name_w = to_utf16(printer_name);
-    if (!printer_name_w) {
-        LOG("Failed to convert printer name to UTF-16");
-        return false;
-    }
-
-    FPDF_DOCUMENT doc = FPDF_LoadDocument(pdf_file_path, NULL);
-    if (!doc) {
-        LOG("FPDF_LoadDocument failed for path: %s. Error: %ld", pdf_file_path, FPDF_GetLastError());
-        free(printer_name_w);
-        return false;
-    }
-
-    // --- Set print settings via DEVMODE ---
-    HANDLE hPrinter;
-    if (!OpenPrinterW(printer_name_w, &hPrinter, NULL)) {
-        LOG("OpenPrinterW failed with error %lu", GetLastError());
-        FPDF_CloseDocument(doc);
-        free(printer_name_w);
-        return false;
-    }
-
-    DEVMODEW* pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id);
-
-    HDC hdc = CreateDCW(L"WINSPOOL", printer_name_w, NULL, pDevMode);
-    if (pDevMode) free(pDevMode);
-    if (!hdc) {
-        LOG("CreateDCA failed for printer '%s' with error %lu", printer_name, GetLastError());
-        FPDF_CloseDocument(doc);
-        free(printer_name_w);
-        return false;
-    }
-
-    wchar_t* doc_name_w = to_utf16(doc_name);
-    DOCINFOW di = { sizeof(DOCINFOW), doc_name_w, NULL, 0 };
-    if (StartDocW(hdc, &di) <= 0) {
-        LOG("StartDocW failed with error %lu", GetLastError());
-        DeleteDC(hdc);
-        FPDF_CloseDocument(doc);
-        if (doc_name_w) free(doc_name_w);
-        free(printer_name_w);
-        return false;
-    }
-
-    int page_count = FPDF_GetPageCount(doc);
-    bool* pages_to_print = (bool*)malloc(page_count * sizeof(bool));
-    if (!pages_to_print) {
-        LOG("Failed to allocate memory for page range flags.");
-        AbortDoc(hdc);
-        DeleteDC(hdc);
-        FPDF_CloseDocument(doc);
-        if (doc_name_w) free(doc_name_w);
-        free(printer_name_w);
-        return false;
-    }
-    if (!parse_page_range(page_range, pages_to_print, page_count)) {
-        LOG("Invalid page range string provided: %s", page_range ? page_range : "(null)");
-        free(pages_to_print);
-        AbortDoc(hdc);
-        DeleteDC(hdc);
-        FPDF_CloseDocument(doc);
-        if (doc_name_w) free(doc_name_w);
-        free(printer_name_w);
-        return false;
-    }
-
-    bool success = true;
-    // Manually loop for copies, as some drivers (like "Print to PDF") ignore the DEVMODE setting.
-    for (int c = 0; c < copies && success; c++) {
-        for (int i = 0; i < page_count && success; ++i) {
-            if (!pages_to_print[i]) {
-                continue;
-            }
-            
-            if (StartPage(hdc) <= 0) {
-                LOG("StartPage failed for page %d with error %lu", i, GetLastError());
-                success = false;
-                break;
-            }
-
-            FPDF_PAGE page = FPDF_LoadPage(doc, i);
-            if (!page) {
-                LOG("FPDF_LoadPage failed for page %d", i);
-                EndPage(hdc);
-                success = false;
-                break;
-            }
-
-            // Get printer DPI for scaling
-            int dpi_x = GetDeviceCaps(hdc, LOGPIXELSX);
-            int dpi_y = GetDeviceCaps(hdc, LOGPIXELSY);
-
-            // Render page to a bitmap at printer's resolution
-            int width = (int)(FPDF_GetPageWidthF(page) / 72.0 * dpi_x);
-            int height = (int)(FPDF_GetPageHeightF(page) / 72.0 * dpi_y);
-
-            BITMAPINFO bmi;
-            memset(&bmi, 0, sizeof(bmi));
-            bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-            bmi.bmiHeader.biWidth = width;
-            bmi.bmiHeader.biHeight = -height; // Negative for top-down DIB, which Pdfium uses.
-            bmi.bmiHeader.biPlanes = 1;
-            bmi.bmiHeader.biBitCount = 32; // BGRA format
-            bmi.bmiHeader.biCompression = BI_RGB;
-
-            void* pBitmapData = NULL;
-            HBITMAP hBitmap = CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS, &pBitmapData, NULL, 0);
-            if (!hBitmap || !pBitmapData) {
-                LOG("CreateDIBSection failed for page %d", i);
-                FPDF_ClosePage(page);
-                EndPage(hdc);
-                success = false;
-                break;
-            }
-
-            // Create a Pdfium bitmap that wraps the DIB section's buffer.
-            FPDF_BITMAP pdfBitmap = FPDFBitmap_CreateEx(width, height, FPDFBitmap_BGRA, pBitmapData, width * 4);
-            if (!pdfBitmap) {
-                LOG("FPDFBitmap_CreateEx failed for page %d", i);
-                DeleteObject(hBitmap);
-                FPDF_ClosePage(page);
-                EndPage(hdc);
-                success = false;
-                break;
-            }
-
-            // Fill with white background (Pdfium renders with transparency by default)
-            FPDFBitmap_FillRect(pdfBitmap, 0, 0, width, height, 0xFFFFFFFF);
-
-            // Render the page into the Pdfium bitmap (which is our DIB buffer)
-            FPDF_RenderPageBitmap(pdfBitmap, page, 0, 0, width, height, 0, FPDF_ANNOT);
-
-            // The DIB section is now updated. We can destroy the Pdfium bitmap wrapper.
-            FPDFBitmap_Destroy(pdfBitmap);
-
-            // Get printable area of the printer
-            int printable_width = GetDeviceCaps(hdc, HORZRES);
-            int printable_height = GetDeviceCaps(hdc, VERTRES);
-
-            // Calculate destination rectangle based on scaling mode
-            int dest_x = 0;
-            int dest_y = 0;
-            int dest_width = width;
-            int dest_height = height;
-
-            if (scaling_mode == 0) { // 0 = Fit Page
-                float page_aspect = (float)width / (float)height;
-                float printable_aspect = (float)printable_width / (float)printable_height;
-
-                if (page_aspect > printable_aspect) {
-                    dest_width = printable_width;
-                    dest_height = (int)(printable_width / page_aspect);
-                } else {
-                    dest_height = printable_height;
-                    dest_width = (int)(printable_height * page_aspect);
-                }
-                dest_x = (printable_width - dest_width) / 2;
-                dest_y = (printable_height - dest_height) / 2;
-            } else { // 1 = Actual Size
-                dest_x = (printable_width - dest_width) / 2;
-                dest_y = (printable_height - dest_height) / 2;
-            }
-
-            int result = StretchDIBits(hdc, dest_x, dest_y, dest_width, dest_height, 0, 0, width, height, pBitmapData, &bmi, DIB_RGB_COLORS, SRCCOPY);
-            if (result == GDI_ERROR) {
-                LOG("StretchDIBits failed for page %d with error %lu", i, GetLastError());
-                success = false;
-            }
-
-            DeleteObject(hBitmap);
-            FPDF_ClosePage(page);
-
-            if (EndPage(hdc) <= 0) {
-                LOG("EndPage failed for page %d with error %lu", i, GetLastError());
-                success = false;
-            }
-        }
-    }
-
-    free(pages_to_print);
-    if (success) {
-        EndDoc(hdc);
-    } else {
-        AbortDoc(hdc);
-    }
-
-    DeleteDC(hdc);
-    FPDF_CloseDocument(doc);
-    if (doc_name_w) free(doc_name_w);
-    free(printer_name_w);
-
-    LOG("print_pdf (Pdfium/GDI) finished with result: %d", success);
-    return success;
+    return _print_pdf_job_win(printer_name, pdf_file_path, doc_name, scaling_mode, copies, page_range, alignment, num_options, option_keys, option_values, false) == 1;
 #else // macOS / Linux (CUPS)
     cups_option_t* options = NULL;
     int num_cups_options = 0;
@@ -1287,81 +1528,131 @@ FFI_PLUGIN_EXPORT void free_cups_option_list(CupsOptionList* option_list) {
 FFI_PLUGIN_EXPORT WindowsPrinterCapabilities* get_windows_printer_capabilities(const char* printer_name) {
     if (!printer_name) {
         LOG("get_windows_printer_capabilities called with null printer name");
-        WindowsPrinterCapabilities* caps = (WindowsPrinterCapabilities*)calloc(1, sizeof(WindowsPrinterCapabilities));
-        return caps;
+        return (WindowsPrinterCapabilities*)calloc(1, sizeof(WindowsPrinterCapabilities));
     }
 
     LOG("get_windows_printer_capabilities called for printer: '%s'", printer_name);
 #ifndef _WIN32
-    // This function is only for Windows. Return an empty struct.
-    WindowsPrinterCapabilities* caps = (WindowsPrinterCapabilities*)calloc(1, sizeof(WindowsPrinterCapabilities));
-    return caps;
+    return (WindowsPrinterCapabilities*)calloc(1, sizeof(WindowsPrinterCapabilities));
 #else
     wchar_t* printer_name_w = to_utf16(printer_name);
     if (!printer_name_w) {
         LOG("Failed to convert printer name to UTF-16");
-        return NULL;
+        return (WindowsPrinterCapabilities*)calloc(1, sizeof(WindowsPrinterCapabilities));
     }
 
     HANDLE hPrinter;
     if (!OpenPrinterW(printer_name_w, &hPrinter, NULL)) {
         LOG("OpenPrinterW failed with error %lu", GetLastError());
         free(printer_name_w);
+        return (WindowsPrinterCapabilities*)calloc(1, sizeof(WindowsPrinterCapabilities));
+    }
+
+    // First, get the size of the DEVMODE structure.
+    LONG devModeSize = DocumentPropertiesW(NULL, hPrinter, printer_name_w, NULL, NULL, 0);
+    if (devModeSize <= 0) {
+        LOG("DocumentProperties (get size) failed with error %lu", GetLastError());
+        ClosePrinter(hPrinter);
+        free(printer_name_w);
+        return (WindowsPrinterCapabilities*)calloc(1, sizeof(WindowsPrinterCapabilities));
+    }
+
+    DEVMODEW* pDevMode = (DEVMODEW*)malloc(devModeSize);
+    if (!pDevMode) {
+        LOG("Failed to allocate memory for DEVMODE structure.");
+        ClosePrinter(hPrinter);
+        free(printer_name_w);
+        return (WindowsPrinterCapabilities*)calloc(1, sizeof(WindowsPrinterCapabilities));
+    }
+
+    // Get the default DEVMODE for the printer.
+    if (DocumentPropertiesW(NULL, hPrinter, printer_name_w, pDevMode, NULL, DM_OUT_BUFFER) != IDOK) {
+        LOG("DocumentProperties (get defaults) failed with error %lu", GetLastError());
+        free(pDevMode);
+        ClosePrinter(hPrinter);
+        free(printer_name_w);
+        return (WindowsPrinterCapabilities*)calloc(1, sizeof(WindowsPrinterCapabilities));
+    }
+
+    WindowsPrinterCapabilities* caps = (WindowsPrinterCapabilities*)calloc(1, sizeof(WindowsPrinterCapabilities));
+    if (!caps) {
+        free(pDevMode);
+        ClosePrinter(hPrinter);
+        free(printer_name_w);
         return NULL;
+    }
+
+    // --- Check DEVMODE fields for supported features ---
+    caps->supports_landscape = (pDevMode->dmFields & DM_ORIENTATION) != 0;
+    if (pDevMode->dmFields & DM_COLOR) {
+        if (pDevMode->dmColor == DMCOLOR_COLOR) {
+            caps->is_color_supported = true;
+            caps->is_monochrome_supported = true; // Color printers can always print monochrome
+        } else {
+            caps->is_color_supported = false;
+            caps->is_monochrome_supported = true;
+        }
+    } else {
+        // If the DM_COLOR field is not supported, we can assume monochrome.
+        caps->is_color_supported = false;
+        caps->is_monochrome_supported = true;
     }
 
     // Get PRINTER_INFO_2 to find the port name required by DeviceCapabilities
     DWORD needed = 0;
     GetPrinterW(hPrinter, 2, NULL, 0, &needed);
-    if (needed == 0) { // Check if GetPrinterW failed to get needed size
+    if (needed == 0) {
         LOG("GetPrinterW (to get size) failed with error %lu", GetLastError());
+        // We can still return the basic caps from DEVMODE
+        free(pDevMode);
         ClosePrinter(hPrinter);
         free(printer_name_w);
-        return NULL;
+        return caps;
     }
     PRINTER_INFO_2W* pinfo2 = (PRINTER_INFO_2W*)malloc(needed);
     if (!pinfo2) {
         LOG("Failed to allocate memory for PRINTER_INFO_2W");
+        free(pDevMode);
         ClosePrinter(hPrinter);
         free(printer_name_w);
-        return NULL;
+        return caps; // Return what we have
     }
     if (!GetPrinterW(hPrinter, 2, (LPBYTE)pinfo2, needed, &needed)) {
         LOG("GetPrinterW failed with error %lu", GetLastError());
+        // Fallback to DEVMODE if GetPrinterW fails
+        caps->supports_landscape = (pDevMode->dmFields & DM_ORIENTATION) != 0;
+        caps->is_color_supported = (pDevMode->dmFields & DM_COLOR) && (pDevMode->dmColor == DMCOLOR_COLOR);
+        caps->is_monochrome_supported = true;
         free(pinfo2);
+        free(pDevMode);
         ClosePrinter(hPrinter);
         free(printer_name_w);
-        return NULL;
+        return caps; // Return what we have
     }
 
     const wchar_t* port_w = pinfo2->pPortName;
     if (!port_w) {
-        LOG("pPortName is NULL for printer '%s'. Cannot get capabilities.", printer_name);
-        free(pinfo2);
-        ClosePrinter(hPrinter);
-        free(printer_name_w);
-        return (WindowsPrinterCapabilities*)calloc(1, sizeof(WindowsPrinterCapabilities)); // Return empty capabilities struct
-    }
+        LOG("pPortName is NULL for printer '%s'. Cannot get extended capabilities.", printer_name);
+        // Fallback to DEVMODE if port name is not available
+        caps->supports_landscape = (pDevMode->dmFields & DM_ORIENTATION) != 0;
+        caps->is_color_supported = (pDevMode->dmFields & DM_COLOR) && (pDevMode->dmColor == DMCOLOR_COLOR);
+        caps->is_monochrome_supported = true;
+    } else {
+        // Use DeviceCapabilities for more reliable capability detection.
+        caps->supports_landscape = (DeviceCapabilitiesW(printer_name_w, port_w, DC_ORIENTATION, NULL, pDevMode) > 0);
+        caps->is_color_supported = (DeviceCapabilitiesW(printer_name_w, port_w, DC_COLORDEVICE, NULL, NULL) == 1);
+        caps->is_monochrome_supported = true; // All printers should support monochrome.
+        // --- Get Paper Sizes ---
+        long num_papers = DeviceCapabilitiesW(printer_name_w, port_w, DC_PAPERS, NULL, NULL);
+        if (num_papers > 0) {
+            WORD* papers = (WORD*)malloc(num_papers * sizeof(WORD));
+            wchar_t (*paper_names_w)[64] = (wchar_t(*)[64])malloc(num_papers * 64 * sizeof(wchar_t));
+            POINT* paper_sizes_points = (POINT*)malloc(num_papers * sizeof(POINT));
 
-    WindowsPrinterCapabilities* caps = (WindowsPrinterCapabilities*)calloc(1, sizeof(WindowsPrinterCapabilities));
-    if (!caps) {
-        free(pinfo2);
-        ClosePrinter(hPrinter);
-        free(printer_name_w);
-        return NULL;
-    }
-
-    // --- Get Paper Sizes ---
-    long num_papers = DeviceCapabilitiesW(printer_name_w, port_w, DC_PAPERS, NULL, NULL);
-    if (num_papers > 0) {
-        WORD* papers = (WORD*)malloc(num_papers * sizeof(WORD));
-        wchar_t (*paper_names_w)[64] = (wchar_t(*)[64])malloc(num_papers * 64 * sizeof(wchar_t));
-        POINT* paper_sizes_points = (POINT*)malloc(num_papers * sizeof(POINT));
-
-        if (papers && paper_names_w && paper_sizes_points) {
-            if (DeviceCapabilitiesW(printer_name_w, port_w, DC_PAPERS, (LPWSTR)papers, NULL) != -1 &&
-                DeviceCapabilitiesW(printer_name_w, port_w, DC_PAPERNAMES, (LPWSTR)paper_names_w, NULL) != -1 &&
-                DeviceCapabilitiesW(printer_name_w, port_w, DC_PAPERSIZE, (LPWSTR)paper_sizes_points, NULL) != -1) {
+            if (papers && paper_names_w && paper_sizes_points) {
+                DeviceCapabilitiesW(printer_name_w, port_w, DC_PAPERS, (LPWSTR)papers, NULL);
+                DeviceCapabilitiesW(printer_name_w, port_w, DC_PAPERNAMES, (LPWSTR)paper_names_w, NULL);
+                DeviceCapabilitiesW(printer_name_w, port_w, DC_PAPERSIZE, (LPWSTR)paper_sizes_points, NULL);
 
                 caps->paper_sizes.count = (int)num_papers;
                 caps->paper_sizes.papers = (PaperSize*)malloc(num_papers * sizeof(PaperSize));
@@ -1369,32 +1660,25 @@ FFI_PLUGIN_EXPORT WindowsPrinterCapabilities* get_windows_printer_capabilities(c
                     for (long i = 0; i < num_papers; i++) {
                         caps->paper_sizes.papers[i].id = papers[i];
                         caps->paper_sizes.papers[i].name = to_utf8(paper_names_w[i]);
-                        // Dimensions are in 0.1mm units. Convert to mm.
                         caps->paper_sizes.papers[i].width_mm = (float)paper_sizes_points[i].x / 10.0f;
                         caps->paper_sizes.papers[i].height_mm = (float)paper_sizes_points[i].y / 10.0f;
                     }
-                } else {
-                    caps->paper_sizes.count = 0;
-                    LOG("Failed to allocate memory for paper size details.");
                 }
             }
-        } else {
-            LOG("Failed to allocate memory for paper capabilities buffers.");
+            if (papers) free(papers);
+            if (paper_names_w) free(paper_names_w);
+            if (paper_sizes_points) free(paper_sizes_points);
         }
-        if (papers) free(papers);
-        if (paper_names_w) free(paper_names_w);
-        if (paper_sizes_points) free(paper_sizes_points);
-    }
 
-    // --- Get Paper Bins (Sources) ---
-    long num_bins = DeviceCapabilitiesW(printer_name_w, port_w, DC_BINS, NULL, NULL);
-    if (num_bins > 0) {
-        WORD* bins = (WORD*)malloc(num_bins * sizeof(WORD));
-        wchar_t (*bin_names_w)[24] = (wchar_t(*)[24])malloc(num_bins * 24 * sizeof(wchar_t));
+        // --- Get Paper Bins (Sources) ---
+        long num_bins = DeviceCapabilitiesW(printer_name_w, port_w, DC_BINS, NULL, NULL);
+        if (num_bins > 0) {
+            WORD* bins = (WORD*)malloc(num_bins * sizeof(WORD));
+            wchar_t (*bin_names_w)[24] = (wchar_t(*)[24])malloc(num_bins * 24 * sizeof(wchar_t));
 
-        if (bins && bin_names_w) {
-            if (DeviceCapabilitiesW(printer_name_w, port_w, DC_BINS, (LPWSTR)bins, NULL) != -1 &&
-                DeviceCapabilitiesW(printer_name_w, port_w, DC_BINNAMES, (LPWSTR)bin_names_w, NULL) != -1) {
+            if (bins && bin_names_w) {
+                DeviceCapabilitiesW(printer_name_w, port_w, DC_BINS, (LPWSTR)bins, NULL);
+                DeviceCapabilitiesW(printer_name_w, port_w, DC_BINNAMES, (LPWSTR)bin_names_w, NULL);
 
                 caps->paper_sources.count = (int)num_bins;
                 caps->paper_sources.sources = (PaperSource*)malloc(num_bins * sizeof(PaperSource));
@@ -1403,72 +1687,15 @@ FFI_PLUGIN_EXPORT WindowsPrinterCapabilities* get_windows_printer_capabilities(c
                         caps->paper_sources.sources[i].id = bins[i];
                         caps->paper_sources.sources[i].name = to_utf8(bin_names_w[i]);
                     }
-                } else {
-                    caps->paper_sources.count = 0;
-                    LOG("Failed to allocate memory for paper source details.");
                 }
             }
-        } else {
-            LOG("Failed to allocate memory for paper source buffers.");
-        }
-        if (bins) free(bins);
-        if (bin_names_w) free(bin_names_w);
-    }
-
-    // --- Get Media Types ---
-    long num_media_types = DeviceCapabilitiesW(printer_name_w, port_w, DC_MEDIATYPES, NULL, NULL);
-    if (num_media_types > 0) {
-        DWORD* media_type_ids = (DWORD*)malloc(num_media_types * sizeof(DWORD));
-        wchar_t (*media_type_names_w)[64] = (wchar_t(*)[64])malloc(num_media_types * 64 * sizeof(wchar_t));
-
-        if (media_type_ids && media_type_names_w) {
-            if (DeviceCapabilitiesW(printer_name_w, port_w, DC_MEDIATYPES, (LPWSTR)media_type_ids, NULL) != -1 &&
-                DeviceCapabilitiesW(printer_name_w, port_w, DC_MEDIATYPENAMES, (LPWSTR)media_type_names_w, NULL) != -1) {
-
-                caps->media_types.count = (int)num_media_types;
-                caps->media_types.types = (MediaType*)malloc(num_media_types * sizeof(MediaType));
-                if (caps->media_types.types) {
-                    for (long i = 0; i < num_media_types; i++) {
-                        caps->media_types.types[i].id = (short)media_type_ids[i];
-                        caps->media_types.types[i].name = to_utf8(media_type_names_w[i]);
-                    }
-                } else {
-                    caps->media_types.count = 0;
-                    LOG("Failed to allocate memory for media type details.");
-                }
-            }
-        } else {
-            LOG("Failed to allocate memory for media type buffers.");
-        }
-        if (media_type_ids) free(media_type_ids);
-        if (media_type_names_w) free(media_type_names_w);
-    }
-
-    // --- Get Resolutions ---
-    long num_res = DeviceCapabilitiesW(printer_name_w, port_w, DC_ENUMRESOLUTIONS, NULL, NULL);
-    if (num_res > 0) {
-        LONG* resolutions = (LONG*)malloc(num_res * 2 * sizeof(LONG));
-        if (resolutions) {
-            if (DeviceCapabilitiesW(printer_name_w, port_w, DC_ENUMRESOLUTIONS, (LPWSTR)resolutions, NULL) != -1) {
-                caps->resolutions.count = (int)num_res;
-                caps->resolutions.resolutions = (Resolution*)malloc(num_res * sizeof(Resolution));
-                if (caps->resolutions.resolutions) {
-                    for (long i = 0; i < num_res; i++) {
-                        caps->resolutions.resolutions[i].x_dpi = resolutions[i * 2];
-                        caps->resolutions.resolutions[i].y_dpi = resolutions[i * 2 + 1];
-                    }
-                } else {
-                    caps->resolutions.count = 0;
-                    LOG("Failed to allocate memory for resolution details.");
-                }
-            }
-            free(resolutions);
-        } else {
-            LOG("Failed to allocate memory for resolutions buffer.");
+            if (bins) free(bins);
+            if (bin_names_w) free(bin_names_w);
         }
     }
 
     free(pinfo2);
+    free(pDevMode);
     ClosePrinter(hPrinter);
     free(printer_name_w);
     return caps;
@@ -1512,7 +1739,8 @@ FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char* printer_name, const ui
 
 #ifdef _WIN32
     int paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id;
-    parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id);
+    double custom_scale; // Dummy
+    parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id, &custom_scale);
 
     HANDLE hPrinter;
     DOC_INFO_1W docInfo;
@@ -1623,7 +1851,7 @@ FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char* printer_name, const ui
 #endif
 }
 
-FFI_PLUGIN_EXPORT int32_t submit_pdf_job(const char* printer_name, const char* pdf_file_path, const char* doc_name, int scaling_mode, int copies, const char* page_range, int num_options, const char** option_keys, const char** option_values) {
+FFI_PLUGIN_EXPORT int32_t submit_pdf_job(const char* printer_name, const char* pdf_file_path, const char* doc_name, int scaling_mode, int copies, const char* page_range, int num_options, const char** option_keys, const char** option_values, const char* alignment) {
     LOG("submit_pdf_job called for printer: '%s', path: '%s', doc: '%s'", printer_name, pdf_file_path, doc_name);
 
     // Validate input parameters
@@ -1633,150 +1861,7 @@ FFI_PLUGIN_EXPORT int32_t submit_pdf_job(const char* printer_name, const char* p
     }
 
 #ifdef _WIN32
-    if (!s_pdfium_initialized) {
-        FPDF_LIBRARY_CONFIG config;
-        memset(&config, 0, sizeof(config));
-        config.version = 2;
-        FPDF_InitLibraryWithConfig(&config);
-        s_pdfium_initialized = true;
-        LOG("Pdfium library initialized for the first time.");
-    }
-
-    int paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id;
-    parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id);
-    wchar_t* printer_name_w = to_utf16(printer_name);
-    if (!printer_name_w) {
-        LOG("Failed to convert printer name to UTF-16");
-        return 0;
-    }
-
-    FPDF_DOCUMENT doc = FPDF_LoadDocument(pdf_file_path, NULL);
-    if (!doc) {
-        LOG("FPDF_LoadDocument failed for path: %s. Error: %ld", pdf_file_path, FPDF_GetLastError());
-        free(printer_name_w);
-        return 0;
-    }
-
-    // --- Set print settings via DEVMODE ---
-    DEVMODEW* pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id);
-
-    HDC hdc = CreateDCW(L"WINSPOOL", printer_name_w, NULL, pDevMode);
-    if (pDevMode) free(pDevMode);
-    if (!hdc) {
-        LOG("CreateDCA failed for printer '%s' with error %lu", printer_name, GetLastError());
-        FPDF_CloseDocument(doc);
-        free(printer_name_w);
-        return 0;
-    }
-
-    wchar_t* doc_name_w = to_utf16(doc_name);
-    DOCINFOW di = { sizeof(DOCINFOW), doc_name_w, NULL, 0 };
-    int job_id = StartDocW(hdc, &di);
-    if (job_id <= 0) {
-        LOG("StartDocW failed with error %lu", GetLastError());
-        DeleteDC(hdc);
-        FPDF_CloseDocument(doc);
-        if (doc_name_w) free(doc_name_w);
-        free(printer_name_w);
-        return 0;
-    }
-    if (doc_name_w) free(doc_name_w);
-
-    int page_count = FPDF_GetPageCount(doc);
-    bool* pages_to_print = (bool*)malloc(page_count * sizeof(bool));
-    if (!pages_to_print) {
-        LOG("Failed to allocate memory for page range flags.");
-        AbortDoc(hdc);
-        DeleteDC(hdc);
-        FPDF_CloseDocument(doc);
-        free(printer_name_w);
-        return 0;
-    }
-    if (!parse_page_range(page_range, pages_to_print, page_count)) {
-        LOG("Invalid page range string provided: %s", page_range ? page_range : "(null)");
-        free(pages_to_print);
-        AbortDoc(hdc);
-        DeleteDC(hdc);
-        FPDF_CloseDocument(doc);
-        free(printer_name_w);
-        return 0;
-    }
-
-    bool success = true;
-    // Manually loop for copies, as some drivers (like "Print to PDF") ignore the DEVMODE setting.
-    for (int c = 0; c < copies && success; c++) {
-        for (int i = 0; i < page_count && success; ++i) {
-            if (StartPage(hdc) <= 0) { success = false; break; }
-            if (!pages_to_print[i]) { EndPage(hdc); continue; }
-            FPDF_PAGE page = FPDF_LoadPage(doc, i);
-            if (!page) { EndPage(hdc); success = false; break; }
-
-            int dpi_x = GetDeviceCaps(hdc, LOGPIXELSX);
-            int dpi_y = GetDeviceCaps(hdc, LOGPIXELSY);
-            int width = (int)(FPDF_GetPageWidthF(page) / 72.0 * dpi_x);
-            int height = (int)(FPDF_GetPageHeightF(page) / 72.0 * dpi_y);
-
-            BITMAPINFO bmi;
-            memset(&bmi, 0, sizeof(bmi));
-            bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-            bmi.bmiHeader.biWidth = width;
-            bmi.bmiHeader.biHeight = -height;
-            bmi.bmiHeader.biPlanes = 1;
-            bmi.bmiHeader.biBitCount = 32;
-            bmi.bmiHeader.biCompression = BI_RGB;
-
-            void* pBitmapData = NULL;
-            HBITMAP hBitmap = CreateDIBSection(NULL, &bmi, DIB_RGB_COLORS, &pBitmapData, NULL, 0);
-            if (!hBitmap || !pBitmapData) { FPDF_ClosePage(page); EndPage(hdc); success = false; break; }
-
-            FPDF_BITMAP pdfBitmap = FPDFBitmap_CreateEx(width, height, FPDFBitmap_BGRA, pBitmapData, width * 4);
-            FPDFBitmap_FillRect(pdfBitmap, 0, 0, width, height, 0xFFFFFFFF);
-            if (!pdfBitmap) {
-                DeleteObject(hBitmap);
-                FPDF_ClosePage(page);
-                EndPage(hdc);
-                success = false;
-                break;
-            }
-            FPDF_RenderPageBitmap(pdfBitmap, page, 0, 0, width, height, 0, FPDF_ANNOT);
-            FPDFBitmap_Destroy(pdfBitmap);
-
-            int printable_width = GetDeviceCaps(hdc, HORZRES);
-            int printable_height = GetDeviceCaps(hdc, VERTRES);
-            int dest_x = 0, dest_y = 0, dest_width = width, dest_height = height;
-
-            if (scaling_mode == 0) { // Fit Page
-                float page_aspect = (float)width / (float)height;
-                float printable_aspect = (float)printable_width / (float)printable_height;
-                if (page_aspect > printable_aspect) {
-                    dest_width = printable_width;
-                    dest_height = (int)(printable_width / page_aspect);
-                } else {
-                    dest_height = printable_height;
-                    dest_width = (int)(printable_height * page_aspect);
-                }
-                dest_x = (printable_width - dest_width) / 2;
-                dest_y = (printable_height - dest_height) / 2;
-            } else { // Actual Size
-                dest_x = (printable_width - dest_width) / 2;
-                dest_y = (printable_height - dest_height) / 2;
-            }
-
-            if (StretchDIBits(hdc, dest_x, dest_y, dest_width, dest_height, 0, 0, width, height, pBitmapData, &bmi, DIB_RGB_COLORS, SRCCOPY) == GDI_ERROR) { success = false; }
-
-            DeleteObject(hBitmap);
-            FPDF_ClosePage(page);
-            if (EndPage(hdc) <= 0) { success = false; }
-        }
-    }
-
-    free(pages_to_print);
-    if (success) { EndDoc(hdc); } else { AbortDoc(hdc); }
-    DeleteDC(hdc);
-    FPDF_CloseDocument(doc);
-    free(printer_name_w);
-    LOG("submit_pdf_job (Pdfium/GDI) finished with result: %d, job_id: %d", success, job_id);
-    return success ? job_id : 0;
+    return _print_pdf_job_win(printer_name, pdf_file_path, doc_name, scaling_mode, copies, page_range, alignment, num_options, option_keys, option_values, true);
 #else // macOS / Linux (CUPS)
     cups_option_t* options = NULL;
     int num_cups_options = 0;

@@ -1,3 +1,13 @@
+## 0.0.7
+
+* **FEAT**: Improved error handling with `get_last_error` for detailed native messages and `register_log_callback` for real-time logging. 🕵️‍♂️
+* **FEAT**: Enhanced PDF printing on Windows with `Fit to Paper` and `Custom` scaling options. 📄✨
+* **FIX**: Corrected PDF rendering issues on Windows, including stretching on non-square DPIs and improving compatibility with a 32-bit BGRA bitmap format. 🐛
+* **FIX**: Improved stability by addressing a memory leak and enhancing resource cleanup during print failures on Windows.
+* **REFACTOR**: Removed redundant `DEVMODE` field resets to prevent potential driver conflicts on Windows. ♻️
+* **EXAMPLE**: Added PDF file selection and custom scale validation to the example app. 🎨
+* **DOCS**: Updated documentation for new features and error handling. 📝
+
 ## 0.0.6
 
 * **FEAT**: Added support for opening the native Windows printer properties dialog via `openPrinterProperties`. 🎛️

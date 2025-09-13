@@ -55,6 +55,17 @@ class PrintingFfiBindings {
   late final _get_printersPtr = _lookup<ffi.NativeFunction<ffi.Pointer<PrinterList> Function()>>('get_printers');
   late final _get_printers = _get_printersPtr.asFunction<ffi.Pointer<PrinterList> Function()>();
 
+  void register_log_callback(
+    log_callback_t callback,
+  ) {
+    return _register_log_callback(
+      callback,
+    );
+  }
+
+  late final _register_log_callbackPtr = _lookup<ffi.NativeFunction<ffi.Void Function(log_callback_t)>>('register_log_callback');
+  late final _register_log_callback = _register_log_callbackPtr.asFunction<void Function(log_callback_t)>();
+
   void free_printer_list(
     ffi.Pointer<PrinterList> printer_list,
   ) {
@@ -132,6 +143,7 @@ class PrintingFfiBindings {
     int num_options,
     ffi.Pointer<ffi.Pointer<ffi.Char>> option_keys,
     ffi.Pointer<ffi.Pointer<ffi.Char>> option_values,
+    ffi.Pointer<ffi.Char> alignment,
   ) {
     return _print_pdf(
       printer_name,
@@ -143,12 +155,16 @@ class PrintingFfiBindings {
       num_options,
       option_keys,
       option_values,
+      alignment,
     );
   }
 
   late final _print_pdfPtr =
-      _lookup<ffi.NativeFunction<ffi.Bool Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, ffi.Int, ffi.Int, ffi.Pointer<ffi.Char>, ffi.Int, ffi.Pointer<ffi.Pointer<ffi.Char>>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>>('print_pdf');
-  late final _print_pdf = _print_pdfPtr.asFunction<bool Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, int, int, ffi.Pointer<ffi.Char>, int, ffi.Pointer<ffi.Pointer<ffi.Char>>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+      _lookup<
+        ffi.NativeFunction<ffi.Bool Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, ffi.Int, ffi.Int, ffi.Pointer<ffi.Char>, ffi.Int, ffi.Pointer<ffi.Pointer<ffi.Char>>, ffi.Pointer<ffi.Pointer<ffi.Char>>, ffi.Pointer<ffi.Char>)>
+      >('print_pdf');
+  late final _print_pdf = _print_pdfPtr
+      .asFunction<bool Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, int, int, ffi.Pointer<ffi.Char>, int, ffi.Pointer<ffi.Pointer<ffi.Char>>, ffi.Pointer<ffi.Pointer<ffi.Char>>, ffi.Pointer<ffi.Char>)>();
 
   ffi.Pointer<JobList> get_print_jobs(
     ffi.Pointer<ffi.Char> printer_name,
@@ -255,6 +271,13 @@ class PrintingFfiBindings {
   late final _free_windows_printer_capabilitiesPtr = _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<WindowsPrinterCapabilities>)>>('free_windows_printer_capabilities');
   late final _free_windows_printer_capabilities = _free_windows_printer_capabilitiesPtr.asFunction<void Function(ffi.Pointer<WindowsPrinterCapabilities>)>();
 
+  ffi.Pointer<ffi.Char> get_last_error() {
+    return _get_last_error();
+  }
+
+  late final _get_last_errorPtr = _lookup<ffi.NativeFunction<ffi.Pointer<ffi.Char> Function()>>('get_last_error');
+  late final _get_last_error = _get_last_errorPtr.asFunction<ffi.Pointer<ffi.Char> Function()>();
+
   /// Functions that submit a job and return a job ID for status tracking.
   int submit_raw_data_job(
     ffi.Pointer<ffi.Char> printer_name,
@@ -291,6 +314,7 @@ class PrintingFfiBindings {
     int num_options,
     ffi.Pointer<ffi.Pointer<ffi.Char>> option_keys,
     ffi.Pointer<ffi.Pointer<ffi.Char>> option_values,
+    ffi.Pointer<ffi.Char> alignment,
   ) {
     return _submit_pdf_job(
       printer_name,
@@ -302,15 +326,23 @@ class PrintingFfiBindings {
       num_options,
       option_keys,
       option_values,
+      alignment,
     );
   }
 
   late final _submit_pdf_jobPtr =
-      _lookup<ffi.NativeFunction<ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, ffi.Int, ffi.Int, ffi.Pointer<ffi.Char>, ffi.Int, ffi.Pointer<ffi.Pointer<ffi.Char>>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>>(
-        'submit_pdf_job',
-      );
-  late final _submit_pdf_job = _submit_pdf_jobPtr.asFunction<int Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, int, int, ffi.Pointer<ffi.Char>, int, ffi.Pointer<ffi.Pointer<ffi.Char>>, ffi.Pointer<ffi.Pointer<ffi.Char>>)>();
+      _lookup<
+        ffi.NativeFunction<ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, ffi.Int, ffi.Int, ffi.Pointer<ffi.Char>, ffi.Int, ffi.Pointer<ffi.Pointer<ffi.Char>>, ffi.Pointer<ffi.Pointer<ffi.Char>>, ffi.Pointer<ffi.Char>)>
+      >('submit_pdf_job');
+  late final _submit_pdf_job = _submit_pdf_jobPtr
+      .asFunction<int Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, int, int, ffi.Pointer<ffi.Char>, int, ffi.Pointer<ffi.Pointer<ffi.Char>>, ffi.Pointer<ffi.Pointer<ffi.Char>>, ffi.Pointer<ffi.Char>)>();
 }
+
+typedef log_callback_tFunction = ffi.Void Function(ffi.Pointer<ffi.Char> message);
+typedef Dartlog_callback_tFunction = void Function(ffi.Pointer<ffi.Char> message);
+
+/// Define a function pointer type for the log callback.
+typedef log_callback_t = ffi.Pointer<ffi.NativeFunction<log_callback_tFunction>>;
 
 /// Struct for returning printer information
 final class PrinterInfo extends ffi.Struct {

@@ -13,7 +13,19 @@ extension ColorExt on Color {
   }
 }
 
+/// A local helper class to represent the custom scaling option in the UI.
+/// This is a marker class for the SegmentedButton.
+class _CustomScaling {
+  const _CustomScaling();
+}
+
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Initialize the FFI plugin and provide a custom log handler.
+  // This allows you to route native logs to your own logging infrastructure.
+  initializePrintingFfi(logHandler: (message) {
+    debugPrint('CUSTOM LOG HANDLER: $message');
+  });
   runApp(const PrintingFfiExampleApp());
 }
 
@@ -60,6 +72,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
   WindowsOrientation _selectedOrientation = WindowsOrientation.portrait;
   ColorMode _selectedColorMode = ColorMode.color;
   PrintQuality _selectedPrintQuality = PrintQuality.normal;
+  PdfPrintAlignment _selectedAlignment = PdfPrintAlignment.center;
 
   bool _isLoadingPrinters = false;
   bool _isLoadingJobs = false;
@@ -69,11 +82,15 @@ class _PrintingScreenState extends State<PrintingScreen> {
   final TextEditingController _rawDataController = TextEditingController(
     text: 'Hello, FFI!',
   );
-  PdfPrintScaling _selectedScaling = PdfPrintScaling.fitPage;
+  Object _selectedScaling = PdfPrintScaling.fitToPrintableArea;
+  final TextEditingController _customScaleController = TextEditingController(
+    text: '1.0',
+  );
   final TextEditingController _copiesController = TextEditingController(
     text: '1',
   );
   final TextEditingController _pageRangeController = TextEditingController();
+  String? _selectedPdfPath;
 
   ///int _tabIndex = 0;
 
@@ -89,6 +106,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
     _jobsSubscription?.cancel();
     _copiesController.dispose();
     _pageRangeController.dispose();
+    _customScaleController.dispose();
     super.dispose();
   }
 
@@ -116,6 +134,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
       _selectedOrientation = WindowsOrientation.portrait;
       _selectedColorMode = ColorMode.color;
       _selectedPrintQuality = PrintQuality.normal;
+      _selectedPdfPath = null;
     });
     try {
       final printers = listPrinters();
@@ -228,6 +247,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
       if (_selectedPaperSource != null) {
         options.add(WindowsPaperSourceOption(_selectedPaperSource!.id));
       }
+      options.add(AlignmentOption(_selectedAlignment));
     }
     options.add(OrientationOption(_selectedOrientation));
     options.add(ColorModeOption(_selectedColorMode));
@@ -247,9 +267,28 @@ class _PrintingScreenState extends State<PrintingScreen> {
     return options;
   }
 
+  Future<String?> _getPdfPath() async {
+    if (_selectedPdfPath != null) {
+      return _selectedPdfPath;
+    }
+
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['pdf'],
+    );
+
+    if (result != null && result.files.single.path != null) {
+      final path = result.files.single.path!;
+      setState(() {
+        _selectedPdfPath = path;
+      });
+      return path;
+    }
+    return null;
+  }
+
   Future<void> _printPdf({
     Map<String, String>? cupsOptions,
-    required PdfPrintScaling scaling,
     required int copies,
     required String pageRangeString,
   }) async {
@@ -266,16 +305,26 @@ class _PrintingScreenState extends State<PrintingScreen> {
         return;
       }
     }
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['pdf'],
-    );
-
-    if (result != null && result.files.single.path != null) {
-      final path = result.files.single.path!;
+    final path = await _getPdfPath();
+    if (path != null) {
       try {
         final options = _buildPrintOptions(cupsOptions: cupsOptions);
         _showSnackbar('Printing PDF...');
+
+        final PdfPrintScaling scaling;
+        if (_selectedScaling is _CustomScaling) {
+          final scaleValue = double.tryParse(_customScaleController.text);
+          if (scaleValue == null || scaleValue <= 0) {
+            _showSnackbar(
+              'Invalid custom scale value. It must be a positive number.',
+              isError: true,
+            );
+            return;
+          }
+          scaling = PdfPrintScaling.custom(scaleValue);
+        } else {
+          scaling = _selectedScaling as PdfPrintScaling;
+        }
         final success = await printPdf(
           _selectedPrinter!.name,
           path,
@@ -288,14 +337,9 @@ class _PrintingScreenState extends State<PrintingScreen> {
         if (!mounted) return;
         if (success) {
           _showSnackbar('PDF sent to printer successfully!');
-        } else {
-          _showSnackbar(
-            'Failed to print PDF. The printer may be offline or the page range may be invalid for the document.',
-            isError: true,
-          );
         }
-      } on ArgumentError catch (e) {
-        _showSnackbar('Invalid argument: ${e.message}', isError: true);
+      } on PrintingFfiException catch (e) {
+        _showSnackbar('Failed to print PDF: ${e.message}', isError: true);
       } catch (e) {
         _showSnackbar(
           'An unexpected error occurred while printing: $e',
@@ -310,15 +354,10 @@ class _PrintingScreenState extends State<PrintingScreen> {
       _showSnackbar('No printer selected!', isError: true);
       return;
     }
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['pdf'],
-    );
-
-    if (result != null && result.files.single.path != null) {
+    final path = await _getPdfPath();
+    if (path != null) {
       final copies = int.tryParse(_copiesController.text) ?? 1;
       final pageRangeString = _pageRangeController.text;
-      final path = result.files.single.path!;
       PageRange? pageRange;
       if (pageRangeString.trim().isNotEmpty) {
         try {
@@ -329,6 +368,22 @@ class _PrintingScreenState extends State<PrintingScreen> {
         }
       }
       final options = _buildPrintOptions();
+
+      final PdfPrintScaling scaling;
+      if (_selectedScaling is _CustomScaling) {
+        final scaleValue = double.tryParse(_customScaleController.text);
+        if (scaleValue == null || scaleValue <= 0) {
+          _showSnackbar(
+            'Invalid custom scale value. It must be a positive number.',
+            isError: true,
+          );
+          return;
+        }
+        scaling = PdfPrintScaling.custom(scaleValue);
+      } else {
+        scaling = _selectedScaling as PdfPrintScaling;
+      }
+
       if (!mounted) return;
       showDialog(
         context: context,
@@ -339,7 +394,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
             _selectedPrinter!.name,
             path,
             options: options,
-            scaling: _selectedScaling,
+            scaling: scaling,
             copies: copies,
             pageRange: pageRange,
           ),
@@ -607,98 +662,154 @@ class _PrintingScreenState extends State<PrintingScreen> {
               'Standard Actions',
               style: Theme.of(context).textTheme.titleLarge,
             ),
-            _buildPlatformSettings(),
             const SizedBox(height: 16),
-            Center(
-              child: Column(
-                children: [
-                  if (Platform.isWindows) ...[
-                    SegmentedButton<PdfPrintScaling>(
-                      segments: const [
-                        ButtonSegment(
-                          value: PdfPrintScaling.fitPage,
-                          label: Text('Fit to Page'),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(child: _buildPlatformSettings()),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    children: [
+                      if (Platform.isWindows)
+                        SegmentedButton<Object>(
+                          segments: const <ButtonSegment<Object>>[
+                            ButtonSegment(
+                              value: PdfPrintScaling.fitToPrintableArea,
+                              label: Text('Fit to Printable'),
+                            ),
+                            ButtonSegment(
+                              value: PdfPrintScaling.actualSize,
+                              label: Text('Actual Size'),
+                            ),
+                            ButtonSegment(
+                              value: PdfPrintScaling.shrinkToFit,
+                              label: Text('Shrink to Fit'),
+                            ),
+                            ButtonSegment(
+                              value: PdfPrintScaling.fitToPaper,
+                              label: Text('Fit to Paper'),
+                            ),
+                            ButtonSegment(
+                              value: _CustomScaling(),
+                              label: Text('Custom'),
+                            ),
+                          ],
+                          selected: {_selectedScaling},
+                          onSelectionChanged: (newSelection) {
+                            setState(() {
+                              _selectedScaling = newSelection.first;
+                            });
+                          },
                         ),
-                        ButtonSegment(
-                          value: PdfPrintScaling.actualSize,
-                          label: Text('Actual Size'),
+                      if (Platform.isWindows &&
+                          _selectedScaling is _CustomScaling) ...[
+                        const SizedBox(height: 12),
+                        SizedBox(
+                          width: 120,
+                          child: TextField(
+                            controller: _customScaleController,
+                            decoration: const InputDecoration(
+                              border: OutlineInputBorder(),
+                              labelText: 'Scale',
+                            ),
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true,
+                            ),
+                          ),
                         ),
                       ],
-                      selected: {_selectedScaling},
-                      onSelectionChanged: (newSelection) {
-                        setState(() {
-                          _selectedScaling = newSelection.first;
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                  ],
-                  ElevatedButton.icon(
-                    icon: const Icon(Icons.picture_as_pdf),
-                    label: const Text('Print a PDF File'),
-                    onPressed: () => _printPdf(
-                      scaling: _selectedScaling,
-                      copies: int.tryParse(_copiesController.text) ?? 1,
-                      pageRangeString: _pageRangeController.text,
-                    ),
-                    style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 24,
-                        vertical: 12,
+                      const SizedBox(height: 12),
+                      if (_selectedPdfPath != null)
+                        ListTile(
+                          leading: const Icon(Icons.picture_as_pdf),
+                          title: const Text(
+                            'Selected PDF:',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          subtitle: Text(
+                            _selectedPdfPath!.split(Platform.pathSeparator).last,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.clear),
+                            tooltip: 'Clear selection',
+                            onPressed: () {
+                              setState(() {
+                                _selectedPdfPath = null;
+                              });
+                            },
+                          ),
+                        ),
+                      ElevatedButton.icon(
+                        icon: const Icon(Icons.picture_as_pdf),
+                        label: Text(_selectedPdfPath == null
+                            ? 'Select & Print PDF'
+                            : 'Print Selected PDF'),
+                        onPressed: () => _printPdf(
+                          copies: int.tryParse(_copiesController.text) ?? 1,
+                          pageRangeString: _pageRangeController.text,
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 24,
+                            vertical: 12,
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: _copiesController,
-                            decoration: const InputDecoration(
-                              border: OutlineInputBorder(),
-                              labelText: 'Copies',
+                      const SizedBox(height: 12),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _copiesController,
+                                decoration: const InputDecoration(
+                                  border: OutlineInputBorder(),
+                                  labelText: 'Copies',
+                                ),
+                                keyboardType: TextInputType.number,
+                              ),
                             ),
-                            keyboardType: TextInputType.number,
-                          ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              flex: 2,
+                              child: TextField(
+                                controller: _pageRangeController,
+                                decoration: const InputDecoration(
+                                  border: OutlineInputBorder(),
+                                  labelText: 'Page Range',
+                                  hintText: 'e.g. 1-3, 5, 7-9',
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
-                        const SizedBox(width: 16),
-                        Expanded(
-                          flex: 2,
-                          child: TextField(
-                            controller: _pageRangeController,
-                            decoration: const InputDecoration(
-                              border: OutlineInputBorder(),
-                              labelText: 'Page Range',
-                              hintText: 'e.g. 1-3, 5, 7-9',
-                            ),
-                          ),
+                      ),
+                      const SizedBox(height: 4),
+                      const Text(
+                        'Leave page range blank to print all pages.',
+                        style: TextStyle(fontSize: 12, color: Colors.grey),
+                      ),
+                      const SizedBox(height: 12),
+                      ElevatedButton.icon(
+                        icon: const Icon(Icons.track_changes),
+                        label: const Text('Print PDF and Track Status'),
+                        onPressed: _printPdfAndTrack,
+                      ),
+                      if (Platform.isWindows) ...[
+                        const SizedBox(height: 12),
+                        ElevatedButton.icon(
+                          icon: const Icon(Icons.inventory_2_outlined),
+                          label: const Text('Show Printer Capabilities'),
+                          onPressed: _showWindowsCapabilities,
                         ),
                       ],
-                    ),
+                    ],
                   ),
-                  const SizedBox(height: 4),
-                  const Text(
-                    'Leave page range blank to print all pages.',
-                    style: TextStyle(fontSize: 12, color: Colors.grey),
-                  ),
-                  const SizedBox(height: 12),
-                  ElevatedButton.icon(
-                    icon: const Icon(Icons.track_changes),
-                    label: const Text('Print PDF and Track Status'),
-                    onPressed: _printPdfAndTrack,
-                  ),
-                  if (Platform.isWindows) ...[
-                    const SizedBox(height: 12),
-                    ElevatedButton.icon(
-                      icon: const Icon(Icons.inventory_2_outlined),
-                      label: const Text('Show Printer Capabilities'),
-                      onPressed: _showWindowsCapabilities,
-                    ),
-                  ],
-                ],
-              ),
+                ),
+              ],
             ),
             const Divider(height: 32),
             Text(
@@ -736,6 +847,138 @@ class _PrintingScreenState extends State<PrintingScreen> {
   }
 
   Widget _buildPlatformSettings() {
+    final List<Widget> windowsChildren = [];
+    if (Platform.isWindows) {
+      if (_isLoadingWindowsCaps) {
+        windowsChildren.add(const Center(child: CircularProgressIndicator()));
+      } else if (_windowsCapabilities != null) {
+        windowsChildren.addAll([
+          DropdownButtonFormField<WindowsPaperSize>(
+            isExpanded: true,
+            initialValue: _selectedPaperSize,
+            decoration: const InputDecoration(
+              labelText: 'Paper Size (Windows)',
+              border: OutlineInputBorder(),
+            ),
+            items: _windowsCapabilities!.paperSizes
+                .map(
+                  (p) => DropdownMenuItem(
+                    value: p,
+                    child: Text(p.name, overflow: TextOverflow.ellipsis),
+                  ),
+                )
+                .toList(),
+            onChanged: (p) => setState(() => _selectedPaperSize = p),
+          ),
+          DropdownButtonFormField<WindowsPaperSource>(
+            isExpanded: true,
+            initialValue: _selectedPaperSource,
+            decoration: const InputDecoration(
+              labelText: 'Paper Source (Windows)',
+              border: OutlineInputBorder(),
+            ),
+            items: _windowsCapabilities!.paperSources
+                .map(
+                  (s) => DropdownMenuItem(
+                    value: s,
+                    child: Text(s.name, overflow: TextOverflow.ellipsis),
+                  ),
+                )
+                .toList(),
+            onChanged: (s) => setState(() => _selectedPaperSource = s),
+          ),
+          DropdownButtonFormField<PdfPrintAlignment>(
+            initialValue: _selectedAlignment,
+            decoration: const InputDecoration(
+              labelText: 'Alignment (Windows)',
+              border: OutlineInputBorder(),
+            ),
+            items: PdfPrintAlignment.values
+                .map(
+                  (a) => DropdownMenuItem(
+                    value: a,
+                    child: Text(a.name[0].toUpperCase() + a.name.substring(1)),
+                  ),
+                )
+                .toList(),
+            onChanged: (a) => setState(
+              () => _selectedAlignment = a ?? PdfPrintAlignment.center,
+            ),
+          ),
+        ]);
+      }
+    }
+
+    final List<Widget> allChildren = [
+      ...windowsChildren,
+      DropdownButtonFormField<PrintQuality>(
+        initialValue: _selectedPrintQuality,
+        decoration: const InputDecoration(
+          labelText: 'Print Quality',
+          border: OutlineInputBorder(),
+        ),
+        items: PrintQuality.values
+            .map(
+              (q) => DropdownMenuItem(
+                value: q,
+                child: Text(q.name[0].toUpperCase() + q.name.substring(1)),
+              ),
+            )
+            .toList(),
+        onChanged: (q) =>
+            setState(() => _selectedPrintQuality = q ?? PrintQuality.normal),
+      ),
+      Tooltip(
+        message:
+            'Options may be disabled if the printer does not report support. If capabilities are unknown, all options are enabled.',
+        child: DropdownButtonFormField<ColorMode>(
+          initialValue: _selectedColorMode,
+          decoration: const InputDecoration(
+            labelText: 'Color Mode',
+            border: OutlineInputBorder(),
+          ),
+          items: ColorMode.values
+              .map(
+                (c) => DropdownMenuItem(
+                  value: c,
+                  enabled:
+                      (c == ColorMode.color &&
+                          (_windowsCapabilities?.isColorSupported ?? true)) ||
+                      (c == ColorMode.monochrome &&
+                          (_windowsCapabilities?.isMonochromeSupported ??
+                              true)),
+                  child: Text(c.name[0].toUpperCase() + c.name.substring(1)),
+                ),
+              )
+              .toList(),
+          onChanged: (c) =>
+              setState(() => _selectedColorMode = c ?? ColorMode.color),
+        ),
+      ),
+      Tooltip(
+        message:
+            'Options may be disabled if the printer does not report support. If capabilities are unknown, all options are enabled.',
+        child: DropdownButtonFormField<WindowsOrientation>(
+          initialValue: _selectedOrientation,
+          decoration: const InputDecoration(
+            labelText: 'Orientation',
+            border: OutlineInputBorder(),
+          ),
+          items: WindowsOrientation.values
+              .map(
+                (o) => DropdownMenuItem(
+                  value: o,
+                  child: Text(o.name[0].toUpperCase() + o.name.substring(1)),
+                ),
+              )
+              .toList(),
+          onChanged: (o) => setState(
+            () => _selectedOrientation = o ?? WindowsOrientation.portrait,
+          ),
+        ),
+      ),
+    ];
+
     return Padding(
       padding: const EdgeInsets.only(top: 16.0),
       child: Card(
@@ -753,123 +996,17 @@ class _PrintingScreenState extends State<PrintingScreen> {
                 style: Theme.of(context).textTheme.titleMedium,
               ),
               const SizedBox(height: 12),
-              if (Platform.isWindows) ...[
-                if (_isLoadingWindowsCaps)
-                  const Center(child: CircularProgressIndicator())
-                else if (_windowsCapabilities != null) ...[
-                  DropdownButtonFormField<WindowsPaperSize>(
-                    initialValue: _selectedPaperSize,
-                    decoration: const InputDecoration(
-                      labelText: 'Paper Size (Windows)',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: _windowsCapabilities!.paperSizes
-                        .map(
-                          (p) =>
-                              DropdownMenuItem(value: p, child: Text(p.name)),
-                        )
-                        .toList(),
-                    onChanged: (p) => setState(() => _selectedPaperSize = p),
-                  ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<WindowsPaperSource>(
-                    initialValue: _selectedPaperSource,
-                    decoration: const InputDecoration(
-                      labelText: 'Paper Source (Windows)',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: _windowsCapabilities!.paperSources
-                        .map(
-                          (s) =>
-                              DropdownMenuItem(value: s, child: Text(s.name)),
-                        )
-                        .toList(),
-                    onChanged: (s) => setState(() => _selectedPaperSource = s),
-                  ),
-                  const SizedBox(height: 12),
-                ],
-              ],
-              DropdownButtonFormField<PrintQuality>(
-                initialValue: _selectedPrintQuality,
-                decoration: const InputDecoration(
-                  labelText: 'Print Quality',
-                  border: OutlineInputBorder(),
+              GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                  maxCrossAxisExtent: 220,
+                  childAspectRatio: 3,
+                  crossAxisSpacing: 12,
+                  mainAxisSpacing: 12,
                 ),
-                items: PrintQuality.values
-                    .map(
-                      (q) => DropdownMenuItem(
-                        value: q,
-                        child: Text(
-                          q.name[0].toUpperCase() + q.name.substring(1),
-                        ),
-                      ),
-                    )
-                    .toList(),
-                onChanged: (q) => setState(
-                  () => _selectedPrintQuality = q ?? PrintQuality.normal,
-                ),
-              ),
-              const SizedBox(height: 12),
-              Tooltip(
-                message:
-                    'Options may be disabled if the printer does not report support. If capabilities are unknown, all options are enabled.',
-                child: DropdownButtonFormField<ColorMode>(
-                  initialValue: _selectedColorMode,
-                  decoration: const InputDecoration(
-                    labelText: 'Color Mode',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: ColorMode.values
-                      .map(
-                        (c) => DropdownMenuItem(
-                          value: c,
-                          enabled:
-                              (c == ColorMode.color &&
-                                  (_windowsCapabilities?.isColorSupported ??
-                                      true)) ||
-                              (c == ColorMode.monochrome &&
-                                  (_windowsCapabilities
-                                          ?.isMonochromeSupported ??
-                                      true)),
-                          child: Text(
-                            c.name[0].toUpperCase() + c.name.substring(1),
-                          ),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: (c) =>
-                      setState(() => _selectedColorMode = c ?? ColorMode.color),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Tooltip(
-                message:
-                    'Options may be disabled if the printer does not report support. If capabilities are unknown, all options are enabled.',
-                child: DropdownButtonFormField<WindowsOrientation>(
-                  initialValue: _selectedOrientation,
-                  decoration: const InputDecoration(
-                    labelText: 'Orientation',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: WindowsOrientation.values
-                      .map(
-                        (o) => DropdownMenuItem(
-                          value: o,
-                          enabled:
-                              o == WindowsOrientation.portrait ||
-                              (_windowsCapabilities?.supportsLandscape ??
-                                  true), // Only enable landscape if supported
-                          child: Text(
-                            o.name[0].toUpperCase() + o.name.substring(1),
-                          ),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: (o) => setState(
-                    () =>
-                        _selectedOrientation = o ?? WindowsOrientation.portrait,
-                  ),
-                ),
+                itemCount: allChildren.length,
+                itemBuilder: (context, index) => allChildren[index],
               ),
               const SizedBox(height: 16),
               Center(
@@ -1015,7 +1152,6 @@ class _PrintingScreenState extends State<PrintingScreen> {
               label: const Text('Print PDF with Selected Options'),
               onPressed: () => _printPdf(
                 cupsOptions: _selectedCupsOptions,
-                scaling: _selectedScaling,
                 copies: int.tryParse(_copiesController.text) ?? 1,
                 pageRangeString: _pageRangeController.text,
               ),

@@ -1,5 +1,8 @@
 # printing_ffi 🖨️
 
+[![Sponsor on GitHub](https://img.shields.io/static/v1?label=Sponsor&message=%E2%9D%A4&logo=GitHub&color=%23fe8e86)](https://github.com/sponsors/Shreemanarjun)
+[![Buy Me a Coffee](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/shreemanarjun)
+
 A Flutter plugin for direct printer communication using native FFI (Foreign Function Interface) bindings. This plugin enables listing printers (including offline ones), sending raw print data, and managing print jobs on macOS (via CUPS) and Windows (via winspool). It is designed for low-level printing tasks, offering improved performance and flexibility over solutions like the printing package. 🚀
 
 ## Features 🌟
