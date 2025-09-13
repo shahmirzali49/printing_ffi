@@ -131,24 +131,52 @@ sealed class PdfPrintScaling {
   final int nativeValue;
   const PdfPrintScaling(this.nativeValue);
 
-  /// Scale the page to fit the printable area of the paper, maintaining aspect ratio.
+  /// **Fit to Printable Area**
+  ///
+  /// Scales the page (up or down) to fit perfectly within the printer's
+  /// **printable area**, maintaining the aspect ratio. The printable area is
+  /// the physical paper size minus any unprintable hardware margins.
+  ///
+  /// This is the safest scaling option to ensure no content is ever clipped.
   static const PdfPrintScaling fitToPrintableArea = _PdfPrintScalingValue(0);
 
   @Deprecated('Use fitToPrintableArea instead. This will be removed in a future version.')
   static const PdfPrintScaling fitPage = fitToPrintableArea;
 
-  /// Print the page at its actual size (100% scale), centered on the paper.
+  /// **Actual Size**
+  ///
+  /// Prints the page without any scaling (100% scale). The content is centered
+  /// on the paper. If the page is larger than the printable area, the content
+  /// will be cropped.
   static const PdfPrintScaling actualSize = _PdfPrintScalingValue(1);
 
-  /// Shrink the page to fit the printable area if it's larger, otherwise print at actual size.
+  /// **Shrink to Fit**
+  ///
+  /// A conditional scaling mode:
+  /// - If the page at its actual size is **larger** than the printable area, it
+  ///   is scaled down to fit (behaving like `fitToPrintableArea`).
+  /// - If the page at its actual size is **smaller** than or equal to the
+  ///   printable area, it is printed without scaling (behaving like `actualSize`).
+  ///
+  /// This is useful for ensuring large documents are not cropped while preserving
+  /// the original size of smaller documents.
   static const PdfPrintScaling shrinkToFit = _PdfPrintScalingValue(2);
 
-  /// Scale the page to fit the physical paper size, maintaining aspect ratio.
+  /// **Fit to Paper**
+  ///
+  /// Scales the page (up or down) to fit the **entire physical paper size**,
+  /// maintaining the aspect ratio.
+  ///
+  /// **Warning:** Content near the edges of the PDF page may be clipped by the
+  /// printer's unprintable hardware margins. This mode is different from
+  /// `fitToPrintableArea`, which respects these margins.
   static const PdfPrintScaling fitToPaper = _PdfPrintScalingValue(3);
 
-  /// Apply a custom scaling factor.
+  /// **Custom Scale**
   ///
-  /// - [scale]: The scaling factor (e.g., 1.0 for 100%, 0.5 for 50%).
+  /// Applies a custom scaling factor to the page.
+  ///
+  /// - [scale]: The scaling factor (e.g., 1.0 for 100%, 0.5 for 50%). Must be a positive number.
   const factory PdfPrintScaling.custom(double scale) = _PdfPrintScalingCustom;
 
   @override
@@ -786,6 +814,7 @@ Printer _printerFromInfo(PrinterInfo info) {
 /// Opens the native printer properties dialog for the specified printer.
 ///
 /// On Windows, this opens the standard system dialog for printer properties.
+/// Changes made by the user are applied to the printer's default settings.
 ///
 /// On macOS and Linux, this will attempt to open the CUPS web interface
 /// for the printer in the default web browser (e.g., `http://localhost:631/printers/My_Printer`).
@@ -795,6 +824,9 @@ Printer _printerFromInfo(PrinterInfo info) {
 /// - [hwnd]: (Windows only) The handle to the parent window. Can be obtained from packages
 ///   like `win32` or by other platform-specific means. A value of 0 is often
 ///   acceptable for a modeless dialog.
+///
+/// Returns a [PrinterPropertiesResult] indicating whether the user confirmed
+/// the changes, cancelled the dialog, or an error occurred.
 Future<PrinterPropertiesResult> openPrinterProperties(String printerName, {int hwnd = 0}) async {
   // This is a synchronous call, so no need for an isolate.
   final namePtr = printerName.toNativeUtf8();
@@ -811,6 +843,18 @@ Future<PrinterPropertiesResult> openPrinterProperties(String printerName, {int h
   }
 }
 
+/// Sends raw data directly to the specified printer.
+///
+/// This is useful for printing formats like ZPL, ESC/POS, or other
+/// printer-specific command languages without any intermediate processing.
+///
+/// - [printerName]: The name of the target printer.
+/// - [data]: The raw byte data to be printed.
+/// - [docName]: The name of the document to show in the print queue.
+/// - [options]: A list of [PrintOption] objects to configure the print job.
+///
+/// Returns `true` if the data was sent successfully. Throws a
+/// [PrintingFfiException] on failure.
 Future<bool> rawDataToPrinter(
   String printerName,
   Uint8List data, {
@@ -843,7 +887,7 @@ Future<bool> rawDataToPrinter(
 /// - [printerName]: The name of the target printer.
 /// - [pdfFilePath]: The local path to the PDF file.
 /// - [docName]: The name of the document to show in the print queue.
-/// - [scaling]: The scaling mode for Windows printing (defaults to [PdfPrintScaling.fitToPrintableArea]).
+/// - [scaling]: The scaling mode for Windows printing (defaults to [PdfPrintScaling.shrinkToFit]).
 /// - [copies]: The number of copies to print. Defaults to 1.
 /// - [pageRange]: A [PageRange] object specifying the pages to print.
 ///   If `null`, all pages will be printed.
@@ -1095,6 +1139,11 @@ Future<WindowsPrinterCapabilities?> getWindowsPrinterCapabilities(String printer
   return completer.future;
 }
 
+/// Fetches the current list of print jobs for a given printer.
+///
+/// - [printerName]: The name of the target printer.
+///
+/// Returns a list of [PrintJob] objects currently in the queue.
 Future<List<PrintJob>> listPrintJobs(String printerName) async {
   final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
   final int requestId = _nextPrintJobsRequestId++;
@@ -1169,6 +1218,10 @@ Stream<List<PrintJob>> listPrintJobsStream(
   return controller.stream;
 }
 
+/// Pauses a specific print job.
+///
+/// - [printerName]: The name of the printer where the job is queued.
+/// - [jobId]: The ID of the job to pause.
 Future<bool> pausePrintJob(String printerName, int jobId) async {
   final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
   final int requestId = _nextPrintJobActionRequestId++;
@@ -1184,6 +1237,10 @@ Future<bool> pausePrintJob(String printerName, int jobId) async {
   return completer.future;
 }
 
+/// Resumes a paused print job.
+///
+/// - [printerName]: The name of the printer where the job is queued.
+/// - [jobId]: The ID of the job to resume.
 Future<bool> resumePrintJob(String printerName, int jobId) async {
   final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
   final int requestId = _nextPrintJobActionRequestId++;
@@ -1199,6 +1256,10 @@ Future<bool> resumePrintJob(String printerName, int jobId) async {
   return completer.future;
 }
 
+/// Cancels a print job.
+///
+/// - [printerName]: The name of the printer where the job is queued.
+/// - [jobId]: The ID of the job to cancel.
 Future<bool> cancelPrintJob(String printerName, int jobId) async {
   final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
   final int requestId = _nextPrintJobActionRequestId++;
