@@ -14,7 +14,6 @@ A Flutter plugin for direct printer communication using native FFI (Foreign Func
 - **PDF Printing** 📄: Print PDF files directly to a specified printer. On Windows, this uses a bundled version of the `pdfium` library for robust, self-contained rendering.
 - **Get Printer Capabilities (Windows)** 🖨️: Fetch supported paper sizes, paper sources (trays/bins), and resolutions for a given printer on Windows.
 - **Advanced Print Settings (Windows)** 🔧: Control paper size, source, and orientation for individual print jobs.
-- **Detailed Error Handling** 🚨: Propagates specific error messages from the native layer (CUPS/winspool) to Dart, making troubleshooting easier.
 - **Cross-Platform** 🌐: Supports macOS, Windows, and Linux via native APIs.
 - **Offline Printer Support** 🔌: Lists offline printers on macOS using `cupsGetDests`, addressing a key limitation of other plugins.
 - **Native Performance** ⚡: Uses FFI to interface directly with native printing APIs, reducing overhead and improving speed.
