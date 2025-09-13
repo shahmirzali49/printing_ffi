@@ -323,7 +323,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
         }
       } on PrintingFfiException catch (e) {
         _showSnackbar('Failed to print PDF: ${e.message}', isError: true);
-      } catch (e, s) {
+      } catch (e) {
         _showSnackbar(
           'An unexpected error occurred while printing: $e',
           isError: true,

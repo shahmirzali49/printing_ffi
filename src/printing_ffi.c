@@ -146,14 +146,7 @@ static bool parse_page_range(const char* range_str, bool* page_flags, int total_
         char* end = token + strlen(token) - 1;
         while (end > token && isspace((unsigned char)*end)) *end-- = '\0';
 
-        if (strlen(token) == 0) {
-#ifdef _WIN32
-            token = strtok_s(NULL, ",", &context);
-#else
-            token = strtok(NULL, ",");
-#endif
-            continue;
-        }
+        if (strlen(token) == 0) goto next_token;
 
         int start_page, end_page;
         char* dash = strchr(token, '-');
@@ -183,6 +176,7 @@ static bool parse_page_range(const char* range_str, bool* page_flags, int total_
             page_flags[i - 1] = true;
         }
 
+next_token:
 #ifdef _WIN32
         token = strtok_s(NULL, ",", &context);
 #else
