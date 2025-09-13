@@ -90,6 +90,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
     text: '1',
   );
   final TextEditingController _pageRangeController = TextEditingController();
+  String? _selectedPdfPath;
 
   ///int _tabIndex = 0;
 
@@ -133,6 +134,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
       _selectedOrientation = WindowsOrientation.portrait;
       _selectedColorMode = ColorMode.color;
       _selectedPrintQuality = PrintQuality.normal;
+      _selectedPdfPath = null;
     });
     try {
       final printers = listPrinters();
@@ -265,6 +267,26 @@ class _PrintingScreenState extends State<PrintingScreen> {
     return options;
   }
 
+  Future<String?> _getPdfPath() async {
+    if (_selectedPdfPath != null) {
+      return _selectedPdfPath;
+    }
+
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['pdf'],
+    );
+
+    if (result != null && result.files.single.path != null) {
+      final path = result.files.single.path!;
+      setState(() {
+        _selectedPdfPath = path;
+      });
+      return path;
+    }
+    return null;
+  }
+
   Future<void> _printPdf({
     Map<String, String>? cupsOptions,
     required int copies,
@@ -283,13 +305,8 @@ class _PrintingScreenState extends State<PrintingScreen> {
         return;
       }
     }
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['pdf'],
-    );
-
-    if (result != null && result.files.single.path != null) {
-      final path = result.files.single.path!;
+    final path = await _getPdfPath();
+    if (path != null) {
       try {
         final options = _buildPrintOptions(cupsOptions: cupsOptions);
         _showSnackbar('Printing PDF...');
@@ -337,15 +354,10 @@ class _PrintingScreenState extends State<PrintingScreen> {
       _showSnackbar('No printer selected!', isError: true);
       return;
     }
-    final result = await FilePicker.platform.pickFiles(
-      type: FileType.custom,
-      allowedExtensions: ['pdf'],
-    );
-
-    if (result != null && result.files.single.path != null) {
+    final path = await _getPdfPath();
+    if (path != null) {
       final copies = int.tryParse(_copiesController.text) ?? 1;
       final pageRangeString = _pageRangeController.text;
-      final path = result.files.single.path!;
       PageRange? pageRange;
       if (pageRangeString.trim().isNotEmpty) {
         try {
@@ -708,9 +720,32 @@ class _PrintingScreenState extends State<PrintingScreen> {
                         ),
                       ],
                       const SizedBox(height: 12),
+                      if (_selectedPdfPath != null)
+                        ListTile(
+                          leading: const Icon(Icons.picture_as_pdf),
+                          title: const Text(
+                            'Selected PDF:',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          subtitle: Text(
+                            _selectedPdfPath!.split(Platform.pathSeparator).last,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          trailing: IconButton(
+                            icon: const Icon(Icons.clear),
+                            tooltip: 'Clear selection',
+                            onPressed: () {
+                              setState(() {
+                                _selectedPdfPath = null;
+                              });
+                            },
+                          ),
+                        ),
                       ElevatedButton.icon(
                         icon: const Icon(Icons.picture_as_pdf),
-                        label: const Text('Print a PDF File'),
+                        label: Text(_selectedPdfPath == null
+                            ? 'Select & Print PDF'
+                            : 'Print Selected PDF'),
                         onPressed: () => _printPdf(
                           copies: int.tryParse(_copiesController.text) ?? 1,
                           pageRangeString: _pageRangeController.text,
