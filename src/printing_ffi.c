@@ -913,7 +913,7 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
             bmi.bmiHeader.biWidth = bitmap_width;
             bmi.bmiHeader.biHeight = -bitmap_height; // Negative for top-down DIB
             bmi.bmiHeader.biPlanes = 1;
-            bmi.bmiHeader.biBitCount = 24; // Using 24-bit color
+            bmi.bmiHeader.biBitCount = 32; // Using 32-bit BGRA for alignment safety, as in the original working code.
             bmi.bmiHeader.biCompression = BI_RGB;
 
             void* pBitmapData = NULL;
@@ -927,7 +927,7 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
                 break;
             }
 
-            FPDF_BITMAP pdfBitmap = FPDFBitmap_CreateEx(bitmap_width, bitmap_height, FPDFBitmap_BGR, pBitmapData, bitmap_width * 3);
+            FPDF_BITMAP pdfBitmap = FPDFBitmap_CreateEx(bitmap_width, bitmap_height, FPDFBitmap_BGRA, pBitmapData, bitmap_width * 4);
             if (!pdfBitmap) {
                 set_last_error("Failed to create PDFium bitmap for page %d.", i + 1);
                 LOG("print_pdf_job_win: FPDFBitmap_CreateEx failed for page %d", i);
