@@ -165,8 +165,9 @@ static bool parse_page_range(const char* range_str, bool* page_flags, int total_
         // The end page must not be less than the start page.
         // The end page must not exceed the total number of pages in the document.
         if (total_pages <= 0 || start_page < 1 || end_page < start_page || end_page > total_pages) {
-            LOG("Invalid page range value: start=%d, end=%d, total_pages=%d. The range is out of bounds for the document.",
-                start_page, end_page, total_pages);
+            // Use the original token 'p' for the error message.
+            set_last_error("Page range '%s' is invalid for a document with %d pages.", p, total_pages);
+            LOG("Invalid page range value: '%s' for a document with %d pages.", p, total_pages);
             free(to_free);
             return false; // Invalid range
         }
@@ -209,8 +210,13 @@ static void parse_windows_options(int num_options, const char** option_keys, con
             if (strcmp(option_values[i], "landscape") == 0) *orientation = 2; // DMORIENT_LANDSCAPE
             else *orientation = 1; // DMORIENT_PORTRAIT
         } else if (strcmp(option_keys[i], "color-mode") == 0) {
-            if (strcmp(option_values[i], "monochrome") == 0) *color_mode = 1; // DMCOLOR_MONOCHROME
-            else *color_mode = 2; // DMCOLOR_COLOR
+            if (strcmp(option_values[i], "monochrome") == 0) {
+                *color_mode = 1; // DMCOLOR_MONOCHROME
+                // For monochrome, also ensure print quality is set to trigger driver update.
+                // If it's not already being set, use a neutral value.
+                if (*print_quality == 0) *print_quality = -3; // DMRES_MEDIUM
+            } else
+                *color_mode = 2; // DMCOLOR_COLOR
         } else if (strcmp(option_keys[i], "print-quality") == 0) {
             if (strcmp(option_values[i], "draft") == 0) *print_quality = -1; // DMRES_DRAFT
             else if (strcmp(option_values[i], "low") == 0) *print_quality = -2; // DMRES_LOW
@@ -794,7 +800,9 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
     }
 
     if (!parse_page_range(page_range, pages_to_print, page_count)) {
-        set_last_error("Invalid page range string: '%s'. Use a format like '1-3,5,7-9'.", page_range ? page_range : "");
+        // If parse_page_range fails, it now sets a specific error. If it's still empty, provide a generic one.
+        if (g_last_error_message == NULL || strlen(g_last_error_message) == 0)
+            set_last_error("Invalid page range format: '%s'. Use a format like '1-3,5,7-9'.", page_range ? page_range : "");
         LOG("print_pdf_job_win: Invalid page range string provided: %s", page_range ? page_range : "(null)");
         free(pages_to_print);
         if (doc_name_w) free(doc_name_w);
@@ -909,7 +917,10 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
 
             FPDFBitmap_FillRect(pdfBitmap, 0, 0, bitmap_width, bitmap_height, 0xFFFFFFFF); // Fill with white
             // Pass the rotation value to PDFium so it handles rendering the page correctly.
-            FPDF_RenderPageBitmap(pdfBitmap, page, 0, 0, bitmap_width, bitmap_height, rotation, FPDF_ANNOT);
+            // IMPORTANT: We have already swapped the width/height to create a correctly-oriented
+            // bitmap. We must now render the page with NO additional rotation, so we pass 0.
+            // The page content itself will be correctly oriented within the unrotated bitmap.
+            FPDF_RenderPageBitmap(pdfBitmap, page, 0, 0, bitmap_width, bitmap_height, 0, FPDF_ANNOT);
             FPDFBitmap_Destroy(pdfBitmap);
 
             int printable_width = GetDeviceCaps(hdc, HORZRES);
@@ -1629,6 +1640,10 @@ FFI_PLUGIN_EXPORT WindowsPrinterCapabilities* get_windows_printer_capabilities(c
     }
     if (!GetPrinterW(hPrinter, 2, (LPBYTE)pinfo2, needed, &needed)) {
         LOG("GetPrinterW failed with error %lu", GetLastError());
+        // Fallback to DEVMODE if GetPrinterW fails
+        caps->supports_landscape = (pDevMode->dmFields & DM_ORIENTATION) != 0;
+        caps->is_color_supported = (pDevMode->dmFields & DM_COLOR) && (pDevMode->dmColor == DMCOLOR_COLOR);
+        caps->is_monochrome_supported = true;
         free(pinfo2);
         free(pDevMode);
         ClosePrinter(hPrinter);
@@ -1639,7 +1654,15 @@ FFI_PLUGIN_EXPORT WindowsPrinterCapabilities* get_windows_printer_capabilities(c
     const wchar_t* port_w = pinfo2->pPortName;
     if (!port_w) {
         LOG("pPortName is NULL for printer '%s'. Cannot get extended capabilities.", printer_name);
+        // Fallback to DEVMODE if port name is not available
+        caps->supports_landscape = (pDevMode->dmFields & DM_ORIENTATION) != 0;
+        caps->is_color_supported = (pDevMode->dmFields & DM_COLOR) && (pDevMode->dmColor == DMCOLOR_COLOR);
+        caps->is_monochrome_supported = true;
     } else {
+        // Use DeviceCapabilities for more reliable capability detection.
+        caps->supports_landscape = (DeviceCapabilitiesW(printer_name_w, port_w, DC_ORIENTATION, NULL, pDevMode) > 0);
+        caps->is_color_supported = (DeviceCapabilitiesW(printer_name_w, port_w, DC_COLORDEVICE, NULL, NULL) == 1);
+        caps->is_monochrome_supported = true; // All printers should support monochrome.
         // --- Get Paper Sizes ---
         long num_papers = DeviceCapabilitiesW(printer_name_w, port_w, DC_PAPERS, NULL, NULL);
         if (num_papers > 0) {
