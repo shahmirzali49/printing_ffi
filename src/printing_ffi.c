@@ -167,8 +167,13 @@ static bool parse_page_range(const char* range_str, bool* page_flags, int total_
         }
 
         // Validate input
-        if (start_page < 1 || end_page < start_page || end_page > total_pages || start_page > total_pages) {
-            LOG("Invalid page range value: start=%d, end=%d, total=%d", start_page, end_page, total_pages);
+        // The page count must be positive.
+        // The start page must be at least 1.
+        // The end page must not be less than the start page.
+        // The end page must not exceed the total number of pages in the document.
+        if (total_pages <= 0 || start_page < 1 || end_page < start_page || end_page > total_pages) {
+            LOG("Invalid page range value: start=%d, end=%d, total_pages=%d. The range is out of bounds for the document.",
+                start_page, end_page, total_pages);
             free(to_free);
             return false; // Invalid range
         }
