@@ -148,16 +148,25 @@ static bool parse_page_range(const char* range_str, bool* page_flags, int total_
 
         if (strlen(token) == 0) goto next_token;
 
+        // Make a copy of the token for parsing, so we can use the original for error messages.
+        char* token_copy = strdup(token);
+        if (!token_copy) {
+            free(to_free);
+            return false;
+        }
+
         int start_page, end_page;
-        char* dash = strchr(token, '-');
+        char* dash = strchr(token_copy, '-');
 
         if (dash) { // It's a range like "3-5"
             *dash = '\0';
-            start_page = atoi(token);
+            start_page = atoi(token_copy);
             end_page = atoi(dash + 1);
         } else { // It's a single page like "7"
-            start_page = end_page = atoi(token);
+            start_page = end_page = atoi(token_copy);
         }
+
+        free(token_copy); // Clean up the copy
 
         // Validate input
         // The page count must be positive.
@@ -165,9 +174,9 @@ static bool parse_page_range(const char* range_str, bool* page_flags, int total_
         // The end page must not be less than the start page.
         // The end page must not exceed the total number of pages in the document.
         if (total_pages <= 0 || start_page < 1 || end_page < start_page || end_page > total_pages) {
-            // Use the original token 'p' for the error message.
-            set_last_error("Page range '%s' is invalid for a document with %d pages.", p, total_pages);
-            LOG("Invalid page range value: '%s' for a document with %d pages.", p, total_pages);
+            // Use the original, unmodified token for the error message.
+            set_last_error("Page range '%s' is invalid for a document with %d pages.", token, total_pages);
+            LOG("Invalid page range value: '%s' for a document with %d pages.", token, total_pages);
             free(to_free);
             return false; // Invalid range
         }
