@@ -16,7 +16,6 @@ A Flutter plugin for direct printer communication using native FFI (Foreign Func
 - **Advanced Print Settings (Windows)** 🔧: Control paper size, source, and orientation for individual print jobs.
 - **Cross-Platform** 🌐: Supports macOS, Windows, and Linux via native APIs.
 - **Offline Printer Support** 🔌: Lists offline printers on macOS using `cupsGetDests`, addressing a key limitation of other plugins.
-- **Detailed Error Handling** 🚨: Propagates specific error messages from the native layer (CUPS/winspool) to Dart, making troubleshooting easier.
 - **Native Performance** ⚡: Uses FFI to interface directly with native printing APIs, reducing overhead and improving speed.
 - **UI Feedback** 🔔: Includes an example app with a user-friendly interface, empty states, and snackbar notifications for errors and status updates.
 

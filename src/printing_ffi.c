@@ -859,6 +859,9 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
             }
             LOG("print_pdf_job_win: Printing page %d (0-indexed).", i);
 
+            // Declare destination rectangle variables for the current page.
+            int dest_x = 0, dest_y = 0, dest_width = 0, dest_height = 0;
+
             FPDF_PAGE page = FPDF_LoadPage(doc, i);
             if (!page) {
                 set_last_error("Failed to load PDF page %d.", i + 1);
@@ -892,19 +895,26 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
                     if (ResetDCW(hdc, pNewDevMode) == NULL) {
                         set_last_error("Failed to reset device context for page %d orientation. Error: %lu.", i + 1, GetLastError());
                         LOG("print_pdf_job_win: ResetDCW failed for page %d with error %lu", i, GetLastError());
-                        success = false;
+                        success = false; // Mark as failed
                     }
                     free(pNewDevMode);
                 } else {
                     set_last_error("Failed to create new DEVMODE for page %d orientation change.", i + 1);
                     LOG("print_pdf_job_win: get_modified_devmode failed for page %d", i);
-                    success = false;
+                    success = false; // Mark as failed
+                }
+                // If ResetDC failed, abort this page and the rest of the job.
+                if (!success) {
+                    FPDF_ClosePage(page);
+                    break;
                 }
             }
 
             if (StartPage(hdc) <= 0) {
                 set_last_error("Failed to start page %d. Error: %lu.", i + 1, GetLastError());
                 LOG("print_pdf_job_win: StartPage failed for page %d with error %lu", i, GetLastError());
+                // Clean up the page resource before breaking from the loop.
+                FPDF_ClosePage(page);
                 success = false;
                 break;
             }
