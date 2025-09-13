@@ -947,25 +947,8 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
             FPDFBitmap_Destroy(pdfBitmap);
 
             if (scaling_mode == 0) { // Fit to Printable Area (formerly Fit Page)
-                // Calculate aspect ratio based on device-dependent pixel dimensions to avoid distortion.
-                float page_aspect = 1.0f;
-                if (bitmap_height > 0) {
-                    page_aspect = (float)bitmap_width / (float)bitmap_height;
-                }
-
-                float printable_aspect = 1.0f;
-                if (printable_height_pixels != 0) {
-                    printable_aspect = (float)printable_width_pixels / (float)printable_height_pixels;
-                }
-
-                if (page_aspect > printable_aspect) {
-                     dest_width = printable_width_pixels;
-                     dest_height = (int)(printable_width_pixels / page_aspect);
-                } else {
-                     dest_height = printable_height_pixels;
-                     dest_width = (int)(printable_height_pixels * page_aspect);
-                }
-                LOG("print_pdf_job_win: Page %d: ScalingMode=FitToPrintableArea, PageAspect=%.2f, PrintableAspect=%.2f, Dest=(%d,%d)", i, page_aspect, printable_aspect, dest_width, dest_height);
+                _scale_to_fit(bitmap_width, bitmap_height, printable_width_pixels, printable_height_pixels, &dest_width, &dest_height);
+                LOG("print_pdf_job_win: Page %d: ScalingMode=FitToPrintableArea, Dest=(%d,%d)", i, dest_width, dest_height);
 
             } else if (scaling_mode == 1) { // Actual Size
                 // Calculate actual size in device pixels
@@ -980,25 +963,8 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
                 int pdf_pixel_height = (int)(pdf_height_pt / 72.0f * dpi_y);
 
                 if (pdf_pixel_width > printable_width_pixels || pdf_pixel_height > printable_height_pixels) {
-                    // Calculate aspect ratio based on device-dependent pixel dimensions.
-                    float page_aspect = 1.0f;
-                    if (bitmap_height > 0) {
-                        page_aspect = (float)bitmap_width / (float)bitmap_height;
-                    }
-
-                    float printable_aspect = 1.0f;
-                    if (printable_height_pixels != 0) {
-                        printable_aspect = (float)printable_width_pixels / (float)printable_height_pixels;
-                    }
-
-                    if (page_aspect > printable_aspect) {
-                         dest_width = printable_width_pixels;
-                         dest_height = (int)(printable_width_pixels / page_aspect);
-                    } else {
-                         dest_height = printable_height_pixels;
-                         dest_width = (int)(printable_height_pixels * page_aspect);
-                    }
-                    LOG("print_pdf_job_win: Page %d: ScalingMode=ShrinkToFit (scaled), PageAspect=%.2f, PrintableAspect=%.2f, Dest=(%d,%d)", i, page_aspect, printable_aspect, dest_width, dest_height);
+                    _scale_to_fit(bitmap_width, bitmap_height, printable_width_pixels, printable_height_pixels, &dest_width, &dest_height);
+                    LOG("print_pdf_job_win: Page %d: ScalingMode=ShrinkToFit (scaled), Dest=(%d,%d)", i, dest_width, dest_height);
                 } else {
                     dest_width = pdf_pixel_width;
                     dest_height = pdf_pixel_height;
@@ -1007,25 +973,8 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
             } else if (scaling_mode == 3) { // Fit to Paper
                 int paper_width = GetDeviceCaps(hdc, PHYSICALWIDTH);
                 int paper_height = GetDeviceCaps(hdc, PHYSICALHEIGHT);
-                float paper_aspect = 1.0f;
-                // Calculate aspect ratio based on device-dependent pixel dimensions.
-                float page_aspect = 1.0f;
-                if (bitmap_height > 0) {
-                    page_aspect = (float)bitmap_width / (float)bitmap_height;
-                }
-
-                if (paper_height != 0) {
-                    paper_aspect = (float)paper_width / (float)paper_height;
-                }
-
-                if (page_aspect > paper_aspect) {
-                    dest_width = paper_width;
-                    dest_height = (int)(paper_width / page_aspect);
-                } else {
-                    dest_height = paper_height;
-                    dest_width = (int)(paper_height * page_aspect);
-                }
-                LOG("print_pdf_job_win: Page %d: ScalingMode=FitToPaper, PageAspect=%.2f, PaperAspect=%.2f, Dest=(%d,%d)", i, page_aspect, paper_aspect, dest_width, dest_height);
+                _scale_to_fit(bitmap_width, bitmap_height, paper_width, paper_height, &dest_width, &dest_height);
+                LOG("print_pdf_job_win: Page %d: ScalingMode=FitToPaper, Dest=(%d,%d)", i, dest_width, dest_height);
             } else if (scaling_mode == 4) { // Custom Scale
                 // Calculate actual size in device pixels first
                 int pdf_pixel_width = (int)(pdf_width_pt / 72.0f * dpi_x);
@@ -1035,25 +984,8 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
                 dest_height = (int)(pdf_pixel_height * custom_scale);
                 LOG("print_pdf_job_win: Page %d: ScalingMode=CustomScale (%.2f), Dest=(%d,%d)", i, custom_scale, dest_width, dest_height);
             } else { // Default to Fit to Printable Area
-                // Calculate aspect ratio based on device-dependent pixel dimensions.
-                float page_aspect = 1.0f;
-                if (bitmap_height > 0) {
-                    page_aspect = (float)bitmap_width / (float)bitmap_height;
-                }
-
-                float printable_aspect = 1.0f;
-                if (printable_height_pixels != 0) {
-                    printable_aspect = (float)printable_width_pixels / (float)printable_height_pixels;
-                }
-
-                if (page_aspect > printable_aspect) {
-                     dest_width = printable_width_pixels;
-                     dest_height = (int)(printable_width_pixels / page_aspect);
-                } else {
-                     dest_height = printable_height_pixels;
-                     dest_width = (int)(printable_height_pixels * page_aspect);
-                }
-                LOG("print_pdf_job_win: Page %d: ScalingMode=Default (FitToPrintableArea), PageAspect=%.2f, PrintableAspect=%.2f, Dest=(%d,%d)", i, page_aspect, printable_aspect, dest_width, dest_height);
+                _scale_to_fit(bitmap_width, bitmap_height, printable_width_pixels, printable_height_pixels, &dest_width, &dest_height);
+                LOG("print_pdf_job_win: Page %d: ScalingMode=Default (FitToPrintableArea), Dest=(%d,%d)", i, dest_width, dest_height);
             }
 
             if (scaling_mode == 3) { // Fit to Paper alignment is relative to physical paper
@@ -1107,6 +1039,29 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
     } else {
         LOG("_print_pdf_job_win (print) finished with result: %d", success);
         return success ? 1 : 0;
+    }
+}
+#endif
+
+#ifdef _WIN32
+// Internal helper to calculate the destination rectangle for scaling content to fit a target area.
+static void _scale_to_fit(int src_width, int src_height, int target_width, int target_height, int* dest_width, int* dest_height) {
+    float page_aspect = 1.0f;
+    if (src_height > 0) {
+        page_aspect = (float)src_width / (float)src_height;
+    }
+
+    float target_aspect = 1.0f;
+    if (target_height != 0) {
+        target_aspect = (float)target_width / (float)target_height;
+    }
+
+    if (page_aspect > target_aspect) {
+        *dest_width = target_width;
+        *dest_height = (int)(target_width / page_aspect);
+    } else {
+        *dest_height = target_height;
+        *dest_width = (int)(target_height * page_aspect);
     }
 }
 #endif
