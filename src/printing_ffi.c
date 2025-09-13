@@ -870,46 +870,6 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
                 break;
             }
 
-            // --- Per-Page Orientation Handling ---
-            // Check if the PDF page's orientation differs from the device context's orientation.
-            // If so, reset the device context with the correct orientation for this page.
-            float page_width_for_orient = FPDF_GetPageWidthF(page);
-            float page_height_for_orient = FPDF_GetPageHeightF(page);
-            int page_rotation_for_orient = FPDFPage_GetRotation(page);
-
-            // Determine the visual orientation of the PDF page.
-            bool is_page_landscape = (page_rotation_for_orient == 1 || page_rotation_for_orient == 3)
-                                         ? (page_width_for_orient < page_height_for_orient)
-                                         : (page_width_for_orient > page_height_for_orient);
-
-            // Get the current orientation of the device context.
-            bool is_dc_landscape = GetDeviceCaps(hdc, HORZRES) > GetDeviceCaps(hdc, VERTRES);
-
-            if (is_page_landscape != is_dc_landscape) {
-                LOG("print_pdf_job_win: Page %d orientation (%s) differs from DC orientation (%s). Resetting DC.", i, is_page_landscape ? "landscape" : "portrait", is_dc_landscape ? "landscape" : "portrait");
-
-                int new_orientation = is_page_landscape ? 2 : 1; // 2=landscape, 1=portrait
-                DEVMODEW* pNewDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, new_orientation, color_mode, print_quality, media_type_id);
-
-                if (pNewDevMode) {
-                    if (ResetDCW(hdc, pNewDevMode) == NULL) {
-                        set_last_error("Failed to reset device context for page %d orientation. Error: %lu.", i + 1, GetLastError());
-                        LOG("print_pdf_job_win: ResetDCW failed for page %d with error %lu", i, GetLastError());
-                        success = false; // Mark as failed
-                    }
-                    free(pNewDevMode);
-                } else {
-                    set_last_error("Failed to create new DEVMODE for page %d orientation change.", i + 1);
-                    LOG("print_pdf_job_win: get_modified_devmode failed for page %d", i);
-                    success = false; // Mark as failed
-                }
-                // If ResetDC failed, abort this page and the rest of the job.
-                if (!success) {
-                    FPDF_ClosePage(page);
-                    break;
-                }
-            }
-
             if (StartPage(hdc) <= 0) {
                 set_last_error("Failed to start page %d. Error: %lu.", i + 1, GetLastError());
                 LOG("print_pdf_job_win: StartPage failed for page %d with error %lu", i, GetLastError());
