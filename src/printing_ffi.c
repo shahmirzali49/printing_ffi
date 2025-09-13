@@ -217,11 +217,6 @@ static DEVMODEW* get_modified_devmode(wchar_t* printer_name_w, int paper_size_id
     if (paper_size_id > 0) {
         pDevMode->dmFields |= DM_PAPERSIZE;
         pDevMode->dmPaperSize = (short)paper_size_id;
-        // Per documentation, when using dmPaperSize, dmPaperLength and dmPaperWidth should be zeroed
-        // and their corresponding field flags should be cleared to avoid conflicts with some drivers.
-        pDevMode->dmFields &= ~(DM_PAPERLENGTH | DM_PAPERWIDTH);
-        pDevMode->dmPaperLength = 0;
-        pDevMode->dmPaperWidth = 0;
         modified = true;
     }
     if (paper_source_id > 0) { pDevMode->dmFields |= DM_DEFAULTSOURCE; pDevMode->dmDefaultSource = (short)paper_source_id; modified = true; }

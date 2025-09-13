@@ -288,7 +288,11 @@ class _PrintingScreenState extends State<PrintingScreen> {
 
         final PdfPrintScaling scaling;
         if (_selectedScaling is _CustomScaling) {
-          final scaleValue = double.tryParse(_customScaleController.text) ?? 1.0;
+          final scaleValue = double.tryParse(_customScaleController.text);
+          if (scaleValue == null || scaleValue <= 0) {
+            _showSnackbar('Invalid custom scale value. It must be a positive number.', isError: true);
+            return;
+          }
           scaling = PdfPrintScaling.custom(scaleValue);
         } else {
           scaling = _selectedScaling as PdfPrintScaling;
@@ -349,7 +353,11 @@ class _PrintingScreenState extends State<PrintingScreen> {
 
       final PdfPrintScaling scaling;
       if (_selectedScaling is _CustomScaling) {
-        final scaleValue = double.tryParse(_customScaleController.text) ?? 1.0;
+        final scaleValue = double.tryParse(_customScaleController.text);
+        if (scaleValue == null || scaleValue <= 0) {
+          _showSnackbar('Invalid custom scale value. It must be a positive number.', isError: true);
+          return;
+        }
         scaling = PdfPrintScaling.custom(scaleValue);
       } else {
         scaling = _selectedScaling as PdfPrintScaling;
