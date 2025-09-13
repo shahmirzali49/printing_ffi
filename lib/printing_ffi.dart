@@ -2,8 +2,8 @@ import 'dart:async';
 import 'dart:ffi';
 import 'dart:io';
 import 'dart:isolate';
-import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
+import 'package:flutter/foundation.dart';
 import 'printing_ffi_bindings_generated.dart';
 
 class Printer {
@@ -666,6 +666,34 @@ final DynamicLibrary _dylib = () {
 final PrintingFfiBindings _bindings = PrintingFfiBindings(
   _dylib,
 ); // Updated to PrintingFfiBindings
+
+// --- Initialization and Logging ---
+
+// Define the C function signature for registering the callback
+typedef _RegisterLogCallbackNative = Void Function(Pointer<NativeFunction<Void Function(Pointer<Char>)>>);
+// Define the Dart function signature
+typedef _RegisterLogCallback = void Function(Pointer<NativeFunction<Void Function(Pointer<Char>)>>);
+
+/// Top-level function to handle logs from native code.
+/// This must be a top-level or static function to be used with `Pointer.fromFunction`.
+void _logHandler(Pointer<Char> message) {
+  final logMessage = message.cast<Utf8>().toDartString();
+  // Use debugPrint to avoid issues in release mode on some platforms
+  debugPrint(logMessage);
+}
+
+/// Initializes the printing_ffi plugin.
+///
+/// This function sets up necessary configurations, such as registering a
+/// log handler to receive debug messages from the native code. It's recommended
+/// to call this once when your application starts.
+void initializePrintingFfi() {
+  final registerer = _dylib.lookup<NativeFunction<_RegisterLogCallbackNative>>('register_log_callback').asFunction<_RegisterLogCallback>();
+  // Use Pointer.fromFunction to get a pointer to our top-level log handler.
+  // This is the correct and most efficient way to create a callback from a
+  // static or top-level function.
+  registerer(Pointer.fromFunction<Void Function(Pointer<Char>)>(_logHandler));
+}
 
 // Example functions from template
 int sum(int a, int b) => _bindings.sum(a, b);

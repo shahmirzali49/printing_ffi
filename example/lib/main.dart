@@ -20,6 +20,9 @@ class _CustomScaling {
 }
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Initialize the FFI plugin, which includes setting up the log handler.
+  initializePrintingFfi();
   runApp(const PrintingFfiExampleApp());
 }
 
@@ -73,11 +76,13 @@ class _PrintingScreenState extends State<PrintingScreen> {
   bool _isLoadingCupsOptions = false;
   bool _isLoadingWindowsCaps = false;
 
-  final TextEditingController _rawDataController =
-      TextEditingController(text: 'Hello, FFI!');
+  final TextEditingController _rawDataController = TextEditingController(
+    text: 'Hello, FFI!',
+  );
   Object _selectedScaling = PdfPrintScaling.fitToPrintableArea;
-  final TextEditingController _customScaleController =
-      TextEditingController(text: '1.0');
+  final TextEditingController _customScaleController = TextEditingController(
+    text: '1.0',
+  );
   final TextEditingController _copiesController = TextEditingController(
     text: '1',
   );
@@ -290,7 +295,10 @@ class _PrintingScreenState extends State<PrintingScreen> {
         if (_selectedScaling is _CustomScaling) {
           final scaleValue = double.tryParse(_customScaleController.text);
           if (scaleValue == null || scaleValue <= 0) {
-            _showSnackbar('Invalid custom scale value. It must be a positive number.', isError: true);
+            _showSnackbar(
+              'Invalid custom scale value. It must be a positive number.',
+              isError: true,
+            );
             return;
           }
           scaling = PdfPrintScaling.custom(scaleValue);
@@ -355,7 +363,10 @@ class _PrintingScreenState extends State<PrintingScreen> {
       if (_selectedScaling is _CustomScaling) {
         final scaleValue = double.tryParse(_customScaleController.text);
         if (scaleValue == null || scaleValue <= 0) {
-          _showSnackbar('Invalid custom scale value. It must be a positive number.', isError: true);
+          _showSnackbar(
+            'Invalid custom scale value. It must be a positive number.',
+            isError: true,
+          );
           return;
         }
         scaling = PdfPrintScaling.custom(scaleValue);
@@ -681,7 +692,8 @@ class _PrintingScreenState extends State<PrintingScreen> {
                             });
                           },
                         ),
-                      if (Platform.isWindows && _selectedScaling is _CustomScaling) ...[
+                      if (Platform.isWindows &&
+                          _selectedScaling is _CustomScaling) ...[
                         const SizedBox(height: 12),
                         SizedBox(
                           width: 120,
@@ -691,7 +703,9 @@ class _PrintingScreenState extends State<PrintingScreen> {
                               border: OutlineInputBorder(),
                               labelText: 'Scale',
                             ),
-                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true,
+                            ),
                           ),
                         ),
                       ],
@@ -699,7 +713,10 @@ class _PrintingScreenState extends State<PrintingScreen> {
                       ElevatedButton.icon(
                         icon: const Icon(Icons.picture_as_pdf),
                         label: const Text('Print a PDF File'),
-                        onPressed: () => _printPdf(copies: int.tryParse(_copiesController.text) ?? 1, pageRangeString: _pageRangeController.text),
+                        onPressed: () => _printPdf(
+                          copies: int.tryParse(_copiesController.text) ?? 1,
+                          pageRangeString: _pageRangeController.text,
+                        ),
                         style: ElevatedButton.styleFrom(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 24,

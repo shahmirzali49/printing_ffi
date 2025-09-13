@@ -23,13 +23,27 @@
 // Global state for Pdfium initialization
 static bool s_pdfium_initialized = false;
 #endif
+// Global function pointer for the log callback.
+static log_callback_t s_log_callback = NULL;
 
 // Logging macro - enabled when DEBUG_LOGGING is defined (e.g., in debug builds)
 #ifdef DEBUG_LOGGING
-#define LOG(format, ...) fprintf(stderr, "[printing_ffi] " format "\n", ##__VA_ARGS__)
+#define LOG(format, ...) do { \
+    char log_message[1024]; \
+    snprintf(log_message, sizeof(log_message), "[printing_ffi] " format, ##__VA_ARGS__); \
+    if (s_log_callback != NULL) { \
+        s_log_callback(log_message); \
+    } else { \
+        fprintf(stderr, "%s\n", log_message); \
+    } \
+} while (0)
 #else
 #define LOG(...)
 #endif
+
+FFI_PLUGIN_EXPORT void register_log_callback(log_callback_t callback) {
+    s_log_callback = callback;
+}
 
 #ifdef _WIN32
 // Helper to convert UTF-8 char* to wchar_t*
@@ -183,6 +197,8 @@ static void parse_windows_options(int num_options, const char** option_keys, con
 // The caller is responsible for freeing the returned struct.
 static DEVMODEW* get_modified_devmode(wchar_t* printer_name_w, int paper_size_id, int paper_source_id, int orientation, int color_mode, int print_quality, int media_type_id) {
     if (!printer_name_w) return NULL;
+    LOG("get_modified_devmode: Creating DEVMODE for '%ls' with paper_id:%d, source_id:%d, orientation:%d, color:%d, quality:%d, media_id:%d",
+        printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id);
 
     HANDLE hPrinter;
     if (!OpenPrinterW(printer_name_w, &hPrinter, NULL)) {
@@ -193,13 +209,14 @@ static DEVMODEW* get_modified_devmode(wchar_t* printer_name_w, int paper_size_id
     DEVMODEW* pDevMode = NULL;
     LONG devModeSize = DocumentPropertiesW(NULL, hPrinter, printer_name_w, NULL, NULL, 0);
     if (devModeSize <= 0) {
-        LOG("get_modified_devmode: DocumentPropertiesW (get size) failed with error %lu", GetLastError());
+        LOG("get_modified_devmode: DocumentPropertiesW (get size) failed with error %lu. Size was %ld.", GetLastError(), devModeSize);
         ClosePrinter(hPrinter);
         return NULL;
     }
 
     pDevMode = (DEVMODEW*)malloc(devModeSize);
     if (!pDevMode) {
+        LOG("get_modified_devmode: Failed to allocate memory for DEVMODE.");
         ClosePrinter(hPrinter);
         return NULL;
     }
@@ -211,19 +228,26 @@ static DEVMODEW* get_modified_devmode(wchar_t* printer_name_w, int paper_size_id
         ClosePrinter(hPrinter);
         return NULL;
     }
+    LOG("get_modified_devmode: Successfully retrieved default DEVMODE.");
 
     bool modified = false;
     // A value <= 0 for IDs/orientation means "use default".
     if (paper_size_id > 0) {
+        LOG("get_modified_devmode: Setting dmPaperSize to %d.", paper_size_id);
         pDevMode->dmFields |= DM_PAPERSIZE;
         pDevMode->dmPaperSize = (short)paper_size_id;
         modified = true;
     }
-    if (paper_source_id > 0) { pDevMode->dmFields |= DM_DEFAULTSOURCE; pDevMode->dmDefaultSource = (short)paper_source_id; modified = true; }
+    if (paper_source_id > 0) {
+        LOG("get_modified_devmode: Setting dmDefaultSource to %d.", paper_source_id);
+        pDevMode->dmFields |= DM_DEFAULTSOURCE; pDevMode->dmDefaultSource = (short)paper_source_id; modified = true;
+    }
     if (orientation > 0) {
+        LOG("get_modified_devmode: Setting dmOrientation to %d.", orientation);
         // If changing orientation, swap paper dimensions to give the driver a hint.
         // The driver should correct this if it's wrong, but some drivers need the help.
         if ((pDevMode->dmFields & DM_ORIENTATION) && pDevMode->dmOrientation != (short)orientation) {
+            LOG("get_modified_devmode: Swapping paper width (%d) and length (%d) for orientation change.", pDevMode->dmPaperWidth, pDevMode->dmPaperLength);
             short temp = pDevMode->dmPaperWidth;
             pDevMode->dmPaperWidth = pDevMode->dmPaperLength;
             pDevMode->dmPaperLength = temp;
@@ -233,15 +257,30 @@ static DEVMODEW* get_modified_devmode(wchar_t* printer_name_w, int paper_size_id
         pDevMode->dmFields |= DM_PAPERSIZE; // Ensure paper size is considered with orientation
         modified = true;
     }
-    if (color_mode > 0) { pDevMode->dmFields |= DM_COLOR; pDevMode->dmColor = (short)color_mode; modified = true; }
-    if (print_quality != 0) { pDevMode->dmFields |= DM_PRINTQUALITY; pDevMode->dmPrintQuality = (short)print_quality; modified = true; }
-    if (media_type_id > 0) { pDevMode->dmFields |= DM_MEDIATYPE; pDevMode->dmMediaType = (short)media_type_id; modified = true; }
+    if (color_mode > 0) {
+        LOG("get_modified_devmode: Setting dmColor to %d.", color_mode);
+        pDevMode->dmFields |= DM_COLOR; pDevMode->dmColor = (short)color_mode; modified = true;
+    }
+    if (print_quality != 0) {
+        LOG("get_modified_devmode: Setting dmPrintQuality to %d.", print_quality);
+        pDevMode->dmFields |= DM_PRINTQUALITY; pDevMode->dmPrintQuality = (short)print_quality; modified = true;
+    }
+    if (media_type_id > 0) {
+        LOG("get_modified_devmode: Setting dmMediaType to %d.", media_type_id);
+        pDevMode->dmFields |= DM_MEDIATYPE; pDevMode->dmMediaType = (short)media_type_id; modified = true;
+    }
 
     if (modified) {
+        LOG("get_modified_devmode: DEVMODE was modified. Validating with driver...");
         // Validate and merge the changes. The driver may update the DEVMODE struct.
-        if (DocumentPropertiesW(NULL, hPrinter, printer_name_w, pDevMode, pDevMode, DM_IN_BUFFER | DM_OUT_BUFFER) != IDOK) {
-            LOG("get_modified_devmode: DocumentPropertiesW (merge) failed with error %lu. Continuing with potentially invalid settings.", GetLastError());
+        LONG result = DocumentPropertiesW(NULL, hPrinter, printer_name_w, pDevMode, pDevMode, DM_IN_BUFFER | DM_OUT_BUFFER);
+        if (result != IDOK) {
+            LOG("get_modified_devmode: DocumentPropertiesW (merge) failed with result %ld and error %lu. The driver may have rejected the settings. Continuing anyway.", result, GetLastError());
+        } else {
+            LOG("get_modified_devmode: Driver accepted and merged DEVMODE changes.");
         }
+    } else {
+        LOG("get_modified_devmode: No modifications requested, using default DEVMODE.");
     }
 
     ClosePrinter(hPrinter);
@@ -635,6 +674,7 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8
 // Common internal function for PDF printing on Windows.
 // Returns a job ID if `submit_job` is true, otherwise returns 1 for success or 0 for failure.
 static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file_path, const char* doc_name, int scaling_mode, int copies, const char* page_range, const char* alignment, int num_options, const char** option_keys, const char** option_values, bool submit_job) {
+    LOG("print_pdf_job_win: Initializing for printer '%s', path '%s'", printer_name, pdf_file_path);
     if (!s_pdfium_initialized) {
         FPDF_LIBRARY_CONFIG config;
         memset(&config, 0, sizeof(config));
@@ -650,16 +690,17 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
 
     wchar_t* printer_name_w = to_utf16(printer_name);
     if (!printer_name_w) {
-        LOG("Failed to convert printer name to UTF-16");
+        LOG("print_pdf_job_win: Failed to convert printer name to UTF-16");
         return 0;
     }
 
     FPDF_DOCUMENT doc = FPDF_LoadDocument(pdf_file_path, NULL);
     if (!doc) {
-        LOG("FPDF_LoadDocument failed for path: %s. Error: %ld", pdf_file_path, FPDF_GetLastError());
+        LOG("print_pdf_job_win: FPDF_LoadDocument failed for path: %s. Error: %ld", pdf_file_path, FPDF_GetLastError());
         free(printer_name_w);
         return 0;
     }
+    LOG("print_pdf_job_win: PDF document loaded successfully.");
 
     DEVMODEW* pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id);
 
@@ -667,7 +708,7 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
     if (pDevMode) free(pDevMode); // DEVMODE is copied by CreateDC, so we can free it now.
 
     if (!hdc) {
-        LOG("CreateDCW failed for printer '%s' with error %lu", printer_name, GetLastError());
+        LOG("print_pdf_job_win: CreateDCW failed for printer '%s' with error %lu. This often indicates an invalid DEVMODE.", printer_name, GetLastError());
         FPDF_CloseDocument(doc);
         free(printer_name_w);
         return 0;
@@ -678,7 +719,7 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
     int job_id = StartDocW(hdc, &di);
 
     if (job_id <= 0) {
-        LOG("StartDocW failed with error %lu", GetLastError());
+        LOG("print_pdf_job_win: StartDocW failed with error %lu", GetLastError());
         if (doc_name_w) free(doc_name_w);
         DeleteDC(hdc);
         FPDF_CloseDocument(doc);
@@ -686,11 +727,12 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
         return 0;
     }
     // doc_name_w is used by the system, don't free it until EndDoc.
+    LOG("print_pdf_job_win: StartDocW succeeded with Job ID: %d", job_id);
 
     int page_count = FPDF_GetPageCount(doc);
-    bool* pages_to_print = (bool*)malloc(page_count * sizeof(bool));
+    LOG("print_pdf_job_win: PDF has %d pages.", page_count);    bool* pages_to_print = (bool*)malloc(page_count * sizeof(bool));
     if (!pages_to_print) {
-        LOG("Failed to allocate memory for page range flags.");
+        LOG("print_pdf_job_win: Failed to allocate memory for page range flags.");
         if (doc_name_w) free(doc_name_w);
         AbortDoc(hdc);
         DeleteDC(hdc);
@@ -700,7 +742,7 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
     }
 
     if (!parse_page_range(page_range, pages_to_print, page_count)) {
-        LOG("Invalid page range string provided: %s", page_range ? page_range : "(null)");
+        LOG("print_pdf_job_win: Invalid page range string provided: %s", page_range ? page_range : "(null)");
         free(pages_to_print);
         if (doc_name_w) free(doc_name_w);
         AbortDoc(hdc);
@@ -709,6 +751,7 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
         free(printer_name_w);
         return 0;
     }
+    LOG("print_pdf_job_win: Page range parsed successfully. Copies: %d.", copies);
 
     // --- Alignment ---
     double align_x_factor = 0.5; // Default to center
@@ -739,20 +782,22 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
 
     bool success = true;
     for (int c = 0; c < copies && success; c++) {
+        LOG("print_pdf_job_win: Starting copy %d of %d.", c + 1, copies);
         for (int i = 0; i < page_count && success; ++i) {
             if (!pages_to_print[i]) {
                 continue;
             }
+            LOG("print_pdf_job_win: Printing page %d (0-indexed).", i);
 
             if (StartPage(hdc) <= 0) {
-                LOG("StartPage failed for page %d with error %lu", i, GetLastError());
+                LOG("print_pdf_job_win: StartPage failed for page %d with error %lu", i, GetLastError());
                 success = false;
                 break;
             }
 
             FPDF_PAGE page = FPDF_LoadPage(doc, i);
             if (!page) {
-                LOG("FPDF_LoadPage failed for page %d", i);
+                LOG("print_pdf_job_win: FPDF_LoadPage failed for page %d", i);
                 EndPage(hdc);
                 success = false;
                 break;
@@ -776,6 +821,7 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
 
             int dpi_x = GetDeviceCaps(hdc, LOGPIXELSX);
             int dpi_y = GetDeviceCaps(hdc, LOGPIXELSY);
+            LOG("print_pdf_job_win: Device DPI: %d x %d. Printable Area: %d x %d", dpi_x, dpi_y, GetDeviceCaps(hdc, HORZRES), GetDeviceCaps(hdc, VERTRES));
             // Use the higher DPI for rendering to get better quality, but maintain aspect ratio.
             int render_dpi = (dpi_x > dpi_y) ? dpi_x : dpi_y;
             int bitmap_width = (int)(pdf_width_pt / 72.0f * render_dpi);
@@ -793,7 +839,7 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
             void* pBitmapData = NULL;
             HBITMAP hBitmap = CreateDIBSection(hdc, &bmi, DIB_RGB_COLORS, &pBitmapData, NULL, 0);
             if (!hBitmap || !pBitmapData) {
-                LOG("CreateDIBSection failed for page %d with error %lu", i, GetLastError());
+                LOG("print_pdf_job_win: CreateDIBSection failed for page %d with error %lu", i, GetLastError());
                 FPDF_ClosePage(page);
                 EndPage(hdc);
                 success = false;
@@ -802,7 +848,7 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
 
             FPDF_BITMAP pdfBitmap = FPDFBitmap_CreateEx(bitmap_width, bitmap_height, FPDFBitmap_BGR, pBitmapData, bitmap_width * 3);
             if (!pdfBitmap) {
-                LOG("FPDFBitmap_CreateEx failed for page %d", i);
+                LOG("print_pdf_job_win: FPDFBitmap_CreateEx failed for page %d", i);
                 DeleteObject(hBitmap);
                 FPDF_ClosePage(page);
                 EndPage(hdc);
@@ -911,8 +957,9 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
                 dest_y = (int)((printable_height - dest_height) * align_y_factor);
             }
 
+            LOG("print_pdf_job_win: Page %d: ScalingMode=%d, DestRect=(%d,%d, %dx%d)", i, scaling_mode, dest_x, dest_y, dest_width, dest_height);
             if (StretchDIBits(hdc, dest_x, dest_y, dest_width, dest_height, 0, 0, bitmap_width, bitmap_height, pBitmapData, &bmi, DIB_RGB_COLORS, SRCCOPY) == GDI_ERROR) {
-                LOG("StretchDIBits failed for page %d with error %lu", i, GetLastError());
+                LOG("print_pdf_job_win: StretchDIBits failed for page %d with error %lu", i, GetLastError());
                 success = false;
             }
 
@@ -920,7 +967,7 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
             FPDF_ClosePage(page);
 
             if (EndPage(hdc) <= 0) {
-                LOG("EndPage failed for page %d with error %lu", i, GetLastError());
+                LOG("print_pdf_job_win: EndPage failed for page %d with error %lu", i, GetLastError());
                 success = false;
             }
         }
@@ -930,8 +977,10 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
     if (doc_name_w) free(doc_name_w);
 
     if (success) {
+        LOG("print_pdf_job_win: All pages processed successfully. Calling EndDoc.");
         EndDoc(hdc);
     } else {
+        LOG("print_pdf_job_win: A failure occurred. Calling AbortDoc.");
         AbortDoc(hdc);
     }
 
