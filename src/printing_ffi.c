@@ -143,7 +143,7 @@ static bool parse_page_range(const char* range_str, bool* page_flags, int total_
 // Helper function to parse Windows-specific print options from the generic key-value array.
 static void parse_windows_options(int num_options, const char** option_keys, const char** option_values,
                                   int* paper_size_id, int* paper_source_id, int* orientation,
-                                  int* color_mode, int* print_quality, int* media_type_id) {
+                                  int* color_mode, int* print_quality, int* media_type_id, double* custom_scale) {
     // Set default values
     *paper_size_id = 0;
     *paper_source_id = 0;
@@ -151,6 +151,7 @@ static void parse_windows_options(int num_options, const char** option_keys, con
     *color_mode = 0;
     *print_quality = 0;
     *media_type_id = 0;
+    *custom_scale = 1.0; // Default to 100%
 
     for (int i = 0; i < num_options; i++) {
         if (strcmp(option_keys[i], "paper-size-id") == 0) {
@@ -170,6 +171,8 @@ static void parse_windows_options(int num_options, const char** option_keys, con
             else *print_quality = -3; // DMRES_MEDIUM / normal
         } else if (strcmp(option_keys[i], "media-type-id") == 0) {
             *media_type_id = atoi(option_values[i]);
+        } else if (strcmp(option_keys[i], "custom-scale-factor") == 0) {
+            *custom_scale = atof(option_values[i]);
         }
     }
 }
@@ -515,7 +518,8 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8
 
 #ifdef _WIN32
     int paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id;
-    parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id);
+    double custom_scale; // Dummy for raw printing
+    parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id, &custom_scale);
 
     HANDLE hPrinter;
     DOC_INFO_1W docInfo;
@@ -639,8 +643,9 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
         LOG("Pdfium library initialized for the first time.");
     }
 
+    double custom_scale;
     int paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id;
-    parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id);
+    parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id, &custom_scale);
 
     wchar_t* printer_name_w = to_utf16(printer_name);
     if (!printer_name_w) {
@@ -752,16 +757,26 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
                 break;
             }
 
+            // --- FIX: Use PDF aspect ratio directly and render to non-distorted bitmap ---
+            float pdf_width_pt = FPDF_GetPageWidthF(page);
+            float pdf_height_pt = FPDF_GetPageHeightF(page);
+            float page_aspect = 1.0f;
+            if (pdf_height_pt > 0) {
+                page_aspect = pdf_width_pt / pdf_height_pt;
+            }
+
             int dpi_x = GetDeviceCaps(hdc, LOGPIXELSX);
             int dpi_y = GetDeviceCaps(hdc, LOGPIXELSY);
-            int width = (int)(FPDF_GetPageWidthF(page) / 72.0 * dpi_x);
-            int height = (int)(FPDF_GetPageHeightF(page) / 72.0 * dpi_y);
+            // Use the higher DPI for rendering to get better quality, but maintain aspect ratio.
+            int render_dpi = (dpi_x > dpi_y) ? dpi_x : dpi_y;
+            int bitmap_width = (int)(pdf_width_pt / 72.0f * render_dpi);
+            int bitmap_height = (int)(pdf_height_pt / 72.0f * render_dpi);
 
             BITMAPINFO bmi;
             memset(&bmi, 0, sizeof(bmi));
             bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-            bmi.bmiHeader.biWidth = width;
-            bmi.bmiHeader.biHeight = -height; // Negative for top-down DIB
+            bmi.bmiHeader.biWidth = bitmap_width;
+            bmi.bmiHeader.biHeight = -bitmap_height; // Negative for top-down DIB
             bmi.bmiHeader.biPlanes = 1;
             bmi.bmiHeader.biBitCount = 24; // Using 24-bit color
             bmi.bmiHeader.biCompression = BI_RGB;
@@ -776,7 +791,7 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
                 break;
             }
 
-            FPDF_BITMAP pdfBitmap = FPDFBitmap_CreateEx(width, height, FPDFBitmap_BGR, pBitmapData, width * 3);
+            FPDF_BITMAP pdfBitmap = FPDFBitmap_CreateEx(bitmap_width, bitmap_height, FPDFBitmap_BGR, pBitmapData, bitmap_width * 3);
             if (!pdfBitmap) {
                 LOG("FPDFBitmap_CreateEx failed for page %d", i);
                 DeleteObject(hBitmap);
@@ -786,64 +801,108 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
                 break;
             }
 
-            FPDFBitmap_FillRect(pdfBitmap, 0, 0, width, height, 0xFFFFFFFF); // Fill with white
-            FPDF_RenderPageBitmap(pdfBitmap, page, 0, 0, width, height, 0, FPDF_ANNOT);
+            FPDFBitmap_FillRect(pdfBitmap, 0, 0, bitmap_width, bitmap_height, 0xFFFFFFFF); // Fill with white
+            FPDF_RenderPageBitmap(pdfBitmap, page, 0, 0, bitmap_width, bitmap_height, 0, FPDF_ANNOT);
             FPDFBitmap_Destroy(pdfBitmap);
 
             int printable_width = GetDeviceCaps(hdc, HORZRES);
             int printable_height = GetDeviceCaps(hdc, VERTRES);
             int dest_x, dest_y, dest_width, dest_height;
 
-            if (scaling_mode == 0) { // Fit Page
-                float page_aspect = 1.0f;
-                if (height != 0) {
-                    page_aspect = (float)width / (float)height;
-                }
+            // --- REVISED SCALING LOGIC ---
+            // scaling_mode: 0=FitToPrintableArea, 1=ActualSize, 2=ShrinkToFit, 3=FitToPaper, 4=Custom
+            if (scaling_mode == 0) { // Fit to Printable Area (formerly Fit Page)
                 float printable_aspect = 1.0f;
                 if (printable_height != 0) {
                     printable_aspect = (float)printable_width / (float)printable_height;
                 }
 
                 if (page_aspect > printable_aspect) {
-                    dest_width = printable_width;
-                    dest_height = (int)(printable_width / page_aspect);
+                     dest_width = printable_width;
+                     dest_height = (int)(printable_width / page_aspect);
                 } else {
-                    dest_height = printable_height;
-                    dest_width = (int)(printable_height * page_aspect);
+                     dest_height = printable_height;
+                     dest_width = (int)(printable_height * page_aspect);
                 }
+
             } else if (scaling_mode == 1) { // Actual Size
-                dest_width = width;
-                dest_height = height;
+                // Calculate actual size in device pixels
+                dest_width = (int)(pdf_width_pt / 72.0f * dpi_x);
+                dest_height = (int)(pdf_height_pt / 72.0f * dpi_y);
+
             } else if (scaling_mode == 2) { // Shrink to Fit
                 // If the PDF page is larger than the printable area, scale down to fit.
                 // Otherwise, print at actual size.
-                if (width > printable_width || height > printable_height) {
-                    float page_aspect = 1.0f;
-                    if (height != 0) {
-                        page_aspect = (float)width / (float)height;
-                    }
+                int pdf_pixel_width = (int)(pdf_width_pt / 72.0f * dpi_x);
+                int pdf_pixel_height = (int)(pdf_height_pt / 72.0f * dpi_y);
+
+                if (pdf_pixel_width > printable_width || pdf_pixel_height > printable_height) {
                     float printable_aspect = 1.0f;
                     if (printable_height != 0) {
                         printable_aspect = (float)printable_width / (float)printable_height;
                     }
 
                     if (page_aspect > printable_aspect) {
-                        dest_width = printable_width;
-                        dest_height = (int)(printable_width / page_aspect);
+                         dest_width = printable_width;
+                         dest_height = (int)(printable_width / page_aspect);
                     } else {
-                        dest_height = printable_height;
-                        dest_width = (int)(printable_height * page_aspect);
+                         dest_height = printable_height;
+                         dest_width = (int)(printable_height * page_aspect);
                     }
                 } else {
-                    dest_width = width;
-                    dest_height = height;
+                    dest_width = pdf_pixel_width;
+                    dest_height = pdf_pixel_height;
+                }
+            } else if (scaling_mode == 3) { // Fit to Paper
+                int paper_width = GetDeviceCaps(hdc, PHYSICALWIDTH);
+                int paper_height = GetDeviceCaps(hdc, PHYSICALHEIGHT);
+                float paper_aspect = 1.0f;
+                if (paper_height != 0) {
+                    paper_aspect = (float)paper_width / (float)paper_height;
+                }
+
+                if (page_aspect > paper_aspect) {
+                    dest_width = paper_width;
+                    dest_height = (int)(paper_width / page_aspect);
+                } else {
+                    dest_height = paper_height;
+                    dest_width = (int)(paper_height * page_aspect);
+                }
+            } else if (scaling_mode == 4) { // Custom Scale
+                // Calculate actual size in device pixels first
+                int pdf_pixel_width = (int)(pdf_width_pt / 72.0f * dpi_x);
+                int pdf_pixel_height = (int)(pdf_height_pt / 72.0f * dpi_y);
+                // Apply custom scale factor
+                dest_width = (int)(pdf_pixel_width * custom_scale);
+                dest_height = (int)(pdf_pixel_height * custom_scale);
+            } else { // Default to Fit to Printable Area
+                float printable_aspect = 1.0f;
+                if (printable_height != 0) {
+                    printable_aspect = (float)printable_width / (float)printable_height;
+                }
+
+                if (page_aspect > printable_aspect) {
+                     dest_width = printable_width;
+                     dest_height = (int)(printable_width / page_aspect);
+                } else {
+                     dest_height = printable_height;
+                     dest_width = (int)(printable_height * page_aspect);
                 }
             }
 
-            dest_x = (int)((printable_width - dest_width) * align_x_factor);
-            dest_y = (int)((printable_height - dest_height) * align_y_factor);
+            if (scaling_mode == 3) { // Fit to Paper alignment is relative to physical paper
+                int paper_width = GetDeviceCaps(hdc, PHYSICALWIDTH);
+                int paper_height = GetDeviceCaps(hdc, PHYSICALHEIGHT);
+                int offset_x = GetDeviceCaps(hdc, PHYSICALOFFSETX);
+                int offset_y = GetDeviceCaps(hdc, PHYSICALOFFSETY);
+                dest_x = (int)((paper_width - dest_width) * align_x_factor) - offset_x;
+                dest_y = (int)((paper_height - dest_height) * align_y_factor) - offset_y;
+            } else { // All other modes are relative to the printable area
+                dest_x = (int)((printable_width - dest_width) * align_x_factor);
+                dest_y = (int)((printable_height - dest_height) * align_y_factor);
+            }
 
-            if (StretchDIBits(hdc, dest_x, dest_y, dest_width, dest_height, 0, 0, width, height, pBitmapData, &bmi, DIB_RGB_COLORS, SRCCOPY) == GDI_ERROR) {
+            if (StretchDIBits(hdc, dest_x, dest_y, dest_width, dest_height, 0, 0, bitmap_width, bitmap_height, pBitmapData, &bmi, DIB_RGB_COLORS, SRCCOPY) == GDI_ERROR) {
                 LOG("StretchDIBits failed for page %d with error %lu", i, GetLastError());
                 success = false;
             }
@@ -1538,7 +1597,8 @@ FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char* printer_name, const ui
 
 #ifdef _WIN32
     int paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id;
-    parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id);
+    double custom_scale; // Dummy
+    parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id, &custom_scale);
 
     HANDLE hPrinter;
     DOC_INFO_1W docInfo;

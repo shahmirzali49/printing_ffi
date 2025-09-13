@@ -1,3 +1,9 @@
+## 0.0.7
+
+* **FEAT**: Enhanced PDF scaling options on Windows with `Fit to Paper` and `Custom` scaling. 📄✨
+* **FEAT**: Introduced a type-safe `PdfPrintScaling` class in the Dart API for improved usability.
+* **FIX**: Resolved a PDF stretching issue on Windows printers with non-square DPI by correcting the rendering aspect ratio. 🐛
+
 ## 0.0.6
 
 * **FEAT**: Added support for opening the native Windows printer properties dialog via `openPrinterProperties`. 🎛️

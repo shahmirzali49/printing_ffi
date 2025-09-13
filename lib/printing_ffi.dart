@@ -126,15 +126,59 @@ class PrintJob {
 }
 
 /// Defines the scaling behavior for PDF printing on Windows.
-enum PdfPrintScaling {
+sealed class PdfPrintScaling {
+  /// The integer value passed to the native code.
+  final int nativeValue;
+  const PdfPrintScaling(this.nativeValue);
+
   /// Scale the page to fit the printable area of the paper, maintaining aspect ratio.
-  fitPage,
+  static const PdfPrintScaling fitToPrintableArea = _PdfPrintScalingValue(0);
+
+  @Deprecated('Use fitToPrintableArea instead. This will be removed in a future version.')
+  static const PdfPrintScaling fitPage = fitToPrintableArea;
 
   /// Print the page at its actual size (100% scale), centered on the paper.
-  actualSize,
+  static const PdfPrintScaling actualSize = _PdfPrintScalingValue(1);
 
   /// Shrink the page to fit the printable area if it's larger, otherwise print at actual size.
-  shrinkToFit,
+  static const PdfPrintScaling shrinkToFit = _PdfPrintScalingValue(2);
+
+  /// Scale the page to fit the physical paper size, maintaining aspect ratio.
+  static const PdfPrintScaling fitToPaper = _PdfPrintScalingValue(3);
+
+  /// Apply a custom scaling factor.
+  ///
+  /// - [scale]: The scaling factor (e.g., 1.0 for 100%, 0.5 for 50%).
+  const factory PdfPrintScaling.custom(double scale) = _PdfPrintScalingCustom;
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(this, other)) return true;
+    if (other is! PdfPrintScaling || runtimeType != other.runtimeType) return false;
+    if (other is _PdfPrintScalingCustom && this is _PdfPrintScalingCustom) {
+      return (this as _PdfPrintScalingCustom).scale == other.scale;
+    }
+    return nativeValue == other.nativeValue;
+  }
+
+  @override
+  int get hashCode => nativeValue.hashCode;
+}
+
+class _PdfPrintScalingValue extends PdfPrintScaling {
+  const _PdfPrintScalingValue(super.nativeValue);
+}
+
+final class _PdfPrintScalingCustom extends PdfPrintScaling {
+  const _PdfPrintScalingCustom(this.scale) : super(4);
+
+  final double scale;
+
+  @override
+  bool operator ==(Object other) => identical(this, other) || other is _PdfPrintScalingCustom && runtimeType == other.runtimeType && scale == other.scale;
+
+  @override
+  int get hashCode => Object.hash(nativeValue, scale);
 }
 
 /// Defines the orientation for printing on Windows.
@@ -745,7 +789,7 @@ Future<bool> rawDataToPrinter(
 /// - [printerName]: The name of the target printer.
 /// - [pdfFilePath]: The local path to the PDF file.
 /// - [docName]: The name of the document to show in the print queue.
-/// - [scaling]: The scaling mode for Windows printing (defaults to [PdfPrintScaling.fitPage]).
+/// - [scaling]: The scaling mode for Windows printing (defaults to [PdfPrintScaling.fitToPrintableArea]).
 /// - [copies]: The number of copies to print. Defaults to 1.
 /// - [pageRange]: A [PageRange] object specifying the pages to print.
 ///   If `null`, all pages will be printed.
@@ -1459,6 +1503,9 @@ Future<SendPort> _helperIsolateSendPort = () async {
               try {
                 // Handle cupsOptions for native call
                 final options = {...?data.options};
+                if (data.scaling is _PdfPrintScalingCustom) {
+                  options['custom-scale-factor'] = (data.scaling as _PdfPrintScalingCustom).scale.toString();
+                }
                 if (Platform.isMacOS || Platform.isLinux) {
                   if (data.copies > 1) options['copies'] = data.copies.toString();
                   if (pageRangeValue != null && pageRangeValue.isNotEmpty) options['page-ranges'] = pageRangeValue;
@@ -1508,7 +1555,7 @@ Future<SendPort> _helperIsolateSendPort = () async {
                   namePtr.cast(),
                   pathPtr.cast(),
                   docNamePtr.cast(),
-                  data.scaling.index,
+                  data.scaling.nativeValue,
                   data.copies,
                   pageRangePtr.cast(),
                   numOptions,
@@ -1668,6 +1715,9 @@ Future<SendPort> _helperIsolateSendPort = () async {
               final pageRangePtr = pageRangeValue?.toNativeUtf8() ?? nullptr;
               try {
                 final options = {...?data.options};
+                if (data.scaling is _PdfPrintScalingCustom) {
+                  options['custom-scale-factor'] = (data.scaling as _PdfPrintScalingCustom).scale.toString();
+                }
                 if (Platform.isMacOS || Platform.isLinux) {
                   if (data.copies > 1) options['copies'] = data.copies.toString();
                   if (pageRangeValue != null && pageRangeValue.isNotEmpty) options['page-ranges'] = pageRangeValue;
@@ -1717,7 +1767,7 @@ Future<SendPort> _helperIsolateSendPort = () async {
                   namePtr.cast(),
                   pathPtr.cast(),
                   docNamePtr.cast(),
-                  data.scaling.index,
+                  data.scaling.nativeValue,
                   data.copies,
                   pageRangePtr.cast(),
                   numOptions,

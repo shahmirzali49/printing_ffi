@@ -13,6 +13,12 @@ extension ColorExt on Color {
   }
 }
 
+/// A local helper class to represent the custom scaling option in the UI.
+/// This is a marker class for the SegmentedButton.
+class _CustomScaling {
+  const _CustomScaling();
+}
+
 void main() {
   runApp(const PrintingFfiExampleApp());
 }
@@ -67,10 +73,11 @@ class _PrintingScreenState extends State<PrintingScreen> {
   bool _isLoadingCupsOptions = false;
   bool _isLoadingWindowsCaps = false;
 
-  final TextEditingController _rawDataController = TextEditingController(
-    text: 'Hello, FFI!',
-  );
-  PdfPrintScaling _selectedScaling = PdfPrintScaling.shrinkToFit;
+  final TextEditingController _rawDataController =
+      TextEditingController(text: 'Hello, FFI!');
+  Object _selectedScaling = PdfPrintScaling.fitToPrintableArea;
+  final TextEditingController _customScaleController =
+      TextEditingController(text: '1.0');
   final TextEditingController _copiesController = TextEditingController(
     text: '1',
   );
@@ -90,6 +97,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
     _jobsSubscription?.cancel();
     _copiesController.dispose();
     _pageRangeController.dispose();
+    _customScaleController.dispose();
     super.dispose();
   }
 
@@ -251,7 +259,6 @@ class _PrintingScreenState extends State<PrintingScreen> {
 
   Future<void> _printPdf({
     Map<String, String>? cupsOptions,
-    required PdfPrintScaling scaling,
     required int copies,
     required String pageRangeString,
   }) async {
@@ -278,6 +285,14 @@ class _PrintingScreenState extends State<PrintingScreen> {
       try {
         final options = _buildPrintOptions(cupsOptions: cupsOptions);
         _showSnackbar('Printing PDF...');
+
+        final PdfPrintScaling scaling;
+        if (_selectedScaling is _CustomScaling) {
+          final scaleValue = double.tryParse(_customScaleController.text) ?? 1.0;
+          scaling = PdfPrintScaling.custom(scaleValue);
+        } else {
+          scaling = _selectedScaling as PdfPrintScaling;
+        }
         final success = await printPdf(
           _selectedPrinter!.name,
           path,
@@ -331,6 +346,15 @@ class _PrintingScreenState extends State<PrintingScreen> {
         }
       }
       final options = _buildPrintOptions();
+
+      final PdfPrintScaling scaling;
+      if (_selectedScaling is _CustomScaling) {
+        final scaleValue = double.tryParse(_customScaleController.text) ?? 1.0;
+        scaling = PdfPrintScaling.custom(scaleValue);
+      } else {
+        scaling = _selectedScaling as PdfPrintScaling;
+      }
+
       if (!mounted) return;
       showDialog(
         context: context,
@@ -341,7 +365,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
             _selectedPrinter!.name,
             path,
             options: options,
-            scaling: _selectedScaling,
+            scaling: scaling,
             copies: copies,
             pageRange: pageRange,
           ),
@@ -613,19 +637,17 @@ class _PrintingScreenState extends State<PrintingScreen> {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(
-                  child: _buildPlatformSettings(),
-                ),
+                Expanded(child: _buildPlatformSettings()),
                 const SizedBox(width: 16),
                 Expanded(
                   child: Column(
                     children: [
-                      if (Platform.isWindows) ...[
-                        SegmentedButton<PdfPrintScaling>(
-                          segments: const [
+                      if (Platform.isWindows)
+                        SegmentedButton<Object>(
+                          segments: const <ButtonSegment<Object>>[
                             ButtonSegment(
-                              value: PdfPrintScaling.fitPage,
-                              label: Text('Fit to Page'),
+                              value: PdfPrintScaling.fitToPrintableArea,
+                              label: Text('Fit to Printable'),
                             ),
                             ButtonSegment(
                               value: PdfPrintScaling.actualSize,
@@ -635,6 +657,14 @@ class _PrintingScreenState extends State<PrintingScreen> {
                               value: PdfPrintScaling.shrinkToFit,
                               label: Text('Shrink to Fit'),
                             ),
+                            ButtonSegment(
+                              value: PdfPrintScaling.fitToPaper,
+                              label: Text('Fit to Paper'),
+                            ),
+                            ButtonSegment(
+                              value: _CustomScaling(),
+                              label: Text('Custom'),
+                            ),
                           ],
                           selected: {_selectedScaling},
                           onSelectionChanged: (newSelection) {
@@ -643,16 +673,25 @@ class _PrintingScreenState extends State<PrintingScreen> {
                             });
                           },
                         ),
+                      if (Platform.isWindows && _selectedScaling is _CustomScaling) ...[
                         const SizedBox(height: 12),
+                        SizedBox(
+                          width: 120,
+                          child: TextField(
+                            controller: _customScaleController,
+                            decoration: const InputDecoration(
+                              border: OutlineInputBorder(),
+                              labelText: 'Scale',
+                            ),
+                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          ),
+                        ),
                       ],
+                      const SizedBox(height: 12),
                       ElevatedButton.icon(
                         icon: const Icon(Icons.picture_as_pdf),
                         label: const Text('Print a PDF File'),
-                        onPressed: () => _printPdf(
-                          scaling: _selectedScaling,
-                          copies: int.tryParse(_copiesController.text) ?? 1,
-                          pageRangeString: _pageRangeController.text,
-                        ),
+                        onPressed: () => _printPdf(copies: int.tryParse(_copiesController.text) ?? 1, pageRangeString: _pageRangeController.text),
                         style: ElevatedButton.styleFrom(
                           padding: const EdgeInsets.symmetric(
                             horizontal: 24,
@@ -804,8 +843,9 @@ class _PrintingScreenState extends State<PrintingScreen> {
                   ),
                 )
                 .toList(),
-            onChanged: (a) =>
-                setState(() => _selectedAlignment = a ?? PdfPrintAlignment.center),
+            onChanged: (a) => setState(
+              () => _selectedAlignment = a ?? PdfPrintAlignment.center,
+            ),
           ),
         ]);
       }
@@ -823,15 +863,12 @@ class _PrintingScreenState extends State<PrintingScreen> {
             .map(
               (q) => DropdownMenuItem(
                 value: q,
-                child: Text(
-                  q.name[0].toUpperCase() + q.name.substring(1),
-                ),
+                child: Text(q.name[0].toUpperCase() + q.name.substring(1)),
               ),
             )
             .toList(),
-        onChanged: (q) => setState(
-          () => _selectedPrintQuality = q ?? PrintQuality.normal,
-        ),
+        onChanged: (q) =>
+            setState(() => _selectedPrintQuality = q ?? PrintQuality.normal),
       ),
       Tooltip(
         message:
@@ -846,13 +883,13 @@ class _PrintingScreenState extends State<PrintingScreen> {
               .map(
                 (c) => DropdownMenuItem(
                   value: c,
-                  enabled: (c == ColorMode.color &&
+                  enabled:
+                      (c == ColorMode.color &&
                           (_windowsCapabilities?.isColorSupported ?? true)) ||
                       (c == ColorMode.monochrome &&
-                          (_windowsCapabilities?.isMonochromeSupported ?? true)),
-                  child: Text(
-                    c.name[0].toUpperCase() + c.name.substring(1),
-                  ),
+                          (_windowsCapabilities?.isMonochromeSupported ??
+                              true)),
+                  child: Text(c.name[0].toUpperCase() + c.name.substring(1)),
                 ),
               )
               .toList(),
@@ -873,9 +910,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
               .map(
                 (o) => DropdownMenuItem(
                   value: o,
-                  child: Text(
-                    o.name[0].toUpperCase() + o.name.substring(1),
-                  ),
+                  child: Text(o.name[0].toUpperCase() + o.name.substring(1)),
                 ),
               )
               .toList(),
@@ -890,7 +925,9 @@ class _PrintingScreenState extends State<PrintingScreen> {
       padding: const EdgeInsets.only(top: 16.0),
       child: Card(
         elevation: 1,
-        color: Theme.of(context).colorScheme.secondaryContainer.withOpacityx(0.3),
+        color: Theme.of(
+          context,
+        ).colorScheme.secondaryContainer.withOpacityx(0.3),
         child: Padding(
           padding: const EdgeInsets.all(16.0),
           child: Column(
@@ -1057,7 +1094,6 @@ class _PrintingScreenState extends State<PrintingScreen> {
               label: const Text('Print PDF with Selected Options'),
               onPressed: () => _printPdf(
                 cupsOptions: _selectedCupsOptions,
-                scaling: _selectedScaling,
                 copies: int.tryParse(_copiesController.text) ?? 1,
                 pageRangeString: _pageRangeController.text,
               ),
