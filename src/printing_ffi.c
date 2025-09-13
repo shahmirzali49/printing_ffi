@@ -858,7 +858,7 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
                 break;
             }
 
-            // --- Get PDF page dimensions, accounting for page rotation ---
+            // --- Get PDF page dimensions and rotation ---
             float pdf_width_pt = FPDF_GetPageWidthF(page);
             float pdf_height_pt = FPDF_GetPageHeightF(page);
 
@@ -869,18 +869,12 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
                 pdf_height_pt = temp;
             }
 
-            float page_aspect = 1.0f;
-            if (pdf_height_pt > 0) { // Avoid division by zero
-                page_aspect = pdf_width_pt / pdf_height_pt;
-            }
-
             int dpi_x = GetDeviceCaps(hdc, LOGPIXELSX);
             int dpi_y = GetDeviceCaps(hdc, LOGPIXELSY);
             LOG("print_pdf_job_win: Device DPI: %d x %d. Printable Area: %d x %d", dpi_x, dpi_y, GetDeviceCaps(hdc, HORZRES), GetDeviceCaps(hdc, VERTRES));
-            // Use the higher DPI for rendering to get better quality, but maintain aspect ratio.
-            int render_dpi = (dpi_x > dpi_y) ? dpi_x : dpi_y;
-            int bitmap_width = (int)(pdf_width_pt / 72.0f * render_dpi);
-            int bitmap_height = (int)(pdf_height_pt / 72.0f * render_dpi);
+            // Render the bitmap using the device's specific DPI for each axis to avoid distortion.
+            int bitmap_width = (int)(pdf_width_pt / 72.0f * dpi_x);
+            int bitmap_height = (int)(pdf_height_pt / 72.0f * dpi_y);
 
             BITMAPINFO bmi;
             memset(&bmi, 0, sizeof(bmi));
@@ -914,7 +908,8 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
             }
 
             FPDFBitmap_FillRect(pdfBitmap, 0, 0, bitmap_width, bitmap_height, 0xFFFFFFFF); // Fill with white
-            FPDF_RenderPageBitmap(pdfBitmap, page, 0, 0, bitmap_width, bitmap_height, 0, FPDF_ANNOT);
+            // Pass the rotation value to PDFium so it handles rendering the page correctly.
+            FPDF_RenderPageBitmap(pdfBitmap, page, 0, 0, bitmap_width, bitmap_height, rotation, FPDF_ANNOT);
             FPDFBitmap_Destroy(pdfBitmap);
 
             int printable_width = GetDeviceCaps(hdc, HORZRES);
@@ -924,6 +919,12 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
             // --- REVISED SCALING LOGIC ---
             // scaling_mode: 0=FitToPrintableArea, 1=ActualSize, 2=ShrinkToFit, 3=FitToPaper, 4=Custom
             if (scaling_mode == 0) { // Fit to Printable Area (formerly Fit Page)
+                // Calculate aspect ratio based on device-dependent pixel dimensions to avoid distortion.
+                float page_aspect = 1.0f;
+                if (bitmap_height > 0) {
+                    page_aspect = (float)bitmap_width / (float)bitmap_height;
+                }
+
                 float printable_aspect = 1.0f;
                 if (printable_height != 0) {
                     printable_aspect = (float)printable_width / (float)printable_height;
@@ -949,6 +950,12 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
                 int pdf_pixel_height = (int)(pdf_height_pt / 72.0f * dpi_y);
 
                 if (pdf_pixel_width > printable_width || pdf_pixel_height > printable_height) {
+                    // Calculate aspect ratio based on device-dependent pixel dimensions.
+                    float page_aspect = 1.0f;
+                    if (bitmap_height > 0) {
+                        page_aspect = (float)bitmap_width / (float)bitmap_height;
+                    }
+
                     float printable_aspect = 1.0f;
                     if (printable_height != 0) {
                         printable_aspect = (float)printable_width / (float)printable_height;
@@ -969,6 +976,12 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
                 int paper_width = GetDeviceCaps(hdc, PHYSICALWIDTH);
                 int paper_height = GetDeviceCaps(hdc, PHYSICALHEIGHT);
                 float paper_aspect = 1.0f;
+                // Calculate aspect ratio based on device-dependent pixel dimensions.
+                float page_aspect = 1.0f;
+                if (bitmap_height > 0) {
+                    page_aspect = (float)bitmap_width / (float)bitmap_height;
+                }
+
                 if (paper_height != 0) {
                     paper_aspect = (float)paper_width / (float)paper_height;
                 }
@@ -988,6 +1001,12 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
                 dest_width = (int)(pdf_pixel_width * custom_scale);
                 dest_height = (int)(pdf_pixel_height * custom_scale);
             } else { // Default to Fit to Printable Area
+                // Calculate aspect ratio based on device-dependent pixel dimensions.
+                float page_aspect = 1.0f;
+                if (bitmap_height > 0) {
+                    page_aspect = (float)bitmap_width / (float)bitmap_height;
+                }
+
                 float printable_aspect = 1.0f;
                 if (printable_height != 0) {
                     printable_aspect = (float)printable_width / (float)printable_height;
