@@ -320,15 +320,10 @@ class _PrintingScreenState extends State<PrintingScreen> {
         if (!mounted) return;
         if (success) {
           _showSnackbar('PDF sent to printer successfully!');
-        } else {
-          _showSnackbar(
-            'Failed to print PDF. The printer may be offline or the page range may be invalid for the document.',
-            isError: true,
-          );
         }
-      } on ArgumentError catch (e) {
-        _showSnackbar('Invalid argument: ${e.message}', isError: true);
-      } catch (e) {
+      } on PrintingFfiException catch (e) {
+        _showSnackbar('Failed to print PDF: ${e.message}', isError: true);
+      } catch (e, s) {
         _showSnackbar(
           'An unexpected error occurred while printing: $e',
           isError: true,

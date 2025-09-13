@@ -775,6 +775,18 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
     LOG("print_pdf_job_win: StartDocW succeeded with Job ID: %d", job_id);
 
     int page_count = FPDF_GetPageCount(doc);
+    if (page_count <= 0) {
+        set_last_error("Could not get page count from the PDF document. The file may be empty, corrupt, or in an unsupported format. (Page count: %d)", page_count);
+        LOG("print_pdf_job_win: FPDF_GetPageCount returned %d. Aborting.", page_count);
+        if (doc_name_w) free(doc_name_w);
+        AbortDoc(hdc);
+        DeleteDC(hdc);
+        FPDF_CloseDocument(doc);
+        free(printer_name_w);
+        // We don't need to free pages_to_print as it's not allocated yet.
+        return 0;
+    }
+
     LOG("print_pdf_job_win: PDF has %d pages.", page_count);    bool* pages_to_print = (bool*)malloc(page_count * sizeof(bool));
     if (!pages_to_print) {
         set_last_error("Failed to allocate memory for page range flags.");
