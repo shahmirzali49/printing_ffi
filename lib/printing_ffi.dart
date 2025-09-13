@@ -385,6 +385,18 @@ class WindowsPrinterCapabilities {
   });
 }
 
+/// An exception thrown when a native printing operation fails.
+///
+/// Contains a detailed message from the underlying native printing system
+/// (e.g., CUPS or Windows Spooler).
+class PrintingFfiException implements Exception {
+  final String message;
+  PrintingFfiException(this.message);
+
+  @override
+  String toString() => 'PrintingFfiException: $message';
+}
+
 /// Exception thrown when the helper isolate encounters a fatal error or exits unexpectedly.
 class IsolateError extends Error {
   final String message;
@@ -666,6 +678,8 @@ final DynamicLibrary _dylib = () {
 final PrintingFfiBindings _bindings = PrintingFfiBindings(
   _dylib,
 ); // Updated to PrintingFfiBindings
+
+final _getLastError = _dylib.lookup<NativeFunction<Pointer<Utf8> Function()>>('get_last_error').asFunction<Pointer<Utf8> Function()>();
 
 // --- Initialization and Logging ---
 
@@ -1463,7 +1477,12 @@ Future<SendPort> _helperIsolateSendPort = () async {
                     keysPtr.cast(),
                     valuesPtr.cast(),
                   );
-                  sendPort.send(_PrintResponse(data.id, result));
+                if (result) {
+                  sendPort.send(_PrintResponse(data.id, true));
+                } else {
+                  final errorMsg = _getLastError().toDartString();
+                  sendPort.send(_ErrorResponse(data.id, PrintingFfiException(errorMsg), StackTrace.current));
+                }
                 } finally {
                   if (numOptions > 0) {
                     for (var i = 0; i < numOptions; i++) {
@@ -1603,7 +1622,12 @@ Future<SendPort> _helperIsolateSendPort = () async {
                   valuesPtr.cast(),
                   alignmentPtr.cast(),
                 );
-                sendPort.send(_PrintPdfResponse(data.id, result));
+                if (result) {
+                  sendPort.send(_PrintPdfResponse(data.id, true));
+                } else {
+                  final errorMsg = _getLastError().toDartString();
+                  sendPort.send(_ErrorResponse(data.id, PrintingFfiException(errorMsg), StackTrace.current));
+                }
 
                 if (numOptions > 0) {
                   for (var i = 0; i < numOptions; i++) {
@@ -1726,7 +1750,12 @@ Future<SendPort> _helperIsolateSendPort = () async {
                     keysPtr.cast(),
                     valuesPtr.cast(),
                   );
-                  sendPort.send(_SubmitJobResponse(data.id, jobId));
+                  if (jobId > 0) {
+                    sendPort.send(_SubmitJobResponse(data.id, jobId));
+                  } else {
+                    final errorMsg = _getLastError().toDartString();
+                    sendPort.send(_ErrorResponse(data.id, PrintingFfiException(errorMsg), StackTrace.current));
+                  }
                 } finally {
                   if (numOptions > 0) {
                     for (var i = 0; i < numOptions; i++) {
@@ -1815,7 +1844,12 @@ Future<SendPort> _helperIsolateSendPort = () async {
                   valuesPtr.cast(),
                   alignmentPtr.cast(),
                 );
-                sendPort.send(_SubmitJobResponse(data.id, jobId));
+                if (jobId > 0) {
+                  sendPort.send(_SubmitJobResponse(data.id, jobId));
+                } else {
+                  final errorMsg = _getLastError().toDartString();
+                  sendPort.send(_ErrorResponse(data.id, PrintingFfiException(errorMsg), StackTrace.current));
+                }
 
                 if (numOptions > 0) {
                   for (var i = 0; i < numOptions; i++) {

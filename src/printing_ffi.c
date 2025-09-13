@@ -42,6 +42,39 @@ static log_callback_t s_log_callback = NULL;
 #define LOG(...)
 #endif
 
+// --- Last Error Handling ---
+
+// Use thread-local storage for the last error message to ensure thread safety.
+#ifdef _WIN32
+__declspec(thread) static char* g_last_error_message = NULL;
+#else // macOS, Linux
+static __thread char* g_last_error_message = NULL;
+#endif
+
+// Internal helper to set the last error message for the current thread.
+static void set_last_error(const char* format, ...) {
+    // Free the previous error message if it exists
+    if (g_last_error_message) {
+        free(g_last_error_message);
+        g_last_error_message = NULL;
+    }
+
+    va_list args;
+    va_start(args, format);
+
+    // Determine the required buffer size
+    va_list args_copy;
+    va_copy(args_copy, args);
+    int size = vsnprintf(NULL, 0, format, args_copy);
+    va_end(args_copy);
+
+    if (size >= 0) {
+        g_last_error_message = (char*)malloc(size + 1);
+        if (g_last_error_message) vsnprintf(g_last_error_message, size + 1, format, args);
+    }
+    va_end(args);
+}
+
 FFI_PLUGIN_EXPORT void register_log_callback(log_callback_t callback) {
     s_log_callback = callback;
 }
@@ -684,6 +717,8 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
         s_pdfium_initialized = true;
         LOG("Pdfium library initialized for the first time.");
     }
+    // Clear any previous errors at the start of an operation.
+    set_last_error("");
 
     double custom_scale;
     int paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id;
@@ -691,12 +726,14 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
 
     wchar_t* printer_name_w = to_utf16(printer_name);
     if (!printer_name_w) {
+        set_last_error("Failed to convert printer name to UTF-16.");
         LOG("print_pdf_job_win: Failed to convert printer name to UTF-16");
         return 0;
     }
 
     FPDF_DOCUMENT doc = FPDF_LoadDocument(pdf_file_path, NULL);
     if (!doc) {
+        set_last_error("Failed to load PDF document at path '%s'. Error code: %ld. The file may be missing, corrupt, or password-protected.", pdf_file_path, FPDF_GetLastError());
         LOG("print_pdf_job_win: FPDF_LoadDocument failed for path: %s. Error: %ld", pdf_file_path, FPDF_GetLastError());
         free(printer_name_w);
         return 0;
@@ -709,6 +746,7 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
     if (pDevMode) free(pDevMode); // DEVMODE is copied by CreateDC, so we can free it now.
 
     if (!hdc) {
+        set_last_error("Failed to create device context (CreateDCW) for printer '%s'. Error: %lu. This often indicates an invalid printer name or driver issue.", printer_name, GetLastError());
         LOG("print_pdf_job_win: CreateDCW failed for printer '%s' with error %lu. This often indicates an invalid DEVMODE.", printer_name, GetLastError());
         FPDF_CloseDocument(doc);
         free(printer_name_w);
@@ -720,6 +758,7 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
     int job_id = StartDocW(hdc, &di);
 
     if (job_id <= 0) {
+        set_last_error("Failed to start print document (StartDocW). Error: %lu.", GetLastError());
         LOG("print_pdf_job_win: StartDocW failed with error %lu", GetLastError());
         if (doc_name_w) free(doc_name_w);
         DeleteDC(hdc);
@@ -733,6 +772,7 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
     int page_count = FPDF_GetPageCount(doc);
     LOG("print_pdf_job_win: PDF has %d pages.", page_count);    bool* pages_to_print = (bool*)malloc(page_count * sizeof(bool));
     if (!pages_to_print) {
+        set_last_error("Failed to allocate memory for page range flags.");
         LOG("print_pdf_job_win: Failed to allocate memory for page range flags.");
         if (doc_name_w) free(doc_name_w);
         AbortDoc(hdc);
@@ -743,6 +783,7 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
     }
 
     if (!parse_page_range(page_range, pages_to_print, page_count)) {
+        set_last_error("Invalid page range string: '%s'. Use a format like '1-3,5,7-9'.", page_range ? page_range : "");
         LOG("print_pdf_job_win: Invalid page range string provided: %s", page_range ? page_range : "(null)");
         free(pages_to_print);
         if (doc_name_w) free(doc_name_w);
@@ -791,6 +832,7 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
             LOG("print_pdf_job_win: Printing page %d (0-indexed).", i);
 
             if (StartPage(hdc) <= 0) {
+                set_last_error("Failed to start page %d. Error: %lu.", i + 1, GetLastError());
                 LOG("print_pdf_job_win: StartPage failed for page %d with error %lu", i, GetLastError());
                 success = false;
                 break;
@@ -798,6 +840,7 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
 
             FPDF_PAGE page = FPDF_LoadPage(doc, i);
             if (!page) {
+                set_last_error("Failed to load PDF page %d.", i + 1);
                 LOG("print_pdf_job_win: FPDF_LoadPage failed for page %d", i);
                 EndPage(hdc);
                 success = false;
@@ -840,6 +883,7 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
             void* pBitmapData = NULL;
             HBITMAP hBitmap = CreateDIBSection(hdc, &bmi, DIB_RGB_COLORS, &pBitmapData, NULL, 0);
             if (!hBitmap || !pBitmapData) {
+                set_last_error("Failed to create bitmap for rendering page %d. Error: %lu.", i + 1, GetLastError());
                 LOG("print_pdf_job_win: CreateDIBSection failed for page %d with error %lu", i, GetLastError());
                 FPDF_ClosePage(page);
                 EndPage(hdc);
@@ -849,6 +893,7 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
 
             FPDF_BITMAP pdfBitmap = FPDFBitmap_CreateEx(bitmap_width, bitmap_height, FPDFBitmap_BGR, pBitmapData, bitmap_width * 3);
             if (!pdfBitmap) {
+                set_last_error("Failed to create PDFium bitmap for page %d.", i + 1);
                 LOG("print_pdf_job_win: FPDFBitmap_CreateEx failed for page %d", i);
                 DeleteObject(hBitmap);
                 FPDF_ClosePage(page);
@@ -960,6 +1005,7 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
 
             LOG("print_pdf_job_win: Page %d: ScalingMode=%d, DestRect=(%d,%d, %dx%d)", i, scaling_mode, dest_x, dest_y, dest_width, dest_height);
             if (StretchDIBits(hdc, dest_x, dest_y, dest_width, dest_height, 0, 0, bitmap_width, bitmap_height, pBitmapData, &bmi, DIB_RGB_COLORS, SRCCOPY) == GDI_ERROR) {
+                set_last_error("Failed to draw page %d to the printer device context. Error: %lu.", i + 1, GetLastError());
                 LOG("print_pdf_job_win: StretchDIBits failed for page %d with error %lu", i, GetLastError());
                 success = false;
             }
@@ -968,6 +1014,7 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
             FPDF_ClosePage(page);
 
             if (EndPage(hdc) <= 0) {
+                set_last_error("Failed to end page %d. Error: %lu.", i + 1, GetLastError());
                 LOG("print_pdf_job_win: EndPage failed for page %d with error %lu", i, GetLastError());
                 success = false;
             }
@@ -998,6 +1045,10 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
     }
 }
 #endif
+
+FFI_PLUGIN_EXPORT const char* get_last_error() {
+    return g_last_error_message ? g_last_error_message : "";
+}
 
 FFI_PLUGIN_EXPORT bool print_pdf(const char* printer_name, const char* pdf_file_path, const char* doc_name, int scaling_mode, int copies, const char* page_range, int num_options, const char** option_keys, const char** option_values, const char* alignment) {
     LOG("print_pdf called for printer: '%s', path: '%s', doc: '%s'", printer_name, pdf_file_path, doc_name);

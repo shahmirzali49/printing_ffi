@@ -146,6 +146,7 @@ FFI_PLUGIN_EXPORT CupsOptionList* get_supported_cups_options(const char* printer
 FFI_PLUGIN_EXPORT void free_cups_option_list(CupsOptionList* option_list);
 FFI_PLUGIN_EXPORT WindowsPrinterCapabilities* get_windows_printer_capabilities(const char* printer_name);
 FFI_PLUGIN_EXPORT void free_windows_printer_capabilities(WindowsPrinterCapabilities* capabilities);
+FFI_PLUGIN_EXPORT const char* get_last_error();
 
 // Functions that submit a job and return a job ID for status tracking.
 FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char* printer_name, const uint8_t* data, int length, const char* doc_name, int num_options, const char** option_keys, const char** option_values);
