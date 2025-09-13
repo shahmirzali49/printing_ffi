@@ -674,20 +674,32 @@ typedef _RegisterLogCallbackNative = Void Function(Pointer<NativeFunction<Void F
 // Define the Dart function signature
 typedef _RegisterLogCallback = void Function(Pointer<NativeFunction<Void Function(Pointer<Char>)>>);
 
+/// A function that handles log messages from the native side.
+typedef LogHandler = void Function(String message);
+
+// The user-provided log handler.
+LogHandler? _customLogHandler;
+
 /// Top-level function to handle logs from native code.
 /// This must be a top-level or static function to be used with `Pointer.fromFunction`.
 void _logHandler(Pointer<Char> message) {
   final logMessage = message.cast<Utf8>().toDartString();
-  // Use debugPrint to avoid issues in release mode on some platforms
-  debugPrint(logMessage);
+  if (_customLogHandler != null) {
+    _customLogHandler!(logMessage);
+  } else {
+    // Default behavior if no handler is provided.
+    debugPrint(logMessage);
+  }
 }
 
 /// Initializes the printing_ffi plugin.
 ///
 /// This function sets up necessary configurations, such as registering a
 /// log handler to receive debug messages from the native code. It's recommended
-/// to call this once when your application starts.
-void initializePrintingFfi() {
+/// to call this once when your application starts. An optional [logHandler]
+/// can be provided to process log messages from the native layer.
+void initializePrintingFfi({LogHandler? logHandler}) {
+  _customLogHandler = logHandler;
   final registerer = _dylib.lookup<NativeFunction<_RegisterLogCallbackNative>>('register_log_callback').asFunction<_RegisterLogCallback>();
   // Use Pointer.fromFunction to get a pointer to our top-level log handler.
   // This is the correct and most efficient way to create a callback from a

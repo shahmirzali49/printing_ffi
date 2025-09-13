@@ -20,6 +20,7 @@
 #ifdef _WIN32
 // Include the main Pdfium header. Ensure this is in your src/ directory.
 #include "fpdfview.h"
+#include "fpdf_edit.h"
 // Global state for Pdfium initialization
 static bool s_pdfium_initialized = false;
 #endif

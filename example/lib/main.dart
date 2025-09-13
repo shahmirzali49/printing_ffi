@@ -21,8 +21,11 @@ class _CustomScaling {
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  // Initialize the FFI plugin, which includes setting up the log handler.
-  initializePrintingFfi();
+  // Initialize the FFI plugin and provide a custom log handler.
+  // This allows you to route native logs to your own logging infrastructure.
+  initializePrintingFfi(logHandler: (message) {
+    debugPrint('CUSTOM LOG HANDLER: $message');
+  });
   runApp(const PrintingFfiExampleApp());
 }
 
