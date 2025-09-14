@@ -200,7 +200,8 @@ next_token:
 // Helper function to parse Windows-specific print options from the generic key-value array.
 static void parse_windows_options(int num_options, const char** option_keys, const char** option_values,
                                   int* paper_size_id, int* paper_source_id, int* orientation,
-                                  int* color_mode, int* print_quality, int* media_type_id, double* custom_scale) {
+                                  int* color_mode, int* print_quality, int* media_type_id, double* custom_scale,
+                                  bool* collate) {
     // Set default values
     *paper_size_id = 0;
     *paper_source_id = 0;
@@ -209,6 +210,7 @@ static void parse_windows_options(int num_options, const char** option_keys, con
     *print_quality = 0;
     *media_type_id = 0;
     *custom_scale = 1.0; // Default to 100%
+    *collate = true; // Default to collated (complete copies printed together)
 
     for (int i = 0; i < num_options; i++) {
         if (strcmp(option_keys[i], "paper-size-id") == 0) {
@@ -235,6 +237,9 @@ static void parse_windows_options(int num_options, const char** option_keys, con
             *media_type_id = atoi(option_values[i]);
         } else if (strcmp(option_keys[i], "custom-scale-factor") == 0) {
             *custom_scale = atof(option_values[i]);
+        } else if (strcmp(option_keys[i], "collate") == 0) {
+            // Parse collate option: true = collated (complete copies together), false = non-collated (all copies of each page together)
+            *collate = (strcmp(option_values[i], "true") == 0);
         }
     }
 }
@@ -607,7 +612,8 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8
 #ifdef _WIN32
     int paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id;
     double custom_scale; // Dummy for raw printing
-    parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id, &custom_scale);
+    bool collate = true; // Default to collated (complete copies printed together)
+    parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id, &custom_scale, &collate);
 
     HANDLE hPrinter;
     DOC_INFO_1W docInfo;
@@ -736,7 +742,8 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
 
     double custom_scale;
     int paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id;
-    parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id, &custom_scale);
+    bool collate = true; // Default to collated (complete copies printed together)
+    parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id, &custom_scale, &collate);
 
     wchar_t* printer_name_w = to_utf16(printer_name);
     if (!printer_name_w) {
@@ -1740,7 +1747,8 @@ FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char* printer_name, const ui
 #ifdef _WIN32
     int paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id;
     double custom_scale; // Dummy
-    parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id, &custom_scale);
+    bool collate = true; // Default to collated (complete copies printed together)
+    parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id, &custom_scale, &collate);
 
     HANDLE hPrinter;
     DOC_INFO_1W docInfo;
