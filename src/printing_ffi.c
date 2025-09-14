@@ -248,7 +248,7 @@ static void parse_windows_options(int num_options, const char** option_keys, con
 #ifdef _WIN32
 // Helper to get a modified DEVMODE struct for a printer.
 // The caller is responsible for freeing the returned struct.
-static DEVMODEW* get_modified_devmode(wchar_t* printer_name_w, int paper_size_id, int paper_source_id, int orientation, int color_mode, int print_quality, int media_type_id) {
+static DEVMODEW* get_modified_devmode(wchar_t* printer_name_w, int paper_size_id, int paper_source_id, int orientation, int color_mode, int print_quality, int media_type_id, bool collate) {
     if (!printer_name_w) return NULL;
     LOG("get_modified_devmode: Creating DEVMODE for '%ls' with paper_id:%d, source_id:%d, orientation:%d, color:%d, quality:%d, media_id:%d",
         printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id);
@@ -322,6 +322,12 @@ static DEVMODEW* get_modified_devmode(wchar_t* printer_name_w, int paper_size_id
         LOG("get_modified_devmode: Setting dmMediaType to %d.", media_type_id);
         pDevMode->dmFields |= DM_MEDIATYPE; pDevMode->dmMediaType = (short)media_type_id; modified = true;
     }
+    
+    // Set collate mode
+    LOG("get_modified_devmode: Setting dmCollate to %s.", collate ? "true" : "false");
+    pDevMode->dmFields |= DM_COLLATE;
+    pDevMode->dmCollate = collate ? DMCOLLATE_TRUE : DMCOLLATE_FALSE;
+    modified = true;
 
     if (modified) {
         LOG("get_modified_devmode: DEVMODE was modified. Validating with driver...");
@@ -621,7 +627,7 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8
     wchar_t* printer_name_w = to_utf16(printer_name);
     if (!printer_name_w) return false;
 
-    DEVMODEW* pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id);
+    DEVMODEW* pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, collate);
 
     PRINTER_DEFAULTSW printerDefaults = { NULL, pDevMode, PRINTER_ACCESS_USE };
     printerDefaults.pDatatype = L"RAW";
@@ -761,7 +767,7 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
     }
     LOG("print_pdf_job_win: PDF document loaded successfully.");
 
-    DEVMODEW* pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id);
+    DEVMODEW* pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, collate);
 
     HDC hdc = CreateDCW(L"WINSPOOL", printer_name_w, NULL, pDevMode);
     if (pDevMode) free(pDevMode); // DEVMODE is copied by CreateDC, so we can free it now.
@@ -1758,7 +1764,7 @@ FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char* printer_name, const ui
     wchar_t* printer_name_w = to_utf16(printer_name);
     if (!printer_name_w) return 0;
 
-    DEVMODEW* pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id);
+    DEVMODEW* pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, collate);
 
     PRINTER_DEFAULTSW printerDefaults = { NULL, pDevMode, PRINTER_ACCESS_USE };
     printerDefaults.pDatatype = L"RAW";

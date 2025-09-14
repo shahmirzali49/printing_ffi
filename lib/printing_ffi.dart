@@ -1532,11 +1532,6 @@ Future<SendPort> _helperIsolateSendPort = () async {
                         break;
                     }
                   }
-                  if (options.containsKey('collate')) {
-                    // Pass collate option to CUPS: true = collated (complete copies together), false = non-collated (all copies of each page together)
-                    final collateValue = options.remove('collate');
-                    options['collate'] = collateValue!;
-                  }
                 }
                 final int numOptions = options.length;
                 Pointer<Pointer<Utf8>> keysPtr = nullptr;
@@ -1679,11 +1674,6 @@ Future<SendPort> _helperIsolateSendPort = () async {
                         break;
                     }
                   }
-                  if (options.containsKey('collate')) {
-                    // Pass collate option to CUPS: true = collated (complete copies together), false = non-collated (all copies of each page together)
-                    final collateValue = options.remove('collate');
-                    options['collate'] = collateValue!;
-                  }
                 }
 
                 final int numOptions = options.length;
@@ -1815,11 +1805,6 @@ Future<SendPort> _helperIsolateSendPort = () async {
                         break;
                     }
                   }
-                  if (options.containsKey('collate')) {
-                    // Pass collate option to CUPS: true = collated (complete copies together), false = non-collated (all copies of each page together)
-                    final collateValue = options.remove('collate');
-                    options['collate'] = collateValue!;
-                  }
                 }
                 final int numOptions = options.length;
                 Pointer<Pointer<Utf8>> keysPtr = nullptr;
@@ -1910,11 +1895,6 @@ Future<SendPort> _helperIsolateSendPort = () async {
                         options['print-quality'] = '5'; // IPP_QUALITY_HIGH
                         break;
                     }
-                  }
-                  if (options.containsKey('collate')) {
-                    // Pass collate option to CUPS: true = collated (complete copies together), false = non-collated (all copies of each page together)
-                    final collateValue = options.remove('collate');
-                    options['collate'] = collateValue!;
                   }
                 }
 
