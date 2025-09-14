@@ -314,6 +314,25 @@ class AlignmentOption extends PrintOption {
   const AlignmentOption(this.alignment);
 }
 
+/// An option to set the collate mode for multiple copies.
+///
+/// For duplex printing (front/back), this controls how multiple copies are arranged:
+///
+/// **When true (collated)**: Pages are grouped by copy
+/// - Copy 1: Page 1, Page 2, Page 3, Page 4, Page 5, Page 6
+/// - Copy 2: Page 1, Page 2, Page 3, Page 4, Page 5, Page 6
+///
+/// **When false (non-collated)**: Pages are grouped by page number
+/// - All copies of Page 1, then all copies of Page 2, etc.
+/// - Page 1, Page 1, Page 2, Page 2, Page 3, Page 3, Page 4, Page 4, Page 5, Page 5, Page 6, Page 6
+///
+/// This is particularly useful for duplex printing where you want complete copies
+/// to be printed together rather than all copies of each page.
+class CollateOption extends PrintOption {
+  final bool collate;
+  const CollateOption(this.collate);
+}
+
 class CupsOptionChoice {
   /// The value to be sent to CUPS (e.g., "A4", "4").
   final String choice;
@@ -1015,6 +1034,8 @@ Map<String, String> _buildOptions(List<PrintOption> options) {
         optionsMap['media-type-id'] = id.toString();
       case AlignmentOption(alignment: final alignment):
         optionsMap['alignment'] = alignment.name;
+      case CollateOption(collate: final collate):
+        optionsMap['collate'] = collate.toString();
     }
   }
   return optionsMap;
@@ -1538,12 +1559,12 @@ Future<SendPort> _helperIsolateSendPort = () async {
                     keysPtr.cast(),
                     valuesPtr.cast(),
                   );
-                if (result) {
-                  sendPort.send(_PrintResponse(data.id, true));
-                } else {
-                  final errorMsg = _getLastError().toDartString();
-                  sendPort.send(_ErrorResponse(data.id, PrintingFfiException(errorMsg), StackTrace.current));
-                }
+                  if (result) {
+                    sendPort.send(_PrintResponse(data.id, true));
+                  } else {
+                    final errorMsg = _getLastError().toDartString();
+                    sendPort.send(_ErrorResponse(data.id, PrintingFfiException(errorMsg), StackTrace.current));
+                  }
                 } finally {
                   if (numOptions > 0) {
                     for (var i = 0; i < numOptions; i++) {

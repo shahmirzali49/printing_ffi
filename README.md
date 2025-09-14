@@ -12,8 +12,9 @@ A Flutter plugin for direct printer communication using native FFI (Foreign Func
 - **Print Job Management** ⚙️: List, pause, resume, and cancel print jobs for a selected printer.
 - **Track Print Job Status** 📊: Submit a print job and receive a stream of status updates, from submission to completion.
 - **PDF Printing** 📄: Print PDF files directly to a specified printer. On Windows, this uses a bundled version of the `pdfium` library for robust, self-contained rendering.
+- **Collate Support** 📚: Control how multiple copies are arranged when printing. Choose between collated (complete copies together) or non-collated (all copies of each page together) printing.
 - **Get Printer Capabilities (Windows)** 🖨️: Fetch supported paper sizes, paper sources (trays/bins), and resolutions for a given printer on Windows.
-- **Advanced Print Settings (Windows)** 🔧: Control paper size, source, and orientation for individual print jobs.
+- **Advanced Print Settings (Windows)** 🔧: Control paper size, source, orientation, and collate mode for individual print jobs.
 - **Cross-Platform** 🌐: Supports macOS, Windows, and Linux via native APIs.
 - **Offline Printer Support** 🔌: Lists offline printers on macOS using `cupsGetDests`, addressing a key limitation of other plugins.
 - **Native Performance** ⚡: Uses FFI to interface directly with native printing APIs, reducing overhead and improving speed.
@@ -21,24 +22,24 @@ A Flutter plugin for direct printer communication using native FFI (Foreign Func
 
 ## Platform Support 🌐
 
-| Platform | Status | Notes |
-| :--- | :---: | :--- |
-| 🍎 macOS | ✅ Supported | Requires CUPS installation. |
-| 🪟 Windows | ✅ Supported | Uses native `winspool` API. |
-| 🐧 Linux | ✅ Supported | Requires CUPS development libraries. |
-| 🤖 Android | ❌ Not Supported | - |
-| 📱 iOS | ❌ Not Supported | - |
+| Platform   |      Status      | Notes                                |
+| :--------- | :--------------: | :----------------------------------- |
+| 🍎 macOS   |   ✅ Supported   | Requires CUPS installation.          |
+| 🪟 Windows |   ✅ Supported   | Uses native `winspool` API.          |
+| 🐧 Linux   |   ✅ Supported   | Requires CUPS development libraries. |
+| 🤖 Android | ❌ Not Supported | -                                    |
+| 📱 iOS     | ❌ Not Supported | -                                    |
 
 ## `printing_ffi` vs. `package:printing`
 
-| Feature | `printing_ffi` | `package:printing` |
-| :--- | :---: | :---: |
-| **Communication** | ⚡ Native FFI (Direct) | 🐌 Platform Channels |
-| **Data Type** | 📦 Raw Data & PDF | 📄 PDF Documents |
-| **Offline Printers** | ✅ Supported (macOS) | ❌ Not Supported |
-| **Job Management** | ✅ Full Control (List, Pause, etc.) | ❌ Limited |
-| **Dependencies** | 🍃 Lightweight (No PDF libs) | 📚 Heavy (Includes PDF rendering) |
-| **UI Examples** | ✨ Enhanced (Snackbars, etc.) | ➖ Basic |
+| Feature              |           `printing_ffi`            |        `package:printing`         |
+| :------------------- | :---------------------------------: | :-------------------------------: |
+| **Communication**    |       ⚡ Native FFI (Direct)        |       🐌 Platform Channels        |
+| **Data Type**        |          📦 Raw Data & PDF          |         📄 PDF Documents          |
+| **Offline Printers** |        ✅ Supported (macOS)         |         ❌ Not Supported          |
+| **Job Management**   | ✅ Full Control (List, Pause, etc.) |            ❌ Limited             |
+| **Dependencies**     |    🍃 Lightweight (No PDF libs)     | 📚 Heavy (Includes PDF rendering) |
+| **UI Examples**      |    ✨ Enhanced (Snackbars, etc.)    |             ➖ Basic              |
 
 ## Installation 📦
 
@@ -129,14 +130,14 @@ No additional setup is required, as the plugin uses the native `winspool` API in
 ### Linux Setup 🐧
 
 1.  **Install CUPS development libraries**:
-    -   On Debian/Ubuntu:
-        ```bash
-        sudo apt-get install libcups2-dev
-        ```
-    -   On Fedora/CentOS/RHEL:
-        ```bash
-        sudo dnf install cups-devel
-        ```
+    - On Debian/Ubuntu:
+      ```bash
+      sudo apt-get install libcups2-dev
+      ```
+    - On Fedora/CentOS/RHEL:
+      ```bash
+      sudo dnf install cups-devel
+      ```
 2.  **Ensure CUPS is running**:
     ```bash
     sudo systemctl start cups
@@ -144,7 +145,7 @@ No additional setup is required, as the plugin uses the native `winspool` API in
 
 #### Overriding the Pdfium Version
 
-The plugin automatically downloads a specific version of the `pdfium` library for PDF printing on Windows. If you need to use a different version, you can override the default by setting variables in your application's `windows/CMakeLists.txt` file *before* the `add_subdirectory(flutter)` line:
+The plugin automatically downloads a specific version of the `pdfium` library for PDF printing on Windows. If you need to use a different version, you can override the default by setting variables in your application's `windows/CMakeLists.txt` file _before_ the `add_subdirectory(flutter)` line:
 
 ```cmake
 # In your_project/windows/CMakeLists.txt
@@ -156,28 +157,28 @@ add_subdirectory(flutter)
 
 ## Limitations 🚧
 
--   Requires manual setup for macOS (CUPS installation, Podfile configuration).
--   Requires manual setup for macOS and Linux to install printing system dependencies.
--   The Windows implementation automatically downloads and bundles the `pdfium` library for PDF rendering.
+- Requires manual setup for macOS (CUPS installation, Podfile configuration).
+- Requires manual setup for macOS and Linux to install printing system dependencies.
+- The Windows implementation automatically downloads and bundles the `pdfium` library for PDF rendering.
 
 ## Troubleshooting 🛠️
 
 ### Offline Printers Not Showing
 
--   **macOS**:
-    -   Verify printers in `System Settings > Printers & Scanners`.
-    -   Reset printing system: Control-click the printer list, select `Reset Printing System`, and re-add printers.
-    -   Check CUPS: Access `http://localhost:631` and ensure `org.cups.cupsd` is running (`sudo launchctl start org.cups.cupsd`).
-    -   Run `lpstat -p` in the terminal to list all printers, including offline ones.
--   **Connections**: Ensure USB cables are secure or network printers are on the same Wi-Fi and not in sleep mode.
--   **Drivers**: Update via `System Settings > Software Update` or the manufacturer’s website (e.g., HP Smart app).
+- **macOS**:
+  - Verify printers in `System Settings > Printers & Scanners`.
+  - Reset printing system: Control-click the printer list, select `Reset Printing System`, and re-add printers.
+  - Check CUPS: Access `http://localhost:631` and ensure `org.cups.cupsd` is running (`sudo launchctl start org.cups.cupsd`).
+  - Run `lpstat -p` in the terminal to list all printers, including offline ones.
+- **Connections**: Ensure USB cables are secure or network printers are on the same Wi-Fi and not in sleep mode.
+- **Drivers**: Update via `System Settings > Software Update` or the manufacturer’s website (e.g., HP Smart app).
 
 ### Build Issues
 
--   Ensure `libcups` is installed (`brew install cups`).
--   Verify your `Podfile` includes `pod 'printing_ffi', :path => '../'`.
--   To suppress the Xcode “Run Script” warning: In `macos/Runner.xcodeproj`, uncheck “Based on dependency analysis” in `Build Phases > Run Script`.
--   Check CUPS logs for errors: `/var/log/cups/error_log`.
+- Ensure `libcups` is installed (`brew install cups`).
+- Verify your `Podfile` includes `pod 'printing_ffi', :path => '../'`.
+- To suppress the Xcode “Run Script” warning: In `macos/Runner.xcodeproj`, uncheck “Based on dependency analysis” in `Build Phases > Run Script`.
+- Check CUPS logs for errors: `/var/log/cups/error_log`.
 
 ### No Printers Found on macOS
 
@@ -213,4 +214,4 @@ This adds the necessary entitlements to your app. Your `DebugProfile.entitlement
 
 Contributions are welcome! Please submit issues or pull requests to the repository.
 
--   **GitHub Repository**: https://github.com/Shreemanarjun/printing_ffi
+- **GitHub Repository**: https://github.com/Shreemanarjun/printing_ffi
