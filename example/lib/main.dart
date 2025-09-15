@@ -23,9 +23,11 @@ void main() {
   WidgetsFlutterBinding.ensureInitialized();
   // Initialize the FFI plugin and provide a custom log handler.
   // This allows you to route native logs to your own logging infrastructure.
-  initializePrintingFfi(logHandler: (message) {
-    debugPrint('CUSTOM LOG HANDLER: $message');
-  });
+  initializePrintingFfi(
+    logHandler: (message) {
+      debugPrint('CUSTOM LOG HANDLER: $message');
+    },
+  );
   runApp(const PrintingFfiExampleApp());
 }
 
@@ -728,7 +730,9 @@ class _PrintingScreenState extends State<PrintingScreen> {
                             style: TextStyle(fontWeight: FontWeight.bold),
                           ),
                           subtitle: Text(
-                            _selectedPdfPath!.split(Platform.pathSeparator).last,
+                            _selectedPdfPath!
+                                .split(Platform.pathSeparator)
+                                .last,
                             overflow: TextOverflow.ellipsis,
                           ),
                           trailing: IconButton(
@@ -743,9 +747,11 @@ class _PrintingScreenState extends State<PrintingScreen> {
                         ),
                       ElevatedButton.icon(
                         icon: const Icon(Icons.picture_as_pdf),
-                        label: Text(_selectedPdfPath == null
-                            ? 'Select & Print PDF'
-                            : 'Print Selected PDF'),
+                        label: Text(
+                          _selectedPdfPath == null
+                              ? 'Select & Print PDF'
+                              : 'Print Selected PDF',
+                        ),
                         onPressed: () => _printPdf(
                           copies: int.tryParse(_copiesController.text) ?? 1,
                           pageRangeString: _pageRangeController.text,

@@ -1538,12 +1538,12 @@ Future<SendPort> _helperIsolateSendPort = () async {
                     keysPtr.cast(),
                     valuesPtr.cast(),
                   );
-                if (result) {
-                  sendPort.send(_PrintResponse(data.id, true));
-                } else {
-                  final errorMsg = _getLastError().toDartString();
-                  sendPort.send(_ErrorResponse(data.id, PrintingFfiException(errorMsg), StackTrace.current));
-                }
+                  if (result) {
+                    sendPort.send(_PrintResponse(data.id, true));
+                  } else {
+                    final errorMsg = _getLastError().toDartString();
+                    sendPort.send(_ErrorResponse(data.id, PrintingFfiException(errorMsg), StackTrace.current));
+                  }
                 } finally {
                   if (numOptions > 0) {
                     for (var i = 0; i < numOptions; i++) {
