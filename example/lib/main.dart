@@ -709,7 +709,9 @@ class _PrintingScreenState extends State<PrintingScreen> {
                             style: TextStyle(fontWeight: FontWeight.bold),
                           ),
                           subtitle: Text(
-                            _selectedPdfPath!.split(Platform.pathSeparator).last,
+                            _selectedPdfPath!
+                                .split(Platform.pathSeparator)
+                                .last,
                             overflow: TextOverflow.ellipsis,
                           ),
                           trailing: IconButton(

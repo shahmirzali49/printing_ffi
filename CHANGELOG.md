@@ -1,10 +1,11 @@
 ## 0.0.7
 
-* **FEAT**: Improved error handling with `get_last_error` for detailed native messages and `register_log_callback` for real-time logging. 🕵️‍♂️
+* **FEAT**: Added support for collating copies on Windows. 📚
+* **FEAT**: Enhanced error handling, providing detailed native error messages and a real-time logging callback for easier debugging. 🕵️‍♂️
 * **FEAT**: Enhanced PDF printing on Windows with `Fit to Paper` and `Custom` scaling options. 📄✨
-* **FIX**: Corrected PDF rendering issues on Windows, including stretching on non-square DPIs and improving compatibility with a 32-bit BGRA bitmap format. 🐛
+* **FIX**: Resolved PDF rendering issues on Windows, including color distortion and page stretching on high-DPI displays, by using a 32-bit BGRA bitmap format for improved compatibility. 🐛🎨
 * **FIX**: Improved stability by addressing a memory leak and enhancing resource cleanup during print failures on Windows.
-* **REFACTOR**: Removed redundant `DEVMODE` field resets to prevent potential driver conflicts on Windows. ♻️
+* **REFACTOR**: Improved Windows print driver compatibility by streamlining device setting modifications, reducing the risk of conflicts. ♻️
 * **EXAMPLE**: Added PDF file selection and custom scale validation to the example app. 🎨
 * **DOCS**: Updated documentation for new features and error handling. 📝
 
