@@ -5,6 +5,16 @@ import 'package:flutter/material.dart';
 import 'package:printing_ffi/printing_ffi.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 
+/// Enum for different types of raw data commands.
+enum RawDataType {
+  zpl('ZPL'),
+  escPos('ESC/POS'),
+  custom('Custom');
+
+  const RawDataType(this.label);
+  final String label;
+}
+
 /// A local helper class to represent the custom scaling option in the UI.
 /// This is a marker class for the SegmentedButton.
 class CustomScaling {
@@ -411,6 +421,8 @@ class StandardActionsCard extends StatelessWidget {
     required this.rawDataController,
     required this.onPrintRawData,
     required this.onPrintRawDataAndTrack,
+    required this.selectedRawDataType,
+    required this.onRawDataTypeChanged,
     required this.platformSettings,
   });
 
@@ -434,6 +446,8 @@ class StandardActionsCard extends StatelessWidget {
   final TextEditingController rawDataController;
   final VoidCallback onPrintRawData;
   final VoidCallback onPrintRawDataAndTrack;
+  final RawDataType selectedRawDataType;
+  final ValueChanged<RawDataType?> onRawDataTypeChanged;
   final Widget platformSettings;
 
   @override
@@ -453,7 +467,7 @@ class StandardActionsCard extends StatelessWidget {
                 children: [
                   platformSettings,
                   const SizedBox(height: 24),
-                  _buildActionControls(),
+                  _buildActionControls(context),
                 ],
               );
             } else {
@@ -463,7 +477,7 @@ class StandardActionsCard extends StatelessWidget {
                 children: [
                   Expanded(flex: 2, child: platformSettings),
                   const SizedBox(width: 16),
-                  Expanded(flex: 3, child: _buildActionControls()),
+                  Expanded(flex: 3, child: _buildActionControls(context)),
                 ],
               );
             }
@@ -473,7 +487,8 @@ class StandardActionsCard extends StatelessWidget {
     );
   }
 
-  Widget _buildActionControls() {
+  Widget _buildActionControls(BuildContext context) {
+    final theme = ShadTheme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -577,6 +592,54 @@ class StandardActionsCard extends StatelessWidget {
           leading: const Icon(Icons.track_changes, size: 16),
           onPressed: onPrintPdfAndTrack,
           child: const Text('Print PDF and Track Status'),
+        ),
+        const SizedBox(height: 24),
+        const Divider(),
+        const SizedBox(height: 12),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            Text('Raw Data Printing', style: theme.textTheme.large),
+            const SizedBox(width: 16),
+            SizedBox(
+              width: 150,
+              child: ShadSelect<RawDataType>(
+                selectedOptionBuilder: (context, value) => Text(value.label),
+                initialValue: selectedRawDataType,
+                onChanged: onRawDataTypeChanged,
+                options: RawDataType.values
+                    .map((e) => ShadOption(value: e, child: Text(e.label)))
+                    .toList(),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        ShadInput(
+          controller: rawDataController,
+          placeholder: const Text('Enter raw data... e.g., for ZPL'),
+          maxLines: 3,
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: ShadButton(
+                leading: const Icon(Icons.send, size: 16),
+                onPressed: onPrintRawData,
+                child: const Text('Print Raw Data'),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: ShadButton.outline(
+                leading: const Icon(Icons.track_changes, size: 16),
+                onPressed: onPrintRawDataAndTrack,
+                child: const Text('Print & Track'),
+              ),
+            ),
+          ],
         ),
         if (Platform.isWindows) ...[
           const SizedBox(height: 12),

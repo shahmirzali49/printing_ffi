@@ -177,10 +177,9 @@ class _PrintingScreenState extends State<PrintingScreen> {
   bool _isLoadingJobs = false;
   bool _isLoadingCupsOptions = false;
   bool _isLoadingWindowsCaps = false;
+  RawDataType _selectedRawDataType = RawDataType.zpl;
 
-  final TextEditingController _rawDataController = TextEditingController(
-    text: 'Hello, FFI!',
-  );
+  late final TextEditingController _rawDataController;
   Object _selectedScaling = PdfPrintScaling.fitToPrintableArea;
   final TextEditingController _customScaleController = TextEditingController(
     text: '1.0',
@@ -196,6 +195,9 @@ class _PrintingScreenState extends State<PrintingScreen> {
   @override
   void initState() {
     super.initState();
+    _rawDataController = TextEditingController(
+      text: _getExampleRawData(_selectedRawDataType),
+    );
     _refreshPrinters();
   }
 
@@ -209,14 +211,36 @@ class _PrintingScreenState extends State<PrintingScreen> {
     super.dispose();
   }
 
-  void _showSnackbar(String message, {bool isError = false}) {
+  void _showToast(String message, {bool isError = false}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: isError ? Colors.redAccent : Colors.green,
+    ShadToaster.of(context).show(
+      ShadToast(
+        description: Text(message),
+
       ),
     );
+  }
+
+  String _getExampleRawData(RawDataType type) {
+    switch (type) {
+      case RawDataType.zpl:
+        return '^XA^FO50,50^A0N,50,50^FDHello, ZPL!^FS^XZ';
+      case RawDataType.escPos:
+        // ESC @ (initialize) -> ESC a 1 (center) -> Text -> LF*3 -> GS V 1 (cut)
+        const esc = '\x1B';
+        const gs = '\x1D';
+        return '$esc@${esc}a\x01Hello, ESC/POS!\n\n\n${gs}V\x01';
+      case RawDataType.custom:
+        return '';
+    }
+  }
+
+  void _onRawDataTypeChanged(RawDataType? newType) {
+    if (newType == null) return;
+    setState(() {
+      _selectedRawDataType = newType;
+      _rawDataController.text = _getExampleRawData(newType);
+    });
   }
 
   Future<void> _refreshPrinters() async {
@@ -249,7 +273,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
         }
       });
     } catch (e) {
-      _showSnackbar('Failed to get printers: $e', isError: true);
+      _showToast('Failed to get printers: $e', isError: true);
     } finally {
       setState(() {
         _isLoadingPrinters = false;
@@ -283,7 +307,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
       },
       onError: (e) {
         if (!mounted) return;
-        _showSnackbar('Error fetching jobs: $e', isError: true);
+        _showToast('Error fetching jobs: $e', isError: true);
         setState(() => _isLoadingJobs = false);
       },
     );
@@ -308,7 +332,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
         _selectedCupsOptions = defaultOptions;
       });
     } catch (e) {
-      _showSnackbar('Failed to get CUPS options: $e', isError: true);
+      _showToast('Failed to get CUPS options: $e', isError: true);
     } finally {
       if (mounted) setState(() => _isLoadingCupsOptions = false);
     }
@@ -332,7 +356,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
         _selectedOrientation = WindowsOrientation.portrait;
       });
     } catch (e) {
-      _showSnackbar('Failed to get Windows capabilities: $e', isError: true);
+      _showToast('Failed to get Windows capabilities: $e', isError: true);
     } finally {
       if (mounted) setState(() => _isLoadingWindowsCaps = false);
     }
@@ -397,7 +421,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
     required String pageRangeString,
   }) async {
     if (_selectedPrinter == null) {
-      _showSnackbar('No printer selected!', isError: true);
+      _showToast('No printer selected!', isError: true);
       return;
     }
     PageRange? pageRange;
@@ -405,7 +429,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
       try {
         pageRange = PageRange.parse(pageRangeString);
       } on ArgumentError catch (e) {
-        _showSnackbar('Invalid page range: ${e.message}', isError: true);
+        _showToast('Invalid page range: ${e.message}', isError: true);
         return;
       }
     }
@@ -413,13 +437,13 @@ class _PrintingScreenState extends State<PrintingScreen> {
     if (path != null) {
       try {
         final options = _buildPrintOptions(cupsOptions: cupsOptions);
-        _showSnackbar('Printing PDF...');
+        _showToast('Printing PDF...');
 
         final PdfPrintScaling scaling;
         if (_selectedScaling is CustomScaling) {
           final scaleValue = double.tryParse(_customScaleController.text);
           if (scaleValue == null || scaleValue <= 0) {
-            _showSnackbar(
+            _showToast(
               'Invalid custom scale value. It must be a positive number.',
               isError: true,
             );
@@ -440,12 +464,12 @@ class _PrintingScreenState extends State<PrintingScreen> {
         );
         if (!mounted) return;
         if (success) {
-          _showSnackbar('PDF sent to printer successfully!');
+          _showToast('PDF sent to printer successfully!');
         }
       } on PrintingFfiException catch (e) {
-        _showSnackbar('Failed to print PDF: ${e.message}', isError: true);
+        _showToast('Failed to print PDF: ${e.message}', isError: true);
       } catch (e) {
-        _showSnackbar(
+        _showToast(
           'An unexpected error occurred while printing: $e',
           isError: true,
         );
@@ -455,7 +479,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
 
   Future<void> _printPdfAndTrack() async {
     if (_selectedPrinter == null) {
-      _showSnackbar('No printer selected!', isError: true);
+      _showToast('No printer selected!', isError: true);
       return;
     }
     final path = await _getPdfPath();
@@ -467,7 +491,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
         try {
           pageRange = PageRange.parse(pageRangeString);
         } on ArgumentError catch (e) {
-          _showSnackbar('Invalid page range: ${e.message}', isError: true);
+          _showToast('Invalid page range: ${e.message}', isError: true);
           return;
         }
       }
@@ -477,7 +501,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
       if (_selectedScaling is CustomScaling) {
         final scaleValue = double.tryParse(_customScaleController.text);
         if (scaleValue == null || scaleValue <= 0) {
-          _showSnackbar(
+          _showToast(
             'Invalid custom scale value. It must be a positive number.',
             isError: true,
           );
@@ -509,17 +533,16 @@ class _PrintingScreenState extends State<PrintingScreen> {
 
   Future<void> _printRawDataAndTrack() async {
     if (_selectedPrinter == null) {
-      _showSnackbar('No printer selected!', isError: true);
+      _showToast('No printer selected!', isError: true);
       return;
     }
-    // Construct ZPL data with the text from the input field.
-    final textToPrint = _rawDataController.text;
-    if (textToPrint.isEmpty) {
-      _showSnackbar('Please enter some text to print.', isError: true);
+    // Use the raw text from the input field directly.
+    final rawCommand = _rawDataController.text;
+    if (rawCommand.isEmpty) {
+      _showToast('Please enter some raw data to print.', isError: true);
       return;
     }
-    final zplData = '^XA^FO50,50^A0N,50,50^FD$textToPrint^FS^XZ';
-    final data = Uint8List.fromList(zplData.codeUnits);
+    final data = Uint8List.fromList(rawCommand.codeUnits);
 
     final options = _buildPrintOptions(cupsOptions: _selectedCupsOptions);
     showDialog(
@@ -539,20 +562,19 @@ class _PrintingScreenState extends State<PrintingScreen> {
 
   Future<void> _printRawData() async {
     if (_selectedPrinter == null) {
-      _showSnackbar('No printer selected!', isError: true);
+      _showToast('No printer selected!', isError: true);
       return;
     }
-    // Construct ZPL data with the text from the input field.
-    final textToPrint = _rawDataController.text;
-    if (textToPrint.isEmpty) {
-      _showSnackbar('Please enter some text to print.', isError: true);
+    // Use the raw text from the input field directly.
+    final rawCommand = _rawDataController.text;
+    if (rawCommand.isEmpty) {
+      _showToast('Please enter some raw data to print.', isError: true);
       return;
     }
-    final zplData = '^XA^FO50,50^A0N,50,50^FD$textToPrint^FS^XZ';
-    final data = Uint8List.fromList(zplData.codeUnits);
+    final data = Uint8List.fromList(rawCommand.codeUnits);
 
     final options = _buildPrintOptions(cupsOptions: _selectedCupsOptions);
-    _showSnackbar('Sending raw ZPL data...');
+    _showToast('Sending raw ZPL data...');
     final success = await rawDataToPrinter(
       _selectedPrinter!.name,
       data,
@@ -561,9 +583,9 @@ class _PrintingScreenState extends State<PrintingScreen> {
     );
     if (!mounted) return;
     if (success) {
-      _showSnackbar('Raw data sent successfully!');
+      _showToast('Raw data sent successfully!');
     } else {
-      _showSnackbar('Failed to send raw data.', isError: true);
+      _showToast('Failed to send raw data.', isError: true);
     }
   }
 
@@ -583,12 +605,12 @@ class _PrintingScreenState extends State<PrintingScreen> {
           break;
       }
       if (!mounted) return;
-      _showSnackbar(
+      _showToast(
         'Job $action ${success ? 'succeeded' : 'failed'}.',
         isError: !success,
       );
     } catch (e) {
-      _showSnackbar('Error managing job: $e', isError: true);
+      _showToast('Error managing job: $e', isError: true);
     }
   }
 
@@ -602,7 +624,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
     if (!mounted) return;
 
     if (capabilities == null) {
-      _showSnackbar(
+      _showToast(
         'Could not retrieve capabilities for this printer.',
         isError: true,
       );
@@ -777,6 +799,8 @@ class _PrintingScreenState extends State<PrintingScreen> {
           rawDataController: _rawDataController,
           onPrintRawData: _printRawData,
           onPrintRawDataAndTrack: _printRawDataAndTrack,
+          selectedRawDataType: _selectedRawDataType,
+          onRawDataTypeChanged: _onRawDataTypeChanged,
           platformSettings: _buildPlatformSettings(),
         ),
         const SizedBox(height: 20),
@@ -828,24 +852,21 @@ class _PrintingScreenState extends State<PrintingScreen> {
           if (!mounted) return;
           switch (result) {
             case PrinterPropertiesResult.ok:
-              _showSnackbar('Printer properties updated successfully.');
+              _showToast('Printer properties updated successfully.');
               _fetchWindowsCapabilities();
               break;
             case PrinterPropertiesResult.cancel:
-              _showSnackbar(
+              _showToast(
                 'Printer properties dialog was cancelled.',
                 isError: false,
               );
               break;
             case PrinterPropertiesResult.error:
-              _showSnackbar(
-                'Could not open printer properties.',
-                isError: true,
-              );
+              _showToast('Could not open printer properties.', isError: true);
               break;
           }
         } catch (e) {
-          _showSnackbar('Error opening properties: $e', isError: true);
+          _showToast('Error opening properties: $e', isError: true);
         }
       },
       onShowCapabilities: _showWindowsCapabilities,
