@@ -56,8 +56,9 @@ __declspec(thread) static char *g_last_error_message = NULL;
 static __thread char *g_last_error_message = NULL;
 #endif
 
+#ifdef _WIN32
 // Internal helper to set the last error message for the current thread.
-static void set_last_error(const char *format, ...)
+static void set_last_error(const char *format, ...) // TODO: Consider making this cross-platform for consistent error handling.
 {
     // Free the previous error message if it exists
     if (g_last_error_message)
@@ -83,6 +84,7 @@ static void set_last_error(const char *format, ...)
     }
     va_end(args);
 }
+#endif
 
 FFI_PLUGIN_EXPORT void register_log_callback(log_callback_t callback)
 {
