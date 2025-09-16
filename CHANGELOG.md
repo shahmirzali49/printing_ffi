@@ -1,5 +1,7 @@
 ## 0.0.8
 
+* ✨ **FEAT(example)**: Implemented the entire example app UI using the `shadcn_ui` package for a modern, clean, and responsive user experience.
+* ✨ **FEAT(example)**: Enhanced raw data printing with a data type selector (ZPL, ESC/POS, Custom) and provided corresponding example data.
 * **FIX**: Corrected conditional compilation for error handling, resolving an issue where `set_last_error` was not defined for all platforms, leading to compilation errors on non-Windows targets. 🐛
 * **FIX**: Resolved an 'undefined' compiler error for the `_scale_to_fit` helper function by ensuring it is defined on all platforms. 🛠️
 
@@ -9,7 +11,7 @@
 * **FEAT**: Enhanced error handling, providing detailed native error messages and a real-time logging callback for easier debugging. 🕵️‍♂️
 * **FEAT**: Enhanced PDF printing on Windows with `Fit to Paper` and `Custom` scaling options. 📄✨
 * **FIX**: Resolved PDF rendering issues on Windows, including color distortion and page stretching on high-DPI displays, by using a 32-bit BGRA bitmap format for improved compatibility. 🐛🎨
-* **FIX**: Improved stability by addressing a memory leak and enhancing resource cleanup during print failures on Windows.
+* **FIX*a*: Improved stability by addressing a memory leak and enhancing resource cleanup during print failures on Windows.
 * **REFACTOR**: Improved Windows print driver compatibility by streamlining device setting modifications, reducing the risk of conflicts. ♻️
 * **EXAMPLE**: Added PDF file selection and custom scale validation to the example app. 🎨
 * **DOCS**: Updated documentation for new features and error handling. 📝
