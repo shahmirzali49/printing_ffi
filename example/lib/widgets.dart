@@ -1,0 +1,716 @@
+import 'dart:io';
+import 'dart:async';
+
+import 'package:flutter/material.dart';
+import 'package:printing_ffi/printing_ffi.dart';
+import 'package:shadcn_ui/shadcn_ui.dart';
+
+/// A local helper class to represent the custom scaling option in the UI.
+/// This is a marker class for the SegmentedButton.
+class CustomScaling {
+  const CustomScaling();
+}
+
+class PrinterSelector extends StatelessWidget {
+  const PrinterSelector({
+    super.key,
+    required this.printers,
+    required this.selectedPrinter,
+    required this.onChanged,
+  });
+
+  final List<Printer> printers;
+  final Printer? selectedPrinter;
+  final ValueChanged<Printer?> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        Text('Printer:', style: ShadTheme.of(context).textTheme.large),
+        const SizedBox(width: 10),
+        Expanded(
+          child: ShadSelect<Printer>(
+            placeholder: const Text('Select a printer'),
+            selectedOptionBuilder: (context, value) => Text(value.name),
+            initialValue: selectedPrinter,
+            onChanged: onChanged,
+            options: printers.map(
+              (p) => ShadOption(value: p, child: Text(p.name)),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class JobsList extends StatelessWidget {
+  const JobsList({
+    super.key,
+    required this.isLoading,
+    required this.jobs,
+    required this.onManageJob,
+  });
+
+  final bool isLoading;
+  final List<PrintJob> jobs;
+  final void Function(int jobId, String action) onManageJob;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text('Print Queue', style: ShadTheme.of(context).textTheme.h4),
+        const SizedBox(height: 10),
+        if (isLoading) const Center(child: CircularProgressIndicator()),
+        if (!isLoading && jobs.isEmpty) const Text('No active print jobs.'),
+        if (!isLoading && jobs.isNotEmpty)
+          SizedBox(
+            height: 200,
+            child: ListView.builder(
+              itemCount: jobs.length,
+              itemBuilder: (context, index) {
+                final job = jobs[index];
+                return ShadCard(
+                  child: ListTile(
+                    title: Text(job.title),
+                    subtitle: Text(
+                      'ID: ${job.id} - Status: ${job.statusDescription}',
+                    ),
+                    trailing: Wrap(
+                      spacing: 0,
+                      children: [
+                        ShadIconButton.ghost(
+                          icon: const Icon(Icons.pause, size: 16),
+                          onPressed: () => onManageJob(job.id, 'pause'),
+                        ),
+                        ShadIconButton.ghost(
+                          icon: const Icon(Icons.play_arrow, size: 16),
+                          onPressed: () => onManageJob(job.id, 'resume'),
+                        ),
+                        ShadIconButton.ghost(
+                          icon: const Icon(Icons.cancel, size: 16),
+                          onPressed: () => onManageJob(job.id, 'cancel'),
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class AdvancedTab extends StatelessWidget {
+  const AdvancedTab({
+    super.key,
+    required this.isLoading,
+    required this.cupsOptions,
+    required this.selectedCupsOptions,
+    required this.onOptionChanged,
+    required this.onPrint,
+  });
+
+  final bool isLoading;
+  final List<CupsOption>? cupsOptions;
+  final Map<String, String> selectedCupsOptions;
+  final void Function(String key, String value) onOptionChanged;
+  final VoidCallback onPrint;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!Platform.isMacOS && !Platform.isLinux) {
+      return const Center(
+        child: Text(
+          'Advanced CUPS options are only available on macOS and Linux.',
+        ),
+      );
+    }
+    return ListView(
+      padding: const EdgeInsets.all(8),
+      children: [
+        ShadCard(
+          title: Text(
+            'CUPS Options',
+            style: ShadTheme.of(context).textTheme.h4,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.only(top: 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (isLoading) const Center(child: CircularProgressIndicator()),
+                if (!isLoading && (cupsOptions == null || cupsOptions!.isEmpty))
+                  const Text('No CUPS options found for this printer.'),
+                if (!isLoading &&
+                    cupsOptions != null &&
+                    cupsOptions!.isNotEmpty)
+                  ..._buildCupsOptionWidgets(context),
+                const SizedBox(height: 20),
+                ShadButton(
+                  leading: const Icon(Icons.picture_as_pdf_outlined, size: 16),
+                  onPressed: onPrint,
+                  child: const Text('Print PDF with Selected Options'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  List<Widget> _buildCupsOptionWidgets(BuildContext context) {
+    if (cupsOptions == null) return [];
+    return cupsOptions!.map((option) {
+      final currentValue = selectedCupsOptions[option.name];
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: ShadSelect<String>(
+          placeholder: Text(option.name),
+          selectedOptionBuilder: (context, value) {
+            final selectedChoice = option.supportedValues.firstWhere(
+              (c) => c.choice == value,
+              orElse: () => CupsOptionChoice(choice: value, text: value),
+            );
+            return Text(selectedChoice.text);
+          },
+          initialValue: currentValue,
+          onChanged: (newValue) {
+            if (newValue != null) onOptionChanged(option.name, newValue);
+          },
+          options: option.supportedValues.map(
+            (choice) => ShadOption(
+              value: choice.choice,
+              child: Text(choice.text, overflow: TextOverflow.ellipsis),
+            ),
+          ),
+        ),
+      );
+    }).toList();
+  }
+}
+
+class PlatformSettings extends StatelessWidget {
+  const PlatformSettings({
+    super.key,
+    required this.isLoading,
+    required this.windowsCapabilities,
+    required this.selectedPaperSize,
+    required this.onPaperSizeChanged,
+    required this.selectedPaperSource,
+    required this.onPaperSourceChanged,
+    required this.selectedAlignment,
+    required this.onAlignmentChanged,
+    required this.selectedPrintQuality,
+    required this.onPrintQualityChanged,
+    required this.selectedColorMode,
+    required this.onColorModeChanged,
+    required this.selectedOrientation,
+    required this.onOrientationChanged,
+    required this.onOpenProperties,
+    required this.onShowCapabilities,
+  });
+
+  final bool isLoading;
+  final WindowsPrinterCapabilities? windowsCapabilities;
+  final WindowsPaperSize? selectedPaperSize;
+  final ValueChanged<WindowsPaperSize?> onPaperSizeChanged;
+  final WindowsPaperSource? selectedPaperSource;
+  final ValueChanged<WindowsPaperSource?> onPaperSourceChanged;
+  final PdfPrintAlignment selectedAlignment;
+  final ValueChanged<PdfPrintAlignment?> onAlignmentChanged;
+  final PrintQuality selectedPrintQuality;
+  final ValueChanged<PrintQuality?> onPrintQualityChanged;
+  final ColorMode selectedColorMode;
+  final ValueChanged<ColorMode?> onColorModeChanged;
+  final WindowsOrientation selectedOrientation;
+  final ValueChanged<WindowsOrientation?> onOrientationChanged;
+  final VoidCallback onOpenProperties;
+  final VoidCallback onShowCapabilities;
+
+  @override
+  Widget build(BuildContext context) {
+    final List<Widget> windowsChildren = [];
+    if (Platform.isWindows) {
+      if (isLoading) {
+        windowsChildren.add(const Center(child: CircularProgressIndicator()));
+      } else if (windowsCapabilities != null) {
+        windowsChildren.addAll([
+          ShadSelect<WindowsPaperSize>(
+            placeholder: const Text('Paper Size'),
+            selectedOptionBuilder: (context, value) => Text(value.name),
+            initialValue: selectedPaperSize,
+            onChanged: onPaperSizeChanged,
+            options: windowsCapabilities!.paperSizes.map(
+              (p) => ShadOption(
+                value: p,
+                child: Text(p.name, overflow: TextOverflow.ellipsis),
+              ),
+            ),
+          ),
+          ShadSelect<WindowsPaperSource>(
+            placeholder: const Text('Paper Source'),
+            selectedOptionBuilder: (context, value) => Text(value.name),
+            initialValue: selectedPaperSource,
+            onChanged: onPaperSourceChanged,
+            options: windowsCapabilities!.paperSources.map(
+              (s) => ShadOption(
+                value: s,
+                child: Text(s.name, overflow: TextOverflow.ellipsis),
+              ),
+            ),
+          ),
+          ShadSelect<PdfPrintAlignment>(
+            placeholder: const Text('Alignment'),
+            selectedOptionBuilder: (context, value) =>
+                Text(value.name[0].toUpperCase() + value.name.substring(1)),
+            initialValue: selectedAlignment,
+            onChanged: onAlignmentChanged,
+            options: PdfPrintAlignment.values.map(
+              (a) => ShadOption(
+                value: a,
+                child: Text(a.name[0].toUpperCase() + a.name.substring(1)),
+              ),
+            ),
+          ),
+        ]);
+      }
+    }
+
+    final List<Widget> allChildren = [
+      ...windowsChildren,
+      ShadSelect<PrintQuality>(
+        placeholder: const Text('Print Quality'),
+        selectedOptionBuilder: (context, value) =>
+            Text(value.name[0].toUpperCase() + value.name.substring(1)),
+        initialValue: selectedPrintQuality,
+        onChanged: onPrintQualityChanged,
+        options: PrintQuality.values.map(
+          (q) => ShadOption(
+            value: q,
+            child: Text(q.name[0].toUpperCase() + q.name.substring(1)),
+          ),
+        ),
+      ),
+      ShadSelect<ColorMode>(
+        placeholder: const Text('Color Mode'),
+        selectedOptionBuilder: (context, value) =>
+            Text(value.name[0].toUpperCase() + value.name.substring(1)),
+        initialValue: selectedColorMode,
+        onChanged: onColorModeChanged,
+        options: ColorMode.values.map(
+          (c) => Builder(
+            builder: (context) {
+              final enabled =
+                  (c == ColorMode.color &&
+                      (windowsCapabilities?.isColorSupported ?? true)) ||
+                  (c == ColorMode.monochrome &&
+                      (windowsCapabilities?.isMonochromeSupported ?? true));
+              if (!enabled) {
+                return Text(c.name[0].toUpperCase() + c.name.substring(1));
+              }
+              return ShadOption(
+                value: c,
+
+                child: Text(c.name[0].toUpperCase() + c.name.substring(1)),
+              );
+            },
+          ),
+        ),
+      ),
+      ShadSelect<WindowsOrientation>(
+        placeholder: const Text('Orientation'),
+        selectedOptionBuilder: (context, value) =>
+            Text(value.name[0].toUpperCase() + value.name.substring(1)),
+        initialValue: selectedOrientation,
+        onChanged: onOrientationChanged,
+        options: WindowsOrientation.values.map(
+          (o) => ShadOption(
+            value: o,
+            child: Text(o.name[0].toUpperCase() + o.name.substring(1)),
+          ),
+        ),
+      ),
+    ];
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 16.0),
+      child: ShadCard(
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Platform Settings',
+                style: ShadTheme.of(context).textTheme.large,
+              ),
+              const SizedBox(height: 12),
+              GridView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                  maxCrossAxisExtent: 220,
+                  childAspectRatio: 3,
+                  crossAxisSpacing: 12,
+                  mainAxisSpacing: 12,
+                ),
+                itemCount: allChildren.length,
+                itemBuilder: (context, index) => Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: allChildren[index],
+                ),
+              ),
+              const SizedBox(height: 16),
+              Center(
+                child: ShadButton.outline(
+                  leading: const Icon(Icons.settings_outlined, size: 16),
+                  onPressed: onOpenProperties,
+                  child: const Text('Open Printer Properties'),
+                ),
+              ),
+              const SizedBox(height: 12),
+              if (Platform.isWindows)
+                Center(
+                  child: ShadButton.secondary(
+                    leading: const Icon(Icons.inventory_2_outlined, size: 16),
+                    onPressed: onShowCapabilities,
+                    child: const Text('Show All Capabilities'),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class StandardActionsCard extends StatelessWidget {
+  const StandardActionsCard({
+    super.key,
+    required this.selectedScaling,
+    required this.onScalingChanged,
+    required this.customScaleController,
+    required this.selectedPdfPath,
+    required this.onClearPdfPath,
+    required this.onPrintPdf,
+    required this.copiesController,
+    required this.pageRangeController,
+    required this.collate,
+    required this.onCollateChanged,
+    required this.onPrintPdfAndTrack,
+    required this.onShowWindowsCapabilities,
+    required this.rawDataController,
+    required this.onPrintRawData,
+    required this.onPrintRawDataAndTrack,
+    required this.platformSettings,
+  });
+
+  final Object selectedScaling;
+  final ValueChanged<Set<Object>> onScalingChanged;
+  final TextEditingController customScaleController;
+  final String? selectedPdfPath;
+  final VoidCallback onClearPdfPath;
+  final void Function({
+    Map<String, String>? cupsOptions,
+    required int copies,
+    required String pageRangeString,
+  })
+  onPrintPdf;
+  final TextEditingController copiesController;
+  final TextEditingController pageRangeController;
+  final bool collate;
+  final ValueChanged<bool> onCollateChanged;
+  final VoidCallback onPrintPdfAndTrack;
+  final VoidCallback onShowWindowsCapabilities;
+  final TextEditingController rawDataController;
+  final VoidCallback onPrintRawData;
+  final VoidCallback onPrintRawDataAndTrack;
+  final Widget platformSettings;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = ShadTheme.of(context);
+    return ShadCard(
+      title: Text('Standard Actions', style: theme.textTheme.h4),
+      child: Padding(
+        padding: const EdgeInsets.only(top: 24),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(flex: 2, child: platformSettings),
+            const SizedBox(width: 16),
+            Expanded(
+              flex: 3,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  if (Platform.isWindows)
+                    SegmentedButton<Object>(
+                      segments: const <ButtonSegment<Object>>[
+                        ButtonSegment(
+                          value: PdfPrintScaling.fitToPrintableArea,
+                          label: Text('Fit'),
+                        ),
+                        ButtonSegment(
+                          value: PdfPrintScaling.actualSize,
+                          label: Text('Actual'),
+                        ),
+                        ButtonSegment(
+                          value: PdfPrintScaling.shrinkToFit,
+                          label: Text('Shrink'),
+                        ),
+                        ButtonSegment(
+                          value: PdfPrintScaling.fitToPaper,
+                          label: Text('Paper'),
+                        ),
+                        ButtonSegment(
+                          value: CustomScaling(),
+                          label: Text('Custom'),
+                        ),
+                      ],
+                      selected: {selectedScaling},
+                      onSelectionChanged: onScalingChanged,
+                    ),
+                  if (Platform.isWindows &&
+                      selectedScaling is CustomScaling) ...[
+                    const SizedBox(height: 12),
+                    ShadInput(
+                      controller: customScaleController,
+                      placeholder: const Text('Scale'),
+                    ),
+                  ],
+                  const SizedBox(height: 12),
+                  if (selectedPdfPath != null)
+                    ListTile(
+                      leading: const Icon(Icons.picture_as_pdf),
+                      title: const Text('Selected PDF:'),
+                      subtitle: Text(
+                        selectedPdfPath!.split(Platform.pathSeparator).last,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      trailing: ShadIconButton.ghost(
+                        icon: const Icon(Icons.clear, size: 16),
+                        onPressed: onClearPdfPath,
+                      ),
+                    ),
+                  ShadButton(
+                    leading: const Icon(Icons.picture_as_pdf, size: 16),
+                    onPressed: () => onPrintPdf(
+                      copies: int.tryParse(copiesController.text) ?? 1,
+                      pageRangeString: pageRangeController.text,
+                    ),
+                    child: Text(
+                      selectedPdfPath == null
+                          ? 'Select & Print PDF'
+                          : 'Print Selected PDF',
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: ShadInput(
+                          controller: copiesController,
+                          placeholder: const Text('Copies'),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        flex: 2,
+                        child: ShadInput(
+                          controller: pageRangeController,
+                          placeholder: const Text('Page Range (e.g. 1-3, 5)'),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      ShadSwitch(value: collate, onChanged: onCollateChanged),
+                      const SizedBox(width: 12),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Collate copies'),
+                            Text(
+                              'Enabled: (1,2,3), (1,2,3)\nDisabled: (1,1), (2,2), (3,3)',
+                              style: TextStyle(color: Colors.grey),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  ShadButton.outline(
+                    leading: const Icon(Icons.track_changes, size: 16),
+                    onPressed: onPrintPdfAndTrack,
+                    child: const Text('Print PDF and Track Status'),
+                  ),
+                  if (Platform.isWindows) ...[
+                    const SizedBox(height: 12),
+                    ShadButton.secondary(
+                      leading: const Icon(Icons.inventory_2_outlined, size: 16),
+                      onPressed: onShowWindowsCapabilities,
+                      child: const Text('Show Printer Capabilities'),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class PrintStatusDialog extends StatefulWidget {
+  const PrintStatusDialog({
+    super.key,
+    required this.jobStream,
+    required this.printerName,
+  });
+
+  final Stream<PrintJob> jobStream;
+  final String printerName;
+
+  @override
+  State<PrintStatusDialog> createState() => _PrintStatusDialogState();
+}
+
+class _PrintStatusDialogState extends State<PrintStatusDialog> {
+  StreamSubscription<PrintJob>? _subscription;
+  PrintJob? _job;
+  Object? _error;
+  bool _isDone = false;
+  bool _isCancelling = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _subscription = widget.jobStream.listen(
+      (job) {
+        if (mounted) setState(() => _job = job);
+      },
+      onError: (error) {
+        if (mounted) setState(() => _error = error);
+      },
+      onDone: () {
+        if (mounted) {
+          setState(() => _isDone = true);
+        }
+      },
+    );
+  }
+
+  Future<void> _cancelJob() async {
+    if (_job == null || !mounted) return;
+    final navigator = Navigator.of(context);
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _isCancelling = true);
+    try {
+      final success = await cancelPrintJob(widget.printerName, _job!.id);
+
+      if (!mounted) return;
+
+      if (success) {
+        navigator.pop();
+        messenger.showSnackBar(
+          const SnackBar(
+            content: Text('Cancel command sent successfully.'),
+            backgroundColor: Colors.blue,
+          ),
+        );
+      } else {
+        navigator.pop();
+        setState(() => _isCancelling = false);
+        messenger.showSnackBar(
+          const SnackBar(
+            content: Text('Failed to send cancel command.'),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isCancelling = false);
+      messenger.showSnackBar(
+        SnackBar(content: Text('Error cancelling job: $e')),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _subscription?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isJobTerminal =
+        _job != null &&
+        (_job!.status == PrintJobStatus.completed ||
+            _job!.status == PrintJobStatus.canceled ||
+            _job!.status == PrintJobStatus.aborted ||
+            _job!.status == PrintJobStatus.error);
+
+    final isImplicitlyComplete = _isDone && _job == null && _error == null;
+
+    final canCancel = !_isCancelling && !isJobTerminal && !_isDone;
+
+    Widget content;
+    if (_error != null) {
+      content = Text(
+        'Error: $_error',
+        style: TextStyle(color: ShadTheme.of(context).colorScheme.destructive),
+      );
+    } else if (isImplicitlyComplete) {
+      content = Text(
+        'Job Completed',
+        style: ShadTheme.of(context).textTheme.large,
+      );
+    } else if (_job == null) {
+      content = const CircularProgressIndicator();
+    } else {
+      content = Text(
+        'Job #${_job!.id}: ${_job!.statusDescription}',
+        style: Theme.of(context).textTheme.titleMedium,
+      );
+    }
+
+    return ShadDialog.alert(
+      title: const Text('Tracking Print Job...'),
+      actions: <Widget>[
+        if (isJobTerminal || _error != null || isImplicitlyComplete)
+          ShadButton(
+            child: const Text('Close'),
+            onPressed: () => Navigator.of(context).pop(),
+          )
+        else
+          ShadButton.outline(
+            onPressed: canCancel ? _cancelJob : null,
+            child: _isCancelling
+                ? const SizedBox.square(
+                    dimension: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Text('Cancel'),
+          ),
+      ],
+      child: SizedBox(width: 250, height: 100, child: Center(child: content)),
+    );
+  }
+}

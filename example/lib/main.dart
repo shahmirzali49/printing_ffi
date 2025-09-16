@@ -5,13 +5,8 @@ import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:printing_ffi/printing_ffi.dart';
-
-extension ColorExt on Color {
-  /// Flutter 3.29, Migration helper for withOpacity Function
-  Color withOpacityx(double value) {
-    return withValues(alpha: value);
-  }
-}
+import 'package:shadcn_ui/shadcn_ui.dart';
+import 'widgets.dart';
 
 /// A local helper class to represent the custom scaling option in the UI.
 /// This is a marker class for the SegmentedButton.
@@ -36,20 +31,22 @@ class PrintingFfiExampleApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Printing FFI Example',
-      theme: ThemeData(
-        primarySwatch: Colors.blueGrey,
-        useMaterial3: true,
+    return ShadApp.custom(
+      themeMode: ThemeMode.light,
+      darkTheme: ShadThemeData(
         brightness: Brightness.light,
-        cardTheme: CardThemeData(
-          elevation: 2,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
-        ),
+        colorScheme: const ShadSlateColorScheme.dark(),
       ),
-      home: const PrintingScreen(),
+      appBuilder: (context) {
+        return MaterialApp(
+          title: 'Printing FFI Example',
+          theme: Theme.of(context),
+          builder: (context, child) {
+            return ShadAppBuilder(child: child!);
+          },
+          home: const PrintingScreen(),
+        );
+      },
     );
   }
 }
@@ -246,6 +243,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
     }
   }
 
+  // Builds the list of options to be sent to the native print functions.
   List<PrintOption> _buildPrintOptions({Map<String, String>? cupsOptions}) {
     final options = <PrintOption>[];
     if (Platform.isWindows) {
@@ -399,7 +397,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
       showDialog(
         context: context,
         barrierDismissible: false,
-        builder: (context) => _PrintStatusDialog(
+        builder: (context) => PrintStatusDialog(
           printerName: _selectedPrinter!.name,
           jobStream: printPdfAndStreamStatus(
             _selectedPrinter!.name,
@@ -432,7 +430,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => _PrintStatusDialog(
+      builder: (context) => PrintStatusDialog(
         printerName: _selectedPrinter!.name,
         jobStream: rawDataToPrinterAndStreamStatus(
           _selectedPrinter!.name,
@@ -635,762 +633,127 @@ class _PrintingScreenState extends State<PrintingScreen> {
   Widget _buildSimpleTab() {
     return ListView(
       children: [
-        _buildStandardActions(),
+        StandardActionsCard(
+          selectedScaling: _selectedScaling,
+          onScalingChanged: (newSelection) {
+            setState(() {
+              _selectedScaling = newSelection.first;
+            });
+          },
+          customScaleController: _customScaleController,
+          selectedPdfPath: _selectedPdfPath,
+          onClearPdfPath: () {
+            setState(() {
+              _selectedPdfPath = null;
+            });
+          },
+          onPrintPdf:
+              ({cupsOptions, required copies, required pageRangeString}) {
+                _printPdf(
+                  cupsOptions: cupsOptions,
+                  copies: copies,
+                  pageRangeString: pageRangeString,
+                );
+              },
+          copiesController: _copiesController,
+          pageRangeController: _pageRangeController,
+          collate: _collate,
+          onCollateChanged: (v) => setState(() => _collate = v),
+          onPrintPdfAndTrack: _printPdfAndTrack,
+          onShowWindowsCapabilities: _showWindowsCapabilities,
+          rawDataController: _rawDataController,
+          onPrintRawData: _printRawData,
+          onPrintRawDataAndTrack: _printRawDataAndTrack,
+          platformSettings: _buildPlatformSettings(),
+        ),
         const SizedBox(height: 20),
-        _buildJobsList(),
+        JobsList(
+          isLoading: _isLoadingJobs,
+          jobs: _jobs,
+          onManageJob: _manageJob,
+        ),
       ],
     );
   }
 
   Widget _buildPrinterSelector() {
-    return Row(
-      children: [
-        const Text('Printer:', style: TextStyle(fontSize: 16)),
-        const SizedBox(width: 10),
-        Expanded(
-          child: DropdownButton<Printer>(
-            value: _selectedPrinter,
-            isExpanded: true,
-            items: _printers
-                .map((p) => DropdownMenuItem(value: p, child: Text(p.name)))
-                .toList(),
-            onChanged: _onPrinterSelected,
-            hint: const Text('Select a printer'),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildStandardActions() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Standard Actions',
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
-            const SizedBox(height: 16),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(child: _buildPlatformSettings()),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    children: [
-                      if (Platform.isWindows)
-                        SegmentedButton<Object>(
-                          segments: const <ButtonSegment<Object>>[
-                            ButtonSegment(
-                              value: PdfPrintScaling.fitToPrintableArea,
-                              label: Text('Fit to Printable'),
-                            ),
-                            ButtonSegment(
-                              value: PdfPrintScaling.actualSize,
-                              label: Text('Actual Size'),
-                            ),
-                            ButtonSegment(
-                              value: PdfPrintScaling.shrinkToFit,
-                              label: Text('Shrink to Fit'),
-                            ),
-                            ButtonSegment(
-                              value: PdfPrintScaling.fitToPaper,
-                              label: Text('Fit to Paper'),
-                            ),
-                            ButtonSegment(
-                              value: _CustomScaling(),
-                              label: Text('Custom'),
-                            ),
-                          ],
-                          selected: {_selectedScaling},
-                          onSelectionChanged: (newSelection) {
-                            setState(() {
-                              _selectedScaling = newSelection.first;
-                            });
-                          },
-                        ),
-                      if (Platform.isWindows &&
-                          _selectedScaling is _CustomScaling) ...[
-                        const SizedBox(height: 12),
-                        SizedBox(
-                          width: 120,
-                          child: TextField(
-                            controller: _customScaleController,
-                            decoration: const InputDecoration(
-                              border: OutlineInputBorder(),
-                              labelText: 'Scale',
-                            ),
-                            keyboardType: const TextInputType.numberWithOptions(
-                              decimal: true,
-                            ),
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: 12),
-                      if (_selectedPdfPath != null)
-                        ListTile(
-                          leading: const Icon(Icons.picture_as_pdf),
-                          title: const Text(
-                            'Selected PDF:',
-                            style: TextStyle(fontWeight: FontWeight.bold),
-                          ),
-                          subtitle: Text(
-                            _selectedPdfPath!
-                                .split(Platform.pathSeparator)
-                                .last,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                          trailing: IconButton(
-                            icon: const Icon(Icons.clear),
-                            tooltip: 'Clear selection',
-                            onPressed: () {
-                              setState(() {
-                                _selectedPdfPath = null;
-                              });
-                            },
-                          ),
-                        ),
-                      ElevatedButton.icon(
-                        icon: const Icon(Icons.picture_as_pdf),
-                        label: Text(
-                          _selectedPdfPath == null
-                              ? 'Select & Print PDF'
-                              : 'Print Selected PDF',
-                        ),
-                        onPressed: () => _printPdf(
-                          copies: int.tryParse(_copiesController.text) ?? 1,
-                          pageRangeString: _pageRangeController.text,
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 24,
-                            vertical: 12,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: TextField(
-                                controller: _copiesController,
-                                decoration: const InputDecoration(
-                                  border: OutlineInputBorder(),
-                                  labelText: 'Copies',
-                                ),
-                                keyboardType: TextInputType.number,
-                              ),
-                            ),
-                            const SizedBox(width: 16),
-                            Expanded(
-                              flex: 2,
-                              child: TextField(
-                                controller: _pageRangeController,
-                                decoration: const InputDecoration(
-                                  border: OutlineInputBorder(),
-                                  labelText: 'Page Range',
-                                  hintText: 'e.g. 1-3, 5, 7-9',
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      const Text(
-                        'Leave page range blank to print all pages.',
-                        style: TextStyle(fontSize: 12, color: Colors.grey),
-                      ),
-                      const SizedBox(height: 12),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 12.0),
-                        child: SwitchListTile(
-                          title: const Text('Collate copies'),
-                          subtitle: const Text(
-                            'Enabled: Complete copies together (1,2,3,4,5,6 - 1,2,3,4,5,6)\n'
-                            'Disabled: All copies of each page together (1,1 - 2,2 - 3,3 - 4,4 - 5,5 - 6,6)',
-                          ),
-                          value: _collate,
-                          onChanged: (v) => setState(() => _collate = v),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      ElevatedButton.icon(
-                        icon: const Icon(Icons.track_changes),
-                        label: const Text('Print PDF and Track Status'),
-                        onPressed: _printPdfAndTrack,
-                      ),
-                      if (Platform.isWindows) ...[
-                        const SizedBox(height: 12),
-                        ElevatedButton.icon(
-                          icon: const Icon(Icons.inventory_2_outlined),
-                          label: const Text('Show Printer Capabilities'),
-                          onPressed: _showWindowsCapabilities,
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const Divider(height: 32),
-            Text(
-              'Raw Data (ZPL Example)',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _rawDataController,
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
-                labelText: 'Text to print',
-              ),
-            ),
-            const SizedBox(height: 12),
-            Center(
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.data_object),
-                label: const Text('Print Raw Data'),
-                onPressed: _printRawData,
-              ),
-            ),
-            const SizedBox(height: 12),
-            Center(
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.track_changes),
-                label: const Text('Print Raw Data and Track'),
-                onPressed: _printRawDataAndTrack,
-              ),
-            ),
-          ],
-        ),
-      ),
+    return PrinterSelector(
+      printers: _printers,
+      selectedPrinter: _selectedPrinter,
+      onChanged: _onPrinterSelected,
     );
   }
 
   Widget _buildPlatformSettings() {
-    final List<Widget> windowsChildren = [];
-    if (Platform.isWindows) {
-      if (_isLoadingWindowsCaps) {
-        windowsChildren.add(const Center(child: CircularProgressIndicator()));
-      } else if (_windowsCapabilities != null) {
-        windowsChildren.addAll([
-          DropdownButtonFormField<WindowsPaperSize>(
-            isExpanded: true,
-            initialValue: _selectedPaperSize,
-            decoration: const InputDecoration(
-              labelText: 'Paper Size (Windows)',
-              border: OutlineInputBorder(),
-            ),
-            items: _windowsCapabilities!.paperSizes
-                .map(
-                  (p) => DropdownMenuItem(
-                    value: p,
-                    child: Text(p.name, overflow: TextOverflow.ellipsis),
-                  ),
-                )
-                .toList(),
-            onChanged: (p) => setState(() => _selectedPaperSize = p),
-          ),
-          DropdownButtonFormField<WindowsPaperSource>(
-            isExpanded: true,
-            initialValue: _selectedPaperSource,
-            decoration: const InputDecoration(
-              labelText: 'Paper Source (Windows)',
-              border: OutlineInputBorder(),
-            ),
-            items: _windowsCapabilities!.paperSources
-                .map(
-                  (s) => DropdownMenuItem(
-                    value: s,
-                    child: Text(s.name, overflow: TextOverflow.ellipsis),
-                  ),
-                )
-                .toList(),
-            onChanged: (s) => setState(() => _selectedPaperSource = s),
-          ),
-          DropdownButtonFormField<PdfPrintAlignment>(
-            initialValue: _selectedAlignment,
-            decoration: const InputDecoration(
-              labelText: 'Alignment (Windows)',
-              border: OutlineInputBorder(),
-            ),
-            items: PdfPrintAlignment.values
-                .map(
-                  (a) => DropdownMenuItem(
-                    value: a,
-                    child: Text(a.name[0].toUpperCase() + a.name.substring(1)),
-                  ),
-                )
-                .toList(),
-            onChanged: (a) => setState(
-              () => _selectedAlignment = a ?? PdfPrintAlignment.center,
-            ),
-          ),
-        ]);
-      }
-    }
-
-    final List<Widget> allChildren = [
-      ...windowsChildren,
-      DropdownButtonFormField<PrintQuality>(
-        initialValue: _selectedPrintQuality,
-        decoration: const InputDecoration(
-          labelText: 'Print Quality',
-          border: OutlineInputBorder(),
-        ),
-        items: PrintQuality.values
-            .map(
-              (q) => DropdownMenuItem(
-                value: q,
-                child: Text(q.name[0].toUpperCase() + q.name.substring(1)),
-              ),
-            )
-            .toList(),
-        onChanged: (q) =>
-            setState(() => _selectedPrintQuality = q ?? PrintQuality.normal),
+    return PlatformSettings(
+      isLoading: _isLoadingWindowsCaps,
+      windowsCapabilities: _windowsCapabilities,
+      selectedPaperSize: _selectedPaperSize,
+      onPaperSizeChanged: (p) => setState(() => _selectedPaperSize = p),
+      selectedPaperSource: _selectedPaperSource,
+      onPaperSourceChanged: (s) => setState(() => _selectedPaperSource = s),
+      selectedAlignment: _selectedAlignment,
+      onAlignmentChanged: (a) =>
+          setState(() => _selectedAlignment = a ?? PdfPrintAlignment.center),
+      selectedPrintQuality: _selectedPrintQuality,
+      onPrintQualityChanged: (q) =>
+          setState(() => _selectedPrintQuality = q ?? PrintQuality.normal),
+      selectedColorMode: _selectedColorMode,
+      onColorModeChanged: (c) =>
+          setState(() => _selectedColorMode = c ?? ColorMode.color),
+      selectedOrientation: _selectedOrientation,
+      onOrientationChanged: (o) => setState(
+        () => _selectedOrientation = o ?? WindowsOrientation.portrait,
       ),
-      Tooltip(
-        message:
-            'Options may be disabled if the printer does not report support. If capabilities are unknown, all options are enabled.',
-        child: DropdownButtonFormField<ColorMode>(
-          initialValue: _selectedColorMode,
-          decoration: const InputDecoration(
-            labelText: 'Color Mode',
-            border: OutlineInputBorder(),
-          ),
-          items: ColorMode.values
-              .map(
-                (c) => DropdownMenuItem(
-                  value: c,
-                  enabled:
-                      (c == ColorMode.color &&
-                          (_windowsCapabilities?.isColorSupported ?? true)) ||
-                      (c == ColorMode.monochrome &&
-                          (_windowsCapabilities?.isMonochromeSupported ??
-                              true)),
-                  child: Text(c.name[0].toUpperCase() + c.name.substring(1)),
-                ),
-              )
-              .toList(),
-          onChanged: (c) =>
-              setState(() => _selectedColorMode = c ?? ColorMode.color),
-        ),
-      ),
-      Tooltip(
-        message:
-            'Options may be disabled if the printer does not report support. If capabilities are unknown, all options are enabled.',
-        child: DropdownButtonFormField<WindowsOrientation>(
-          initialValue: _selectedOrientation,
-          decoration: const InputDecoration(
-            labelText: 'Orientation',
-            border: OutlineInputBorder(),
-          ),
-          items: WindowsOrientation.values
-              .map(
-                (o) => DropdownMenuItem(
-                  value: o,
-                  child: Text(o.name[0].toUpperCase() + o.name.substring(1)),
-                ),
-              )
-              .toList(),
-          onChanged: (o) => setState(
-            () => _selectedOrientation = o ?? WindowsOrientation.portrait,
-          ),
-        ),
-      ),
-    ];
-
-    return Padding(
-      padding: const EdgeInsets.only(top: 16.0),
-      child: Card(
-        elevation: 1,
-        color: Theme.of(
-          context,
-        ).colorScheme.secondaryContainer.withOpacityx(0.3),
-        child: Padding(
-          padding: const EdgeInsets.all(16.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Platform Settings',
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 12),
-              GridView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                  maxCrossAxisExtent: 220,
-                  childAspectRatio: 3,
-                  crossAxisSpacing: 12,
-                  mainAxisSpacing: 12,
-                ),
-                itemCount: allChildren.length,
-                itemBuilder: (context, index) => allChildren[index],
-              ),
-              const SizedBox(height: 16),
-              Center(
-                child: ElevatedButton.icon(
-                  icon: const Icon(Icons.settings_outlined),
-                  label: const Text('Open Printer Properties'),
-                  onPressed: () async {
-                    if (_selectedPrinter == null) return;
-                    try {
-                      // For a real app, you might use the `win32` package
-                      // to get the handle of the main window. For this
-                      // example, 0 (NULL) is sufficient.
-                      final result = await openPrinterProperties(
-                        _selectedPrinter!.name,
-                        hwnd: 0,
-                      );
-                      if (!mounted) return;
-                      switch (result) {
-                        case PrinterPropertiesResult.ok:
-                          _showSnackbar(
-                            'Printer properties updated successfully.',
-                          );
-                          // Refresh capabilities to reflect any changes made.
-                          _fetchWindowsCapabilities();
-                          break;
-                        case PrinterPropertiesResult.cancel:
-                          _showSnackbar(
-                            'Printer properties dialog was cancelled.',
-                            isError: false,
-                          );
-                          break;
-                        case PrinterPropertiesResult.error:
-                          _showSnackbar(
-                            'Could not open printer properties.',
-                            isError: true,
-                          );
-                          break;
-                      }
-                    } catch (e) {
-                      _showSnackbar(
-                        'Error opening properties: $e',
-                        isError: true,
-                      );
-                    }
-                  },
-                ),
-              ),
-              const SizedBox(height: 12),
-              if (Platform.isWindows)
-                Center(
-                  child: ElevatedButton.icon(
-                    icon: const Icon(Icons.inventory_2_outlined),
-                    label: const Text('Show All Capabilities'),
-                    onPressed: _showWindowsCapabilities,
-                  ),
-                ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildJobsList() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Text(
-              'Print Queue',
-              style: Theme.of(context).textTheme.headlineSmall,
-            ),
-          ],
-        ),
-        if (_isLoadingJobs) const Center(child: CircularProgressIndicator()),
-        if (!_isLoadingJobs && _jobs.isEmpty)
-          const Text('No active print jobs.'),
-        if (!_isLoadingJobs && _jobs.isNotEmpty)
-          SizedBox(
-            height: 200,
-            child: ListView.builder(
-              itemCount: _jobs.length,
-              itemBuilder: (context, index) {
-                final job = _jobs[index];
-                return Card(
-                  child: ListTile(
-                    title: Text(job.title),
-                    subtitle: Text(
-                      'ID: ${job.id} - Status: ${job.statusDescription}',
-                    ),
-                    trailing: Wrap(
-                      spacing: 0,
-                      children: [
-                        IconButton(
-                          icon: const Icon(Icons.pause),
-                          onPressed: () => _manageJob(job.id, 'pause'),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.play_arrow),
-                          onPressed: () => _manageJob(job.id, 'resume'),
-                        ),
-                        IconButton(
-                          icon: const Icon(Icons.cancel),
-                          onPressed: () => _manageJob(job.id, 'cancel'),
-                        ),
-                      ],
-                    ),
-                  ),
-                );
-              },
-            ),
-          ),
-      ],
+      onOpenProperties: () async {
+        if (_selectedPrinter == null) return;
+        try {
+          final result = await openPrinterProperties(
+            _selectedPrinter!.name,
+            hwnd: 0,
+          );
+          if (!mounted) return;
+          switch (result) {
+            case PrinterPropertiesResult.ok:
+              _showSnackbar('Printer properties updated successfully.');
+              _fetchWindowsCapabilities();
+              break;
+            case PrinterPropertiesResult.cancel:
+              _showSnackbar(
+                'Printer properties dialog was cancelled.',
+                isError: false,
+              );
+              break;
+            case PrinterPropertiesResult.error:
+              _showSnackbar(
+                'Could not open printer properties.',
+                isError: true,
+              );
+              break;
+          }
+        } catch (e) {
+          _showSnackbar('Error opening properties: $e', isError: true);
+        }
+      },
+      onShowCapabilities: _showWindowsCapabilities,
     );
   }
 
   Widget _buildAdvancedTab() {
-    if (!Platform.isMacOS && !Platform.isLinux) {
-      return const Center(
-        child: Text(
-          'Advanced CUPS options are only available on macOS and Linux.',
-        ),
-      );
-    }
-    return ListView(
-      children: [
-        Text('CUPS Options', style: Theme.of(context).textTheme.headlineSmall),
-        const SizedBox(height: 10),
-        if (_isLoadingCupsOptions)
-          const Center(child: CircularProgressIndicator()),
-        if (!_isLoadingCupsOptions &&
-            (_cupsOptions == null || _cupsOptions!.isEmpty))
-          const Text('No CUPS options found for this printer.'),
-        if (!_isLoadingCupsOptions &&
-            _cupsOptions != null &&
-            _cupsOptions!.isNotEmpty) ...[
-          ..._buildCupsOptionWidgets(),
-          const SizedBox(height: 20),
-          Center(
-            child: ElevatedButton.icon(
-              icon: const Icon(Icons.picture_as_pdf_outlined),
-              label: const Text('Print PDF with Selected Options'),
-              onPressed: () => _printPdf(
-                cupsOptions: _selectedCupsOptions,
-                copies: int.tryParse(_copiesController.text) ?? 1,
-                pageRangeString: _pageRangeController.text,
-              ),
-              style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 24,
-                  vertical: 12,
-                ),
-              ),
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-
-  List<Widget> _buildCupsOptionWidgets() {
-    if (_cupsOptions == null) return [];
-    return _cupsOptions!.map((option) {
-      final currentValue = _selectedCupsOptions[option.name];
-      return Card(
-        margin: const EdgeInsets.symmetric(vertical: 4),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Expanded(
-                flex: 2,
-                child: Text(
-                  option.name,
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                flex: 3,
-                child: DropdownButton<String>(
-                  value: currentValue,
-                  isExpanded: true,
-                  underline: const SizedBox.shrink(),
-                  items: option.supportedValues.map((choice) {
-                    return DropdownMenuItem<String>(
-                      value: choice.choice,
-                      child: Tooltip(
-                        message: choice.text,
-                        child: Text(
-                          choice.text,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    );
-                  }).toList(),
-                  onChanged: (newValue) {
-                    if (newValue != null) {
-                      setState(
-                        () => _selectedCupsOptions[option.name] = newValue,
-                      );
-                    }
-                  },
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
-    }).toList();
-  }
-}
-
-class _PrintStatusDialog extends StatefulWidget {
-  const _PrintStatusDialog({
-    required this.jobStream,
-    required this.printerName,
-  });
-
-  final Stream<PrintJob> jobStream;
-  final String printerName;
-
-  @override
-  State<_PrintStatusDialog> createState() => _PrintStatusDialogState();
-}
-
-class _PrintStatusDialogState extends State<_PrintStatusDialog> {
-  StreamSubscription<PrintJob>? _subscription;
-  PrintJob? _job;
-  Object? _error;
-  bool _isDone = false;
-  bool _isCancelling = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _subscription = widget.jobStream.listen(
-      (job) {
-        if (mounted) setState(() => _job = job);
+    return AdvancedTab(
+      isLoading: _isLoadingCupsOptions,
+      cupsOptions: _cupsOptions,
+      selectedCupsOptions: _selectedCupsOptions,
+      onOptionChanged: (key, value) {
+        setState(() {
+          _selectedCupsOptions[key] = value;
+        });
       },
-      onError: (error) {
-        if (mounted) setState(() => _error = error);
-      },
-      onDone: () {
-        if (mounted) {
-          setState(() => _isDone = true);
-        }
-      },
-    );
-  }
-
-  Future<void> _cancelJob() async {
-    if (_job == null || !mounted) return;
-    final navigator = Navigator.of(context);
-    final messenger = ScaffoldMessenger.of(context);
-    setState(() => _isCancelling = true);
-    try {
-      final success = await cancelPrintJob(widget.printerName, _job!.id);
-
-      // After the await, the widget might have been disposed.
-      if (!mounted) return;
-
-      if (success) {
-        // If successful, pop the dialog and show a confirmation snackbar.
-        navigator.pop();
-        messenger.showSnackBar(
-          const SnackBar(
-            content: Text('Cancel command sent successfully.'),
-            backgroundColor: Colors.blue,
-          ),
-        );
-      } else {
-        navigator.pop();
-        // If failed, stay on the dialog and show an error.
-        setState(() => _isCancelling = false);
-        messenger.showSnackBar(
-          const SnackBar(
-            content: Text('Failed to send cancel command.'),
-            backgroundColor: Colors.orange,
-          ),
-        );
-      }
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _isCancelling = false);
-      messenger.showSnackBar(
-        SnackBar(content: Text('Error cancelling job: $e')),
-      );
-    }
-  }
-
-  @override
-  void dispose() {
-    _subscription?.cancel();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final isJobTerminal =
-        _job != null &&
-        (_job!.status == PrintJobStatus.completed ||
-            _job!.status == PrintJobStatus.canceled ||
-            _job!.status == PrintJobStatus.aborted ||
-            _job!.status == PrintJobStatus.error);
-
-    // If the stream is done but we never got a job object, it means the job
-    // completed so quickly it was never seen in the queue. We can treat this
-    // as a successful completion.
-    final isImplicitlyComplete = _isDone && _job == null && _error == null;
-
-    final canCancel = !_isCancelling && !isJobTerminal && !_isDone;
-
-    Widget content;
-    if (_error != null) {
-      content = Text(
-        'Error: $_error',
-        style: const TextStyle(color: Colors.red),
-      );
-    } else if (isImplicitlyComplete) {
-      content = Text(
-        'Job Completed',
-        style: Theme.of(context).textTheme.titleMedium,
-      );
-    } else if (_job == null) {
-      content = const CircularProgressIndicator();
-    } else {
-      content = Text(
-        'Job #${_job!.id}: ${_job!.statusDescription}',
-        style: Theme.of(context).textTheme.titleMedium,
-      );
-    }
-
-    return AlertDialog(
-      title: const Text('Tracking Print Job...'),
-      content: SizedBox(width: 250, height: 100, child: Center(child: content)),
-      actions: <Widget>[
-        if (isJobTerminal || _error != null || isImplicitlyComplete)
-          TextButton(
-            child: const Text('Close'),
-            onPressed: () => Navigator.of(context).pop(),
-          )
-        else
-          TextButton(
-            onPressed: canCancel ? _cancelJob : null,
-            child: _isCancelling
-                ? const SizedBox(
-                    width: 24,
-                    height: 24,
-                    child: CircularProgressIndicator(strokeWidth: 3),
-                  )
-                : const Text('Cancel'),
-          ),
-      ],
+      onPrint: () => _printPdf(
+        cupsOptions: _selectedCupsOptions,
+        copies: int.tryParse(_copiesController.text) ?? 1,
+        pageRangeString: _pageRangeController.text,
+      ),
     );
   }
 }

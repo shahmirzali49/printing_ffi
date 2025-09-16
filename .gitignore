@@ -43,3 +43,5 @@ settings.json
 # Example project files
 example/pubspec.lock
 examples/pubspec.lock
+example/macos/Podfile.lock
+example/macos/Flutter/GeneratedPluginRegistrant.swift
