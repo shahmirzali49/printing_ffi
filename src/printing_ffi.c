@@ -322,7 +322,7 @@ static DEVMODEW* get_modified_devmode(wchar_t* printer_name_w, int paper_size_id
         LOG("get_modified_devmode: Setting dmMediaType to %d.", media_type_id);
         pDevMode->dmFields |= DM_MEDIATYPE; pDevMode->dmMediaType = (short)media_type_id; modified = true;
     }
-    
+
     // Set collate mode
     LOG("get_modified_devmode: Setting dmCollate to %s.", collate ? "true" : "false");
     pDevMode->dmFields |= DM_COLLATE;
@@ -731,6 +731,27 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char* printer_name, const uint8
 }
 
 #ifdef _WIN32
+// Internal helper to calculate the destination rectangle for scaling content to fit a target area.
+static void _scale_to_fit(int src_width, int src_height, int target_width, int target_height, int* dest_width, int* dest_height) {
+    float page_aspect = 1.0f;
+    if (src_height > 0) {
+        page_aspect = (float)src_width / (float)src_height;
+    }
+
+    float target_aspect = 1.0f;
+    if (target_height != 0) {
+        target_aspect = (float)target_width / (float)target_height;
+    }
+
+    if (page_aspect > target_aspect) {
+        *dest_width = target_width;
+        *dest_height = (int)(target_width / page_aspect);
+    } else {
+        *dest_height = target_height;
+        *dest_width = (int)(target_height * page_aspect);
+    }
+}
+
 // Common internal function for PDF printing on Windows.
 // Returns a job ID if `submit_job` is true, otherwise returns 1 for success or 0 for failure.
 static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file_path, const char* doc_name, int scaling_mode, int copies, const char* page_range, const char* alignment, int num_options, const char** option_keys, const char** option_values, bool submit_job) {
@@ -1052,29 +1073,6 @@ static int32_t _print_pdf_job_win(const char* printer_name, const char* pdf_file
     } else {
         LOG("_print_pdf_job_win (print) finished with result: %d", success);
         return success ? 1 : 0;
-    }
-}
-#endif
-
-#ifdef _WIN32
-// Internal helper to calculate the destination rectangle for scaling content to fit a target area.
-static void _scale_to_fit(int src_width, int src_height, int target_width, int target_height, int* dest_width, int* dest_height) {
-    float page_aspect = 1.0f;
-    if (src_height > 0) {
-        page_aspect = (float)src_width / (float)src_height;
-    }
-
-    float target_aspect = 1.0f;
-    if (target_height != 0) {
-        target_aspect = (float)target_width / (float)target_height;
-    }
-
-    if (page_aspect > target_aspect) {
-        *dest_width = target_width;
-        *dest_height = (int)(target_width / page_aspect);
-    } else {
-        *dest_height = target_height;
-        *dest_width = (int)(target_height * page_aspect);
     }
 }
 #endif
