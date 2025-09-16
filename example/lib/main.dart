@@ -213,12 +213,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
 
   void _showToast(String message, {bool isError = false}) {
     if (!mounted) return;
-    ShadToaster.of(context).show(
-      ShadToast(
-        description: Text(message),
-
-      ),
-    );
+    ShadToaster.of(context).show(ShadToast(description: Text(message)));
   }
 
   String _getExampleRawData(RawDataType type) {
@@ -395,6 +390,37 @@ class _PrintingScreenState extends State<PrintingScreen> {
     return options;
   }
 
+  ({PageRange? pageRange, PdfPrintScaling? scaling})? _parsePrintJobSettings() {
+    // Parse Page Range
+    final pageRangeString = _pageRangeController.text;
+    PageRange? pageRange;
+    if (pageRangeString.trim().isNotEmpty) {
+      try {
+        pageRange = PageRange.parse(pageRangeString);
+      } on ArgumentError catch (e) {
+        _showToast('Invalid page range: ${e.message}', isError: true);
+        return null;
+      }
+    }
+
+    // Parse Scaling
+    final PdfPrintScaling scaling;
+    if (_selectedScaling is CustomScaling) {
+      final scaleValue = double.tryParse(_customScaleController.text);
+      if (scaleValue == null || scaleValue <= 0) {
+        _showToast(
+          'Invalid custom scale value. It must be a positive number.',
+          isError: true,
+        );
+        return null;
+      }
+      scaling = PdfPrintScaling.custom(scaleValue);
+    } else {
+      scaling = _selectedScaling as PdfPrintScaling;
+    }
+    return (pageRange: pageRange, scaling: scaling);
+  }
+
   Future<String?> _getPdfPath() async {
     if (_selectedPdfPath != null) {
       return _selectedPdfPath;
@@ -418,49 +444,28 @@ class _PrintingScreenState extends State<PrintingScreen> {
   Future<void> _printPdf({
     Map<String, String>? cupsOptions,
     required int copies,
-    required String pageRangeString,
   }) async {
     if (_selectedPrinter == null) {
       _showToast('No printer selected!', isError: true);
       return;
     }
-    PageRange? pageRange;
-    if (pageRangeString.trim().isNotEmpty) {
-      try {
-        pageRange = PageRange.parse(pageRangeString);
-      } on ArgumentError catch (e) {
-        _showToast('Invalid page range: ${e.message}', isError: true);
-        return;
-      }
-    }
+    final settings = _parsePrintJobSettings();
+    if (settings == null) return;
+
     final path = await _getPdfPath();
     if (path != null) {
       try {
         final options = _buildPrintOptions(cupsOptions: cupsOptions);
         _showToast('Printing PDF...');
 
-        final PdfPrintScaling scaling;
-        if (_selectedScaling is CustomScaling) {
-          final scaleValue = double.tryParse(_customScaleController.text);
-          if (scaleValue == null || scaleValue <= 0) {
-            _showToast(
-              'Invalid custom scale value. It must be a positive number.',
-              isError: true,
-            );
-            return;
-          }
-          scaling = PdfPrintScaling.custom(scaleValue);
-        } else {
-          scaling = _selectedScaling as PdfPrintScaling;
-        }
         final success = await printPdf(
           _selectedPrinter!.name,
           path,
           docName: 'My Flutter PDF',
           options: options,
-          scaling: scaling,
+          scaling: settings.scaling!,
           copies: copies,
-          pageRange: pageRange,
+          pageRange: settings.pageRange,
         );
         if (!mounted) return;
         if (success) {
@@ -484,47 +489,26 @@ class _PrintingScreenState extends State<PrintingScreen> {
     }
     final path = await _getPdfPath();
     if (path != null) {
-      final copies = int.tryParse(_copiesController.text) ?? 1;
-      final pageRangeString = _pageRangeController.text;
-      PageRange? pageRange;
-      if (pageRangeString.trim().isNotEmpty) {
-        try {
-          pageRange = PageRange.parse(pageRangeString);
-        } on ArgumentError catch (e) {
-          _showToast('Invalid page range: ${e.message}', isError: true);
-          return;
-        }
-      }
-      final options = _buildPrintOptions();
+      final settings = _parsePrintJobSettings();
+      if (settings == null) return;
 
-      final PdfPrintScaling scaling;
-      if (_selectedScaling is CustomScaling) {
-        final scaleValue = double.tryParse(_customScaleController.text);
-        if (scaleValue == null || scaleValue <= 0) {
-          _showToast(
-            'Invalid custom scale value. It must be a positive number.',
-            isError: true,
-          );
-          return;
-        }
-        scaling = PdfPrintScaling.custom(scaleValue);
-      } else {
-        scaling = _selectedScaling as PdfPrintScaling;
-      }
+      final copies = int.tryParse(_copiesController.text) ?? 1;
+      final options = _buildPrintOptions();
 
       if (!mounted) return;
       showDialog(
         context: context,
         barrierDismissible: false,
         builder: (context) => PrintStatusDialog(
+          onToast: _showToast,
           printerName: _selectedPrinter!.name,
           jobStream: printPdfAndStreamStatus(
             _selectedPrinter!.name,
             path,
             options: options,
-            scaling: scaling,
+            scaling: settings.scaling!,
             copies: copies,
-            pageRange: pageRange,
+            pageRange: settings.pageRange,
           ),
         ),
       );
@@ -549,6 +533,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
       context: context,
       barrierDismissible: false,
       builder: (context) => PrintStatusDialog(
+        onToast: _showToast,
         printerName: _selectedPrinter!.name,
         jobStream: rawDataToPrinterAndStreamStatus(
           _selectedPrinter!.name,
@@ -783,12 +768,8 @@ class _PrintingScreenState extends State<PrintingScreen> {
             });
           },
           onPrintPdf:
-              ({cupsOptions, required copies, required pageRangeString}) {
-                _printPdf(
-                  cupsOptions: cupsOptions,
-                  copies: copies,
-                  pageRangeString: pageRangeString,
-                );
+              ({required copies, cupsOptions, required pageRangeString}) {
+                _printPdf(copies: copies, cupsOptions: cupsOptions);
               },
           copiesController: _copiesController,
           pageRangeController: _pageRangeController,
@@ -886,7 +867,6 @@ class _PrintingScreenState extends State<PrintingScreen> {
       onPrint: () => _printPdf(
         cupsOptions: _selectedCupsOptions,
         copies: int.tryParse(_copiesController.text) ?? 1,
-        pageRangeString: _pageRangeController.text,
       ),
     );
   }

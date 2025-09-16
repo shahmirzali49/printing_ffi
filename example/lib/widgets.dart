@@ -659,10 +659,12 @@ class PrintStatusDialog extends StatefulWidget {
     super.key,
     required this.jobStream,
     required this.printerName,
+    required this.onToast,
   });
 
   final Stream<PrintJob> jobStream;
   final String printerName;
+  final void Function(String message, {bool isError}) onToast;
 
   @override
   State<PrintStatusDialog> createState() => _PrintStatusDialogState();
@@ -695,38 +697,20 @@ class _PrintStatusDialogState extends State<PrintStatusDialog> {
 
   Future<void> _cancelJob() async {
     if (_job == null || !mounted) return;
-    final navigator = Navigator.of(context);
-    final messenger = ScaffoldMessenger.of(context);
     setState(() => _isCancelling = true);
     try {
       final success = await cancelPrintJob(widget.printerName, _job!.id);
-
       if (!mounted) return;
-
+      Navigator.of(context).pop();
       if (success) {
-        navigator.pop();
-        messenger.showSnackBar(
-          const SnackBar(
-            content: Text('Cancel command sent successfully.'),
-            backgroundColor: Colors.blue,
-          ),
-        );
+        widget.onToast('Cancel command sent successfully.');
       } else {
-        navigator.pop();
-        setState(() => _isCancelling = false);
-        messenger.showSnackBar(
-          const SnackBar(
-            content: Text('Failed to send cancel command.'),
-            backgroundColor: Colors.orange,
-          ),
-        );
+        widget.onToast('Failed to send cancel command.', isError: true);
       }
     } catch (e) {
       if (!mounted) return;
       setState(() => _isCancelling = false);
-      messenger.showSnackBar(
-        SnackBar(content: Text('Error cancelling job: $e')),
-      );
+      widget.onToast('Error cancelling job: $e', isError: true);
     }
   }
 
