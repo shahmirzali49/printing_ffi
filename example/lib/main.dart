@@ -44,7 +44,9 @@ class PrintingFfiExampleApp extends StatelessWidget {
         brightness: Brightness.light,
         cardTheme: CardThemeData(
           elevation: 2,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
         ),
       ),
       home: const PrintingScreen(),
@@ -88,8 +90,12 @@ class _PrintingScreenState extends State<PrintingScreen> {
     text: 'Hello, FFI!',
   );
   Object _selectedScaling = PdfPrintScaling.fitToPrintableArea;
-  final TextEditingController _customScaleController = TextEditingController(text: '1.0');
-  final TextEditingController _copiesController = TextEditingController(text: '1');
+  final TextEditingController _customScaleController = TextEditingController(
+    text: '1.0',
+  );
+  final TextEditingController _copiesController = TextEditingController(
+    text: '1',
+  );
   final TextEditingController _pageRangeController = TextEditingController();
   String? _selectedPdfPath;
 
@@ -256,7 +262,8 @@ class _PrintingScreenState extends State<PrintingScreen> {
     options.add(PrintQualityOption(_selectedPrintQuality));
 
     if (Platform.isWindows &&
-        (_windowsCapabilities?.mediaTypes.any((t) => t.name == 'Photo') ?? false)) {
+        (_windowsCapabilities?.mediaTypes.any((t) => t.name == 'Photo') ??
+            false)) {
       // Example of setting a specific media type if available
     }
 
@@ -345,7 +352,10 @@ class _PrintingScreenState extends State<PrintingScreen> {
       } on PrintingFfiException catch (e) {
         _showSnackbar('Failed to print PDF: ${e.message}', isError: true);
       } catch (e) {
-        _showSnackbar('An unexpected error occurred while printing: $e', isError: true);
+        _showSnackbar(
+          'An unexpected error occurred while printing: $e',
+          isError: true,
+        );
       }
     }
   }
@@ -492,12 +502,17 @@ class _PrintingScreenState extends State<PrintingScreen> {
   Future<void> _showWindowsCapabilities() async {
     if (_selectedPrinter == null || !Platform.isWindows) return;
 
-    final capabilities = await getWindowsPrinterCapabilities(_selectedPrinter!.name);
+    final capabilities = await getWindowsPrinterCapabilities(
+      _selectedPrinter!.name,
+    );
 
     if (!mounted) return;
 
     if (capabilities == null) {
-      _showSnackbar('Could not retrieve capabilities for this printer.', isError: true);
+      _showSnackbar(
+        'Could not retrieve capabilities for this printer.',
+        isError: true,
+      );
       return;
     }
 
@@ -582,7 +597,10 @@ class _PrintingScreenState extends State<PrintingScreen> {
                   // onTap: (index) => setState(() => _tabIndex = index),
                   tabs: const [
                     Tab(icon: Icon(Icons.print_outlined), text: 'Standard'),
-                    Tab(icon: Icon(Icons.settings_applications), text: 'Advanced (CUPS)'),
+                    Tab(
+                      icon: Icon(Icons.settings_applications),
+                      text: 'Advanced (CUPS)',
+                    ),
                   ],
                 )
               : null,
@@ -601,7 +619,8 @@ class _PrintingScreenState extends State<PrintingScreen> {
                     children: [_buildSimpleTab(), _buildAdvancedTab()],
                   ),
                 ),
-              if (_isLoadingPrinters) const Center(child: CircularProgressIndicator()),
+              if (_isLoadingPrinters)
+                const Center(child: CircularProgressIndicator()),
               if (!_isLoadingPrinters && _printers.isEmpty)
                 const Center(
                   child: Text('No printers found. Press refresh to try again.'),
@@ -615,7 +634,11 @@ class _PrintingScreenState extends State<PrintingScreen> {
 
   Widget _buildSimpleTab() {
     return ListView(
-      children: [_buildStandardActions(), const SizedBox(height: 20), _buildJobsList()],
+      children: [
+        _buildStandardActions(),
+        const SizedBox(height: 20),
+        _buildJobsList(),
+      ],
     );
   }
 
@@ -646,7 +669,10 @@ class _PrintingScreenState extends State<PrintingScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Standard Actions', style: Theme.of(context).textTheme.titleLarge),
+            Text(
+              'Standard Actions',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
             const SizedBox(height: 16),
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -675,7 +701,10 @@ class _PrintingScreenState extends State<PrintingScreen> {
                               value: PdfPrintScaling.fitToPaper,
                               label: Text('Fit to Paper'),
                             ),
-                            ButtonSegment(value: _CustomScaling(), label: Text('Custom')),
+                            ButtonSegment(
+                              value: _CustomScaling(),
+                              label: Text('Custom'),
+                            ),
                           ],
                           selected: {_selectedScaling},
                           onSelectionChanged: (newSelection) {
@@ -684,7 +713,8 @@ class _PrintingScreenState extends State<PrintingScreen> {
                             });
                           },
                         ),
-                      if (Platform.isWindows && _selectedScaling is _CustomScaling) ...[
+                      if (Platform.isWindows &&
+                          _selectedScaling is _CustomScaling) ...[
                         const SizedBox(height: 12),
                         SizedBox(
                           width: 120,
@@ -899,8 +929,9 @@ class _PrintingScreenState extends State<PrintingScreen> {
                   ),
                 )
                 .toList(),
-            onChanged: (a) =>
-                setState(() => _selectedAlignment = a ?? PdfPrintAlignment.center),
+            onChanged: (a) => setState(
+              () => _selectedAlignment = a ?? PdfPrintAlignment.center,
+            ),
           ),
         ]);
       }
@@ -942,12 +973,14 @@ class _PrintingScreenState extends State<PrintingScreen> {
                       (c == ColorMode.color &&
                           (_windowsCapabilities?.isColorSupported ?? true)) ||
                       (c == ColorMode.monochrome &&
-                          (_windowsCapabilities?.isMonochromeSupported ?? true)),
+                          (_windowsCapabilities?.isMonochromeSupported ??
+                              true)),
                   child: Text(c.name[0].toUpperCase() + c.name.substring(1)),
                 ),
               )
               .toList(),
-          onChanged: (c) => setState(() => _selectedColorMode = c ?? ColorMode.color),
+          onChanged: (c) =>
+              setState(() => _selectedColorMode = c ?? ColorMode.color),
         ),
       ),
       Tooltip(
@@ -967,8 +1000,9 @@ class _PrintingScreenState extends State<PrintingScreen> {
                 ),
               )
               .toList(),
-          onChanged: (o) =>
-              setState(() => _selectedOrientation = o ?? WindowsOrientation.portrait),
+          onChanged: (o) => setState(
+            () => _selectedOrientation = o ?? WindowsOrientation.portrait,
+          ),
         ),
       ),
     ];
@@ -977,13 +1011,18 @@ class _PrintingScreenState extends State<PrintingScreen> {
       padding: const EdgeInsets.only(top: 16.0),
       child: Card(
         elevation: 1,
-        color: Theme.of(context).colorScheme.secondaryContainer.withOpacityx(0.3),
+        color: Theme.of(
+          context,
+        ).colorScheme.secondaryContainer.withOpacityx(0.3),
         child: Padding(
           padding: const EdgeInsets.all(16.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('Platform Settings', style: Theme.of(context).textTheme.titleMedium),
+              Text(
+                'Platform Settings',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
               const SizedBox(height: 12),
               GridView.builder(
                 shrinkWrap: true,
@@ -1015,7 +1054,9 @@ class _PrintingScreenState extends State<PrintingScreen> {
                       if (!mounted) return;
                       switch (result) {
                         case PrinterPropertiesResult.ok:
-                          _showSnackbar('Printer properties updated successfully.');
+                          _showSnackbar(
+                            'Printer properties updated successfully.',
+                          );
                           // Refresh capabilities to reflect any changes made.
                           _fetchWindowsCapabilities();
                           break;
@@ -1033,7 +1074,10 @@ class _PrintingScreenState extends State<PrintingScreen> {
                           break;
                       }
                     } catch (e) {
-                      _showSnackbar('Error opening properties: $e', isError: true);
+                      _showSnackbar(
+                        'Error opening properties: $e',
+                        isError: true,
+                      );
                     }
                   },
                 ),
@@ -1060,11 +1104,15 @@ class _PrintingScreenState extends State<PrintingScreen> {
       children: [
         Row(
           children: [
-            Text('Print Queue', style: Theme.of(context).textTheme.headlineSmall),
+            Text(
+              'Print Queue',
+              style: Theme.of(context).textTheme.headlineSmall,
+            ),
           ],
         ),
         if (_isLoadingJobs) const Center(child: CircularProgressIndicator()),
-        if (!_isLoadingJobs && _jobs.isEmpty) const Text('No active print jobs.'),
+        if (!_isLoadingJobs && _jobs.isEmpty)
+          const Text('No active print jobs.'),
         if (!_isLoadingJobs && _jobs.isNotEmpty)
           SizedBox(
             height: 200,
@@ -1075,7 +1123,9 @@ class _PrintingScreenState extends State<PrintingScreen> {
                 return Card(
                   child: ListTile(
                     title: Text(job.title),
-                    subtitle: Text('ID: ${job.id} - Status: ${job.statusDescription}'),
+                    subtitle: Text(
+                      'ID: ${job.id} - Status: ${job.statusDescription}',
+                    ),
                     trailing: Wrap(
                       spacing: 0,
                       children: [
@@ -1105,15 +1155,19 @@ class _PrintingScreenState extends State<PrintingScreen> {
   Widget _buildAdvancedTab() {
     if (!Platform.isMacOS && !Platform.isLinux) {
       return const Center(
-        child: Text('Advanced CUPS options are only available on macOS and Linux.'),
+        child: Text(
+          'Advanced CUPS options are only available on macOS and Linux.',
+        ),
       );
     }
     return ListView(
       children: [
         Text('CUPS Options', style: Theme.of(context).textTheme.headlineSmall),
         const SizedBox(height: 10),
-        if (_isLoadingCupsOptions) const Center(child: CircularProgressIndicator()),
-        if (!_isLoadingCupsOptions && (_cupsOptions == null || _cupsOptions!.isEmpty))
+        if (_isLoadingCupsOptions)
+          const Center(child: CircularProgressIndicator()),
+        if (!_isLoadingCupsOptions &&
+            (_cupsOptions == null || _cupsOptions!.isEmpty))
           const Text('No CUPS options found for this printer.'),
         if (!_isLoadingCupsOptions &&
             _cupsOptions != null &&
@@ -1130,7 +1184,10 @@ class _PrintingScreenState extends State<PrintingScreen> {
                 pageRangeString: _pageRangeController.text,
               ),
               style: ElevatedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 12,
+                ),
               ),
             ),
           ),
@@ -1169,13 +1226,18 @@ class _PrintingScreenState extends State<PrintingScreen> {
                       value: choice.choice,
                       child: Tooltip(
                         message: choice.text,
-                        child: Text(choice.text, overflow: TextOverflow.ellipsis),
+                        child: Text(
+                          choice.text,
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
                     );
                   }).toList(),
                   onChanged: (newValue) {
                     if (newValue != null) {
-                      setState(() => _selectedCupsOptions[option.name] = newValue);
+                      setState(
+                        () => _selectedCupsOptions[option.name] = newValue,
+                      );
                     }
                   },
                 ),
@@ -1189,7 +1251,10 @@ class _PrintingScreenState extends State<PrintingScreen> {
 }
 
 class _PrintStatusDialog extends StatefulWidget {
-  const _PrintStatusDialog({required this.jobStream, required this.printerName});
+  const _PrintStatusDialog({
+    required this.jobStream,
+    required this.printerName,
+  });
 
   final Stream<PrintJob> jobStream;
   final String printerName;
@@ -1257,7 +1322,9 @@ class _PrintStatusDialogState extends State<_PrintStatusDialog> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _isCancelling = false);
-      messenger.showSnackBar(SnackBar(content: Text('Error cancelling job: $e')));
+      messenger.showSnackBar(
+        SnackBar(content: Text('Error cancelling job: $e')),
+      );
     }
   }
 
@@ -1285,9 +1352,15 @@ class _PrintStatusDialogState extends State<_PrintStatusDialog> {
 
     Widget content;
     if (_error != null) {
-      content = Text('Error: $_error', style: const TextStyle(color: Colors.red));
+      content = Text(
+        'Error: $_error',
+        style: const TextStyle(color: Colors.red),
+      );
     } else if (isImplicitlyComplete) {
-      content = Text('Job Completed', style: Theme.of(context).textTheme.titleMedium);
+      content = Text(
+        'Job Completed',
+        style: Theme.of(context).textTheme.titleMedium,
+      );
     } else if (_job == null) {
       content = const CircularProgressIndicator();
     } else {
