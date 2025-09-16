@@ -1563,26 +1563,6 @@ Future<SendPort> _helperIsolateSendPort = () async {
                         break;
                     }
                   }
-                  if (options.containsKey('collate')) {
-                    // Pass collate option to CUPS: true = collated (complete copies together), false = non-collated (all copies of each page together)
-                    final collateValue = options.remove('collate');
-                    options['collate'] = collateValue!;
-                  }
-                  if (options.containsKey('duplex')) {
-                    // Translate duplex option to CUPS standard values
-                    final duplexValue = options.remove('duplex');
-                    switch (duplexValue) {
-                      case 'singleSided':
-                        options['sides'] = 'one-sided';
-                        break;
-                      case 'duplexLongEdge':
-                        options['sides'] = 'two-sided-long-edge';
-                        break;
-                      case 'duplexShortEdge':
-                        options['sides'] = 'two-sided-short-edge';
-                        break;
-                    }
-                  }
                 }
                 final int numOptions = options.length;
                 Pointer<Pointer<Utf8>> keysPtr = nullptr;
@@ -1725,26 +1705,6 @@ Future<SendPort> _helperIsolateSendPort = () async {
                         break;
                     }
                   }
-                  if (options.containsKey('collate')) {
-                    // Pass collate option to CUPS: true = collated (complete copies together), false = non-collated (all copies of each page together)
-                    final collateValue = options.remove('collate');
-                    options['collate'] = collateValue!;
-                  }
-                  if (options.containsKey('duplex')) {
-                    // Translate duplex option to CUPS standard values
-                    final duplexValue = options.remove('duplex');
-                    switch (duplexValue) {
-                      case 'singleSided':
-                        options['sides'] = 'one-sided';
-                        break;
-                      case 'duplexLongEdge':
-                        options['sides'] = 'two-sided-long-edge';
-                        break;
-                      case 'duplexShortEdge':
-                        options['sides'] = 'two-sided-short-edge';
-                        break;
-                    }
-                  }
                 }
 
                 final int numOptions = options.length;
@@ -1876,26 +1836,6 @@ Future<SendPort> _helperIsolateSendPort = () async {
                         break;
                     }
                   }
-                  if (options.containsKey('collate')) {
-                    // Pass collate option to CUPS: true = collated (complete copies together), false = non-collated (all copies of each page together)
-                    final collateValue = options.remove('collate');
-                    options['collate'] = collateValue!;
-                  }
-                  if (options.containsKey('duplex')) {
-                    // Translate duplex option to CUPS standard values
-                    final duplexValue = options.remove('duplex');
-                    switch (duplexValue) {
-                      case 'singleSided':
-                        options['sides'] = 'one-sided';
-                        break;
-                      case 'duplexLongEdge':
-                        options['sides'] = 'two-sided-long-edge';
-                        break;
-                      case 'duplexShortEdge':
-                        options['sides'] = 'two-sided-short-edge';
-                        break;
-                    }
-                  }
                 }
                 final int numOptions = options.length;
                 Pointer<Pointer<Utf8>> keysPtr = nullptr;
@@ -1984,26 +1924,6 @@ Future<SendPort> _helperIsolateSendPort = () async {
                         break;
                       case 'high':
                         options['print-quality'] = '5'; // IPP_QUALITY_HIGH
-                        break;
-                    }
-                  }
-                  if (options.containsKey('collate')) {
-                    // Pass collate option to CUPS: true = collated (complete copies together), false = non-collated (all copies of each page together)
-                    final collateValue = options.remove('collate');
-                    options['collate'] = collateValue!;
-                  }
-                  if (options.containsKey('duplex')) {
-                    // Translate duplex option to CUPS standard values
-                    final duplexValue = options.remove('duplex');
-                    switch (duplexValue) {
-                      case 'singleSided':
-                        options['sides'] = 'one-sided';
-                        break;
-                      case 'duplexLongEdge':
-                        options['sides'] = 'two-sided-long-edge';
-                        break;
-                      case 'duplexShortEdge':
-                        options['sides'] = 'two-sided-short-edge';
                         break;
                     }
                   }
