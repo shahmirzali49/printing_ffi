@@ -443,135 +443,150 @@ class StandardActionsCard extends StatelessWidget {
       title: Text('Standard Actions', style: theme.textTheme.h4),
       child: Padding(
         padding: const EdgeInsets.only(top: 24),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(flex: 2, child: platformSettings),
-            const SizedBox(width: 16),
-            Expanded(
-              flex: 3,
-              child: Column(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            const breakpoint = 800; // Breakpoint for desktop/tablet layout
+            if (constraints.maxWidth < breakpoint) {
+              // Mobile/Tablet layout (stacked)
+              return Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  if (Platform.isWindows)
-                    SegmentedButton<Object>(
-                      segments: const <ButtonSegment<Object>>[
-                        ButtonSegment(
-                          value: PdfPrintScaling.fitToPrintableArea,
-                          label: Text('Fit'),
-                        ),
-                        ButtonSegment(
-                          value: PdfPrintScaling.actualSize,
-                          label: Text('Actual'),
-                        ),
-                        ButtonSegment(
-                          value: PdfPrintScaling.shrinkToFit,
-                          label: Text('Shrink'),
-                        ),
-                        ButtonSegment(
-                          value: PdfPrintScaling.fitToPaper,
-                          label: Text('Paper'),
-                        ),
-                        ButtonSegment(
-                          value: CustomScaling(),
-                          label: Text('Custom'),
-                        ),
-                      ],
-                      selected: {selectedScaling},
-                      onSelectionChanged: onScalingChanged,
-                    ),
-                  if (Platform.isWindows &&
-                      selectedScaling is CustomScaling) ...[
-                    const SizedBox(height: 12),
-                    ShadInput(
-                      controller: customScaleController,
-                      placeholder: const Text('Scale'),
-                    ),
-                  ],
-                  const SizedBox(height: 12),
-                  if (selectedPdfPath != null)
-                    ListTile(
-                      leading: const Icon(Icons.picture_as_pdf),
-                      title: const Text('Selected PDF:'),
-                      subtitle: Text(
-                        selectedPdfPath!.split(Platform.pathSeparator).last,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      trailing: ShadIconButton.ghost(
-                        icon: const Icon(Icons.clear, size: 16),
-                        onPressed: onClearPdfPath,
-                      ),
-                    ),
-                  ShadButton(
-                    leading: const Icon(Icons.picture_as_pdf, size: 16),
-                    onPressed: () => onPrintPdf(
-                      copies: int.tryParse(copiesController.text) ?? 1,
-                      pageRangeString: pageRangeController.text,
-                    ),
-                    child: Text(
-                      selectedPdfPath == null
-                          ? 'Select & Print PDF'
-                          : 'Print Selected PDF',
-                    ),
+                  platformSettings,
+                  const SizedBox(height: 24),
+                  _buildActionControls(),
+                ],
+              );
+            } else {
+              // Desktop layout (side-by-side)
+              return Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(flex: 2, child: platformSettings),
+                  const SizedBox(width: 16),
+                  Expanded(flex: 3, child: _buildActionControls()),
+                ],
+              );
+            }
+          },
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActionControls() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (Platform.isWindows)
+          SegmentedButton<Object>(
+            segments: const <ButtonSegment<Object>>[
+              ButtonSegment(
+                value: PdfPrintScaling.fitToPrintableArea,
+                label: Text('Fit'),
+              ),
+              ButtonSegment(
+                value: PdfPrintScaling.actualSize,
+                label: Text('Actual'),
+              ),
+              ButtonSegment(
+                value: PdfPrintScaling.shrinkToFit,
+                label: Text('Shrink'),
+              ),
+              ButtonSegment(
+                value: PdfPrintScaling.fitToPaper,
+                label: Text('Paper'),
+              ),
+              ButtonSegment(value: CustomScaling(), label: Text('Custom')),
+            ],
+            selected: {selectedScaling},
+            onSelectionChanged: onScalingChanged,
+          ),
+        if (Platform.isWindows && selectedScaling is CustomScaling) ...[
+          const SizedBox(height: 12),
+          ShadInput(
+            controller: customScaleController,
+            placeholder: const Text('Scale'),
+          ),
+        ],
+        const SizedBox(height: 12),
+        if (selectedPdfPath != null)
+          ListTile(
+            leading: const Icon(Icons.picture_as_pdf),
+            title: const Text('Selected PDF:'),
+            subtitle: Text(
+              selectedPdfPath!.split(Platform.pathSeparator).last,
+              overflow: TextOverflow.ellipsis,
+            ),
+            trailing: ShadIconButton.ghost(
+              icon: const Icon(Icons.clear, size: 16),
+              onPressed: onClearPdfPath,
+            ),
+          ),
+        ShadButton(
+          leading: const Icon(Icons.picture_as_pdf, size: 16),
+          onPressed: () => onPrintPdf(
+            copies: int.tryParse(copiesController.text) ?? 1,
+            pageRangeString: pageRangeController.text,
+          ),
+          child: Text(
+            selectedPdfPath == null
+                ? 'Select & Print PDF'
+                : 'Print Selected PDF',
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: ShadInput(
+                controller: copiesController,
+                placeholder: const Text('Copies'),
+              ),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              flex: 2,
+              child: ShadInput(
+                controller: pageRangeController,
+                placeholder: const Text('Page Range (e.g. 1-3, 5)'),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            ShadSwitch(value: collate, onChanged: onCollateChanged),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Collate copies'),
+                  Text(
+                    'Enabled: (1,2,3), (1,2,3)\nDisabled: (1,1), (2,2), (3,3)',
+                    style: TextStyle(color: Colors.grey),
                   ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: ShadInput(
-                          controller: copiesController,
-                          placeholder: const Text('Copies'),
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        flex: 2,
-                        child: ShadInput(
-                          controller: pageRangeController,
-                          placeholder: const Text('Page Range (e.g. 1-3, 5)'),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      ShadSwitch(value: collate, onChanged: onCollateChanged),
-                      const SizedBox(width: 12),
-                      const Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text('Collate copies'),
-                            Text(
-                              'Enabled: (1,2,3), (1,2,3)\nDisabled: (1,1), (2,2), (3,3)',
-                              style: TextStyle(color: Colors.grey),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  ShadButton.outline(
-                    leading: const Icon(Icons.track_changes, size: 16),
-                    onPressed: onPrintPdfAndTrack,
-                    child: const Text('Print PDF and Track Status'),
-                  ),
-                  if (Platform.isWindows) ...[
-                    const SizedBox(height: 12),
-                    ShadButton.secondary(
-                      leading: const Icon(Icons.inventory_2_outlined, size: 16),
-                      onPressed: onShowWindowsCapabilities,
-                      child: const Text('Show Printer Capabilities'),
-                    ),
-                  ],
                 ],
               ),
             ),
           ],
         ),
-      ),
+        const SizedBox(height: 12),
+        ShadButton.outline(
+          leading: const Icon(Icons.track_changes, size: 16),
+          onPressed: onPrintPdfAndTrack,
+          child: const Text('Print PDF and Track Status'),
+        ),
+        if (Platform.isWindows) ...[
+          const SizedBox(height: 12),
+          ShadButton.secondary(
+            leading: const Icon(Icons.inventory_2_outlined, size: 16),
+            onPressed: onShowWindowsCapabilities,
+            child: const Text('Show Printer Capabilities'),
+          ),
+        ],
+      ],
     );
   }
 }

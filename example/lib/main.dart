@@ -10,9 +10,72 @@ import 'widgets.dart';
 
 /// A local helper class to represent the custom scaling option in the UI.
 /// This is a marker class for the SegmentedButton.
-class _CustomScaling {
-  const _CustomScaling();
+class CustomScaling {
+  const CustomScaling();
 }
+
+/// A helper class to hold color scheme information.
+class AppColorScheme {
+  const AppColorScheme(this.name, this.lightScheme, this.darkScheme);
+  final String name;
+  final ShadColorScheme lightScheme;
+  final ShadColorScheme darkScheme;
+}
+
+/// A list of available color schemes for the theme switcher.
+const List<AppColorScheme> availableColorSchemes = [
+  AppColorScheme(
+    'Zinc',
+    ShadZincColorScheme.light(),
+    ShadZincColorScheme.dark(),
+  ),
+  AppColorScheme(
+    'Slate',
+    ShadSlateColorScheme.light(),
+    ShadSlateColorScheme.dark(),
+  ),
+  AppColorScheme(
+    'Stone',
+    ShadStoneColorScheme.light(),
+    ShadStoneColorScheme.dark(),
+  ),
+  AppColorScheme(
+    'Gray',
+    ShadGrayColorScheme.light(),
+    ShadGrayColorScheme.dark(),
+  ),
+  AppColorScheme(
+    'Neutral',
+    ShadNeutralColorScheme.light(),
+    ShadNeutralColorScheme.dark(),
+  ),
+  AppColorScheme('Red', ShadRedColorScheme.light(), ShadRedColorScheme.dark()),
+  AppColorScheme(
+    'Rose',
+    ShadRoseColorScheme.light(),
+    ShadRoseColorScheme.dark(),
+  ),
+  AppColorScheme(
+    'Orange',
+    ShadOrangeColorScheme.light(),
+    ShadOrangeColorScheme.dark(),
+  ),
+  AppColorScheme(
+    'Green',
+    ShadGreenColorScheme.light(),
+    ShadGreenColorScheme.dark(),
+  ),
+  AppColorScheme(
+    'Blue',
+    ShadBlueColorScheme.light(),
+    ShadBlueColorScheme.dark(),
+  ),
+  AppColorScheme(
+    'Violet',
+    ShadVioletColorScheme.light(),
+    ShadVioletColorScheme.dark(),
+  ),
+];
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -26,33 +89,65 @@ void main() {
   runApp(const PrintingFfiExampleApp());
 }
 
-class PrintingFfiExampleApp extends StatelessWidget {
+class PrintingFfiExampleApp extends StatefulWidget {
   const PrintingFfiExampleApp({super.key});
 
   @override
+  State<PrintingFfiExampleApp> createState() => _PrintingFfiExampleAppState();
+}
+
+class _PrintingFfiExampleAppState extends State<PrintingFfiExampleApp> {
+  ThemeMode _themeMode = ThemeMode.light;
+  AppColorScheme _selectedColorScheme = availableColorSchemes.first;
+
+  void _toggleTheme() {
+    setState(() {
+      _themeMode = _themeMode == ThemeMode.light
+          ? ThemeMode.dark
+          : ThemeMode.light;
+    });
+  }
+
+  void _changeColorScheme(AppColorScheme? newScheme) {
+    if (newScheme == null) return;
+    setState(() {
+      _selectedColorScheme = newScheme;
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return ShadApp.custom(
-      themeMode: ThemeMode.light,
-      darkTheme: ShadThemeData(
+    return ShadApp(
+      theme: ShadThemeData(
         brightness: Brightness.light,
-        colorScheme: const ShadSlateColorScheme.dark(),
+        colorScheme: _selectedColorScheme.lightScheme,
       ),
-      appBuilder: (context) {
-        return MaterialApp(
-          title: 'Printing FFI Example',
-          theme: Theme.of(context),
-          builder: (context, child) {
-            return ShadAppBuilder(child: child!);
-          },
-          home: const PrintingScreen(),
-        );
-      },
+      darkTheme: ShadThemeData(
+        brightness: Brightness.dark,
+        colorScheme: _selectedColorScheme.darkScheme,
+      ),
+      themeMode: _themeMode,
+      title: 'Printing FFI Example',
+      home: PrintingScreen(
+        onThemeToggle: _toggleTheme,
+        selectedScheme: _selectedColorScheme,
+        onSchemeChange: _changeColorScheme,
+      ),
     );
   }
 }
 
 class PrintingScreen extends StatefulWidget {
-  const PrintingScreen({super.key});
+  const PrintingScreen({
+    super.key,
+    required this.onThemeToggle,
+    required this.selectedScheme,
+    required this.onSchemeChange,
+  });
+
+  final VoidCallback onThemeToggle;
+  final AppColorScheme selectedScheme;
+  final ValueChanged<AppColorScheme?> onSchemeChange;
 
   @override
   State<PrintingScreen> createState() => _PrintingScreenState();
@@ -321,7 +416,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
         _showSnackbar('Printing PDF...');
 
         final PdfPrintScaling scaling;
-        if (_selectedScaling is _CustomScaling) {
+        if (_selectedScaling is CustomScaling) {
           final scaleValue = double.tryParse(_customScaleController.text);
           if (scaleValue == null || scaleValue <= 0) {
             _showSnackbar(
@@ -379,7 +474,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
       final options = _buildPrintOptions();
 
       final PdfPrintScaling scaling;
-      if (_selectedScaling is _CustomScaling) {
+      if (_selectedScaling is CustomScaling) {
         final scaleValue = double.tryParse(_customScaleController.text);
         if (scaleValue == null || scaleValue <= 0) {
           _showSnackbar(
@@ -585,6 +680,24 @@ class _PrintingScreenState extends State<PrintingScreen> {
         appBar: AppBar(
           title: const Text('Printing FFI Example'),
           actions: [
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+              child: ShadSelect<AppColorScheme>(
+                selectedOptionBuilder: (context, value) => Text(value.name),
+                initialValue: widget.selectedScheme,
+                onChanged: widget.onSchemeChange,
+                options: availableColorSchemes
+                    .map(
+                      (scheme) =>
+                          ShadOption(value: scheme, child: Text(scheme.name)),
+                    )
+                    .toList(),
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.brightness_6_outlined),
+              onPressed: widget.onThemeToggle,
+            ),
             IconButton(
               icon: const Icon(Icons.refresh_outlined),
               onPressed: _refreshPrinters,
