@@ -34,6 +34,12 @@ migrate_working_dir/
 
 .gemini/
 gha-creds-*.json
+
+# VS Code settings
 .vscode/settings.json
 .vscode/c_cpp_properties.json
+settings.json
+
+# Example project files
 example/pubspec.lock
+examples/pubspec.lock
