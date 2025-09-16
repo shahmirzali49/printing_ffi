@@ -1,3 +1,8 @@
+## 0.0.8
+
+* **FIX**: Corrected conditional compilation for error handling, resolving an issue where `set_last_error` was not defined for all platforms, leading to compilation errors on non-Windows targets. 🐛
+* **FIX**: Resolved an 'undefined' compiler error for the `_scale_to_fit` helper function by ensuring it is defined on all platforms. 🛠️
+
 ## 0.0.7
 
 * **FEAT**: Added support for collating copies on Windows. 📚

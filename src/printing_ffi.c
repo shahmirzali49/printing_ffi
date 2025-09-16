@@ -56,9 +56,8 @@ __declspec(thread) static char *g_last_error_message = NULL;
 static __thread char *g_last_error_message = NULL;
 #endif
 
-#ifdef _WIN32
 // Internal helper to set the last error message for the current thread.
-static void set_last_error(const char *format, ...) // TODO: Consider making this cross-platform for consistent error handling.
+static void set_last_error(const char *format, ...)
 {
     // Free the previous error message if it exists
     if (g_last_error_message)
@@ -84,7 +83,6 @@ static void set_last_error(const char *format, ...) // TODO: Consider making thi
     }
     va_end(args);
 }
-#endif
 
 FFI_PLUGIN_EXPORT void register_log_callback(log_callback_t callback)
 {
@@ -871,10 +869,8 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char *printer_name, const uint8
 #endif
 }
 
-#ifdef _WIN32
 // Internal helper to calculate the destination rectangle for scaling content to fit a target area.
-static void _scale_to_fit(int src_width, int src_height, int target_width, int target_height, int *dest_width, int *dest_height)
-{
+static void _scale_to_fit(int src_width, int src_height, int target_width, int target_height, int *dest_width, int *dest_height) {
     float page_aspect = 1.0f;
     if (src_height > 0)
     {
@@ -898,6 +894,8 @@ static void _scale_to_fit(int src_width, int src_height, int target_width, int t
         *dest_width = (int)(target_height * page_aspect);
     }
 }
+
+#ifdef _WIN32
 
 // Common internal function for PDF printing on Windows.
 // Returns a job ID if `submit_job` is true, otherwise returns 1 for success or 0 for failure.
