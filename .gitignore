@@ -45,3 +45,7 @@ example/pubspec.lock
 examples/pubspec.lock
 example/macos/Podfile.lock
 example/macos/Flutter/GeneratedPluginRegistrant.swift
+
+# iOS/macOS specific generated files
+**/Podfile.lock
+**/GeneratedPluginRegistrant.swift
