@@ -239,8 +239,6 @@ class _PrintingScreenState extends State<PrintingScreen> {
     });
   }
 
-
-
   Future<void> _refreshPrinters() async {
     setState(() {
       _isLoadingPrinters = true;

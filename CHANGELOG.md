@@ -1,3 +1,10 @@
+## 0.0.9
+
+* ✨ **FEAT**: Added full support for duplex (double-sided) printing on Windows, macOS, and Linux. Users can now select single-sided, duplex long-edge (book-style), or duplex short-edge (notepad-style) printing. 📖
+* ✨ **FEAT(example)**: Refined the example app with `shadcn_ui` components, including a dedicated platform settings card and responsive layouts for a better user experience. 🎨
+* **REFACTOR**: Translated generic print options (like `orientation`, `color-mode`, `duplex`) into platform-specific CUPS options (`orientation-requested`, `print-color-mode`, `sides`) within the Dart isolate, simplifying the native C code and improving cross-platform consistency. ♻️
+* **DOCS**: Updated `README.md` to include documentation for the new duplex printing feature. 📝
+
 ## 0.0.8
 
 * ✨ **FEAT(example)**: Implemented the entire example app UI using the `shadcn_ui` package for a modern, clean, and responsive user experience.

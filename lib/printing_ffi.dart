@@ -966,7 +966,7 @@ Future<bool> printPdf(
     try {
       final opts = {...optionsMap};
       if (scaling is _PdfPrintScalingCustom) {
-        opts['custom-scale-factor'] = (scaling as _PdfPrintScalingCustom).scale.toString();
+        opts['custom-scale-factor'] = (scaling).scale.toString();
       }
 
       final int numOptions = opts.length;
@@ -1436,7 +1436,7 @@ Future<int> _sendPdfJobRequest(
     try {
       final opts = {...options};
       if (scaling is _PdfPrintScalingCustom) {
-        opts['custom-scale-factor'] = (scaling as _PdfPrintScalingCustom).scale.toString();
+        opts['custom-scale-factor'] = (scaling).scale.toString();
       }
 
       final int numOptions = opts.length;
@@ -1720,7 +1720,6 @@ Future<SendPort> _helperIsolateSendPort = () async {
                         break;
                     }
                   }
-
                 }
                 final int numOptions = options.length;
                 Pointer<Pointer<Utf8>> keysPtr = nullptr;
@@ -1879,7 +1878,6 @@ Future<SendPort> _helperIsolateSendPort = () async {
                         break;
                     }
                   }
-
                 }
 
                 final int numOptions = options.length;
@@ -2027,7 +2025,6 @@ Future<SendPort> _helperIsolateSendPort = () async {
                         break;
                     }
                   }
-
                 }
                 final int numOptions = options.length;
                 Pointer<Pointer<Utf8>> keysPtr = nullptr;
@@ -2135,7 +2132,6 @@ Future<SendPort> _helperIsolateSendPort = () async {
                         break;
                     }
                   }
-                  
                 }
 
                 final int numOptions = options.length;
