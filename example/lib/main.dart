@@ -239,16 +239,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
     });
   }
 
-  String _getDuplexModeDisplayName(DuplexMode mode) {
-    switch (mode) {
-      case DuplexMode.singleSided:
-        return 'Single-sided';
-      case DuplexMode.duplexLongEdge:
-        return 'Duplex (Long Edge)';
-      case DuplexMode.duplexShortEdge:
-        return 'Duplex (Short Edge)';
-    }
-  }
+
 
   Future<void> _refreshPrinters() async {
     setState(() {
