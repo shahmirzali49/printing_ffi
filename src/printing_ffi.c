@@ -232,11 +232,10 @@ static bool parse_page_range(const char *range_str, bool *page_flags, int total_
 }
 
 // Helper function to parse Windows-specific print options from the generic key-value array.
-static void parse_windows_options(int num_options, const char **option_keys, const char **option_values,
-                                  int *paper_size_id, int *paper_source_id, int *orientation,
-                                  int *color_mode, int *print_quality, int *media_type_id, double *custom_scale,
-                                  bool *collate)
-{
+static void parse_windows_options(int num_options, const char** option_keys, const char** option_values,
+                                  int* paper_size_id, int* paper_source_id, int* orientation,
+                                  int* color_mode, int* print_quality, int* media_type_id, double* custom_scale,
+                                  bool* collate, int* duplex_mode) {
     // Set default values
     *paper_size_id = 0;
     *paper_source_id = 0;
@@ -245,7 +244,8 @@ static void parse_windows_options(int num_options, const char **option_keys, con
     *print_quality = 0;
     *media_type_id = 0;
     *custom_scale = 1.0; // Default to 100%
-    *collate = true;     // Default to collated (complete copies printed together)
+    *collate = true; // Default to collated (complete copies printed together)
+    *duplex_mode = 0; // Default to single-sided (DMDUP_SIMPLEX)
 
     for (int i = 0; i < num_options; i++)
     {
@@ -300,6 +300,15 @@ static void parse_windows_options(int num_options, const char **option_keys, con
         {
             // Parse collate option: true = collated (complete copies together), false = non-collated (all copies of each page together)
             *collate = (strcmp(option_values[i], "true") == 0);
+        } else if (strcmp(option_keys[i], "duplex") == 0) {
+            // Parse duplex option: singleSided, duplexLongEdge, duplexShortEdge
+            if (strcmp(option_values[i], "singleSided") == 0) {
+                *duplex_mode = 1; // DMDUP_SIMPLEX
+            } else if (strcmp(option_values[i], "duplexLongEdge") == 0) {
+                *duplex_mode = 2; // DMDUP_VERTICAL (long edge)
+            } else if (strcmp(option_values[i], "duplexShortEdge") == 0) {
+                *duplex_mode = 3; // DMDUP_HORIZONTAL (short edge)
+            }
         }
     }
 }
@@ -308,12 +317,10 @@ static void parse_windows_options(int num_options, const char **option_keys, con
 #ifdef _WIN32
 // Helper to get a modified DEVMODE struct for a printer.
 // The caller is responsible for freeing the returned struct.
-static DEVMODEW *get_modified_devmode(wchar_t *printer_name_w, int paper_size_id, int paper_source_id, int orientation, int color_mode, int print_quality, int media_type_id, bool collate)
-{
-    if (!printer_name_w)
-        return NULL;
-    LOG("get_modified_devmode: Creating DEVMODE for '%ls' with paper_id:%d, source_id:%d, orientation:%d, color:%d, quality:%d, media_id:%d",
-        printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id);
+static DEVMODEW* get_modified_devmode(wchar_t* printer_name_w, int paper_size_id, int paper_source_id, int orientation, int color_mode, int print_quality, int media_type_id, bool collate, int duplex_mode) {
+    if (!printer_name_w) return NULL;
+    LOG("get_modified_devmode: Creating DEVMODE for '%ls' with paper_id:%d, source_id:%d, orientation:%d, color:%d, quality:%d, media_id:%d, duplex:%d",
+        printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, duplex_mode);
 
     HANDLE hPrinter;
     if (!OpenPrinterW(printer_name_w, &hPrinter, NULL))
@@ -403,7 +410,11 @@ static DEVMODEW *get_modified_devmode(wchar_t *printer_name_w, int paper_size_id
         pDevMode->dmMediaType = (short)media_type_id;
         modified = true;
     }
-
+    if (duplex_mode > 0) {
+        LOG("get_modified_devmode: Setting dmDuplex to %d.", duplex_mode);
+        pDevMode->dmFields |= DM_DUPLEX; pDevMode->dmDuplex = (short)duplex_mode; modified = true;
+    }
+    
     // Set collate mode
     LOG("get_modified_devmode: Setting dmCollate to %s.", collate ? "true" : "false");
     pDevMode->dmFields |= DM_COLLATE;
@@ -737,10 +748,10 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char *printer_name, const uint8
     }
 
 #ifdef _WIN32
-    int paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id;
+    int paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, duplex_mode;
     double custom_scale; // Dummy for raw printing
     bool collate = true; // Default to collated (complete copies printed together)
-    parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id, &custom_scale, &collate);
+    parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id, &custom_scale, &collate, &duplex_mode);
 
     HANDLE hPrinter;
     DOC_INFO_1W docInfo;
@@ -749,7 +760,7 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char *printer_name, const uint8
     if (!printer_name_w)
         return false;
 
-    DEVMODEW *pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, collate);
+    DEVMODEW *pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, collate, duplex_mode);
 
     PRINTER_DEFAULTSW printerDefaults = {NULL, pDevMode, PRINTER_ACCESS_USE};
     printerDefaults.pDatatype = L"RAW";
@@ -915,9 +926,9 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
     set_last_error("");
 
     double custom_scale;
-    int paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id;
+    int paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, duplex_mode;
     bool collate = true; // Default to collated (complete copies printed together)
-    parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id, &custom_scale, &collate);
+    parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id, &custom_scale, &collate, &duplex_mode);
 
     wchar_t *printer_name_w = to_utf16(printer_name);
     if (!printer_name_w)
@@ -937,7 +948,7 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
     }
     LOG("print_pdf_job_win: PDF document loaded successfully.");
 
-    DEVMODEW *pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, collate);
+    DEVMODEW* pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, collate, duplex_mode);
 
     HDC hdc = CreateDCW(L"WINSPOOL", printer_name_w, NULL, pDevMode);
     if (pDevMode)
@@ -2081,10 +2092,10 @@ FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char *printer_name, const ui
     }
 
 #ifdef _WIN32
-    int paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id;
+    int paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, duplex_mode;
     double custom_scale; // Dummy
     bool collate = true; // Default to collated (complete copies printed together)
-    parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id, &custom_scale, &collate);
+    parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id, &custom_scale, &collate, &duplex_mode);
 
     HANDLE hPrinter;
     DOC_INFO_1W docInfo;
@@ -2095,7 +2106,7 @@ FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char *printer_name, const ui
     if (!printer_name_w)
         return 0;
 
-    DEVMODEW *pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, collate);
+    DEVMODEW* pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, collate, duplex_mode);
 
     PRINTER_DEFAULTSW printerDefaults = {NULL, pDevMode, PRINTER_ACCESS_USE};
     printerDefaults.pDatatype = L"RAW";

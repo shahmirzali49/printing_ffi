@@ -167,6 +167,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
   ColorMode _selectedColorMode = ColorMode.color;
   PrintQuality _selectedPrintQuality = PrintQuality.normal;
   PdfPrintAlignment _selectedAlignment = PdfPrintAlignment.center;
+  DuplexMode _selectedDuplexMode = DuplexMode.singleSided;
 
   // Collate option for multiple copies
   // When true: Complete copies are printed together (1,2,3,4,5,6 - 1,2,3,4,5,6)
@@ -238,6 +239,17 @@ class _PrintingScreenState extends State<PrintingScreen> {
     });
   }
 
+  String _getDuplexModeDisplayName(DuplexMode mode) {
+    switch (mode) {
+      case DuplexMode.singleSided:
+        return 'Single-sided';
+      case DuplexMode.duplexLongEdge:
+        return 'Duplex (Long Edge)';
+      case DuplexMode.duplexShortEdge:
+        return 'Duplex (Short Edge)';
+    }
+  }
+
   Future<void> _refreshPrinters() async {
     setState(() {
       _isLoadingPrinters = true;
@@ -252,6 +264,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
       _selectedOrientation = WindowsOrientation.portrait;
       _selectedColorMode = ColorMode.color;
       _selectedPrintQuality = PrintQuality.normal;
+      _selectedDuplexMode = DuplexMode.singleSided;
       _collate = true;
       _selectedPdfPath = null;
     });
@@ -372,6 +385,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
     options.add(OrientationOption(_selectedOrientation));
     options.add(ColorModeOption(_selectedColorMode));
     options.add(PrintQualityOption(_selectedPrintQuality));
+    options.add(DuplexOption(_selectedDuplexMode));
 
     if (Platform.isWindows &&
         (_windowsCapabilities?.mediaTypes.any((t) => t.name == 'Photo') ??
@@ -823,6 +837,9 @@ class _PrintingScreenState extends State<PrintingScreen> {
       onOrientationChanged: (o) => setState(
         () => _selectedOrientation = o ?? WindowsOrientation.portrait,
       ),
+      selectedDuplexMode: _selectedDuplexMode,
+      onDuplexModeChanged: (d) =>
+          setState(() => _selectedDuplexMode = d ?? DuplexMode.singleSided),
       onOpenProperties: () async {
         if (_selectedPrinter == null) return;
         try {

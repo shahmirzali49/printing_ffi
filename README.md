@@ -17,8 +17,9 @@ A Flutter plugin for direct printer communication using native FFI (Foreign Func
 - **Track Print Job Status** 📊: Submit a print job and receive a stream of status updates, from submission to completion.
 - **PDF Printing** 📄: Print PDF files directly to a specified printer. On Windows, this uses a bundled version of the `pdfium` library for robust, self-contained rendering.
 - **Collate Support** 📚: Control how multiple copies are arranged when printing. Choose between collated (complete copies together) or non-collated (all copies of each page together) printing.
+- **Duplex Printing** 📖: Support for double-sided printing with three modes: single-sided, duplex long edge (book-style), and duplex short edge (notepad-style).
 - **Get Printer Capabilities (Windows)** 🖨️: Fetch supported paper sizes, paper sources (trays/bins), and resolutions for a given printer on Windows.
-- **Advanced Print Settings (Windows)** 🔧: Control paper size, source, orientation, and collate mode for individual print jobs.
+- **Advanced Print Settings (Windows)** 🔧: Control paper size, source, orientation, duplex mode, and collate mode for individual print jobs.
 - **Cross-Platform** 🌐: Supports macOS, Windows, and Linux via native APIs.
 - **Offline Printer Support** 🔌: Lists offline printers on macOS using `cupsGetDests`, addressing a key limitation of other plugins.
 - **Native Performance** ⚡: Uses FFI to interface directly with native printing APIs, reducing overhead and improving speed.

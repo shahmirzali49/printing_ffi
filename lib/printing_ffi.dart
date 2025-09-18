@@ -230,6 +230,20 @@ enum ColorMode { monochrome, color }
 /// the driver's default medium quality.
 enum PrintQuality { draft, low, normal, high }
 
+/// Defines the duplex printing mode.
+enum DuplexMode {
+  /// Print on one side only (single-sided).
+  singleSided,
+
+  /// Print on both sides, flip on long edge (book-style).
+  /// This is the standard duplex mode for documents like books.
+  duplexLongEdge,
+
+  /// Print on both sides, flip on short edge (notepad-style).
+  /// This is used for documents that are bound along the short edge.
+  duplexShortEdge,
+}
+
 /// Defines the alignment for PDF printing on Windows.
 enum PdfPrintAlignment {
   center,
@@ -331,6 +345,21 @@ class AlignmentOption extends PrintOption {
 class CollateOption extends PrintOption {
   final bool collate;
   const CollateOption(this.collate);
+}
+
+/// An option to set the duplex printing mode.
+///
+/// This controls whether and how pages are printed on both sides of the paper:
+///
+/// - [DuplexMode.singleSided]: Print on one side only
+/// - [DuplexMode.duplexLongEdge]: Print on both sides, flip on long edge (book-style)
+/// - [DuplexMode.duplexShortEdge]: Print on both sides, flip on short edge (notepad-style)
+///
+/// Note: The actual duplex printing depends on the printer's capabilities.
+/// If the printer doesn't support duplex printing, single-sided printing will be used.
+class DuplexOption extends PrintOption {
+  final DuplexMode mode;
+  const DuplexOption(this.mode);
 }
 
 class CupsOptionChoice {
@@ -924,6 +953,73 @@ Future<bool> printPdf(
   PageRange? pageRange,
   List<PrintOption> options = const [],
 }) async {
+  // On Windows, run synchronously on the main isolate to avoid cross-isolate callbacks.
+  if (Platform.isWindows) {
+    final optionsMap = _buildOptions(options);
+    final alignment = optionsMap.remove('alignment') ?? 'center';
+    final namePtr = printerName.toNativeUtf8();
+    final pathPtr = pdfFilePath.toNativeUtf8();
+    final docNamePtr = docName.toNativeUtf8();
+    final pageRangeValue = pageRange?.toValue();
+    final alignmentPtr = alignment.toNativeUtf8();
+    final pageRangePtr = pageRangeValue?.toNativeUtf8() ?? nullptr;
+    try {
+      final opts = {...optionsMap};
+      if (scaling is _PdfPrintScalingCustom) {
+        opts['custom-scale-factor'] = (scaling as _PdfPrintScalingCustom).scale.toString();
+      }
+
+      final int numOptions = opts.length;
+      Pointer<Pointer<Utf8>> keysPtr = nullptr;
+      Pointer<Pointer<Utf8>> valuesPtr = nullptr;
+      if (numOptions > 0) {
+        keysPtr = malloc<Pointer<Utf8>>(numOptions);
+        valuesPtr = malloc<Pointer<Utf8>>(numOptions);
+        int i = 0;
+        for (var entry in opts.entries) {
+          keysPtr[i] = entry.key.toNativeUtf8();
+          valuesPtr[i] = entry.value.toNativeUtf8();
+          i++;
+        }
+      }
+
+      try {
+        final bool result = _bindings.print_pdf(
+          namePtr.cast(),
+          pathPtr.cast(),
+          docNamePtr.cast(),
+          scaling.nativeValue,
+          copies ?? 1,
+          pageRangePtr.cast(),
+          numOptions,
+          keysPtr.cast(),
+          valuesPtr.cast(),
+          alignmentPtr.cast(),
+        );
+        if (!result) {
+          final errorMsg = _getLastError().toDartString();
+          throw PrintingFfiException(errorMsg);
+        }
+        return true;
+      } finally {
+        if (numOptions > 0) {
+          for (var i = 0; i < numOptions; i++) {
+            malloc.free(keysPtr[i]);
+            malloc.free(valuesPtr[i]);
+          }
+          malloc.free(keysPtr);
+          malloc.free(valuesPtr);
+        }
+      }
+    } finally {
+      malloc.free(namePtr);
+      malloc.free(pathPtr);
+      malloc.free(docNamePtr);
+      if (pageRangePtr != nullptr) malloc.free(pageRangePtr);
+      malloc.free(alignmentPtr);
+    }
+  }
+
   final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
   final int requestId = _nextPrintPdfRequestId++;
   final optionsMap = _buildOptions(options);
@@ -1036,6 +1132,8 @@ Map<String, String> _buildOptions(List<PrintOption> options) {
         optionsMap['alignment'] = alignment.name;
       case CollateOption(collate: final collate):
         optionsMap['collate'] = collate.toString();
+      case DuplexOption(mode: final mode):
+        optionsMap['duplex'] = mode.name;
     }
   }
   return optionsMap;
@@ -1327,6 +1425,71 @@ Future<int> _sendPdfJobRequest(
   Map<String, String> options = const {},
   String alignment = 'center',
 }) async {
+  // On Windows, run synchronously on the main isolate to avoid cross-isolate callbacks.
+  if (Platform.isWindows) {
+    final namePtr = printerName.toNativeUtf8();
+    final pathPtr = pdfFilePath.toNativeUtf8();
+    final docNamePtr = docName.toNativeUtf8();
+    final pageRangeValue = pageRange?.toValue();
+    final alignmentPtr = alignment.toNativeUtf8();
+    final pageRangePtr = pageRangeValue?.toNativeUtf8() ?? nullptr;
+    try {
+      final opts = {...options};
+      if (scaling is _PdfPrintScalingCustom) {
+        opts['custom-scale-factor'] = (scaling as _PdfPrintScalingCustom).scale.toString();
+      }
+
+      final int numOptions = opts.length;
+      Pointer<Pointer<Utf8>> keysPtr = nullptr;
+      Pointer<Pointer<Utf8>> valuesPtr = nullptr;
+      if (numOptions > 0) {
+        keysPtr = malloc<Pointer<Utf8>>(numOptions);
+        valuesPtr = malloc<Pointer<Utf8>>(numOptions);
+        int i = 0;
+        for (var entry in opts.entries) {
+          keysPtr[i] = entry.key.toNativeUtf8();
+          valuesPtr[i] = entry.value.toNativeUtf8();
+          i++;
+        }
+      }
+
+      try {
+        final int jobId = _bindings.submit_pdf_job(
+          namePtr.cast(),
+          pathPtr.cast(),
+          docNamePtr.cast(),
+          scaling.nativeValue,
+          copies ?? 1,
+          pageRangePtr.cast(),
+          numOptions,
+          keysPtr.cast(),
+          valuesPtr.cast(),
+          alignmentPtr.cast(),
+        );
+        if (jobId <= 0) {
+          final errorMsg = _getLastError().toDartString();
+          throw PrintingFfiException(errorMsg);
+        }
+        return jobId;
+      } finally {
+        if (numOptions > 0) {
+          for (var i = 0; i < numOptions; i++) {
+            malloc.free(keysPtr[i]);
+            malloc.free(valuesPtr[i]);
+          }
+          malloc.free(keysPtr);
+          malloc.free(valuesPtr);
+        }
+      }
+    } finally {
+      malloc.free(namePtr);
+      malloc.free(pathPtr);
+      malloc.free(docNamePtr);
+      if (pageRangePtr != nullptr) malloc.free(pageRangePtr);
+      malloc.free(alignmentPtr);
+    }
+  }
+
   final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
   final int requestId = _nextSubmitPdfJobRequestId++;
   final request = _SubmitPdfJobRequest(
@@ -1494,6 +1657,15 @@ Future<SendPort> _helperIsolateSendPort = () async {
 
   await Isolate.spawn(
     (SendPort sendPort) async {
+      // Register the native log callback inside the helper isolate to ensure
+      // the callback originates from the same isolate that performs FFI calls.
+      try {
+        final _RegisterLogCallback registerer = _dylib.lookup<NativeFunction<_RegisterLogCallbackNative>>('register_log_callback').asFunction<_RegisterLogCallback>();
+        registerer(Pointer.fromFunction<Void Function(Pointer<Char>)>(_logHandler));
+      } catch (_) {
+        // If registration is unavailable, continue without crashing.
+      }
+
       final ReceivePort helperReceivePort = ReceivePort()
         ..listen((dynamic data) {
           // ... rest of the isolate code remains the same
@@ -1532,6 +1704,23 @@ Future<SendPort> _helperIsolateSendPort = () async {
                         break;
                     }
                   }
+
+                  if (options.containsKey('duplex')) {
+                    // Translate duplex option to CUPS standard values
+                    final duplexValue = options.remove('duplex');
+                    switch (duplexValue) {
+                      case 'singleSided':
+                        options['sides'] = 'one-sided';
+                        break;
+                      case 'duplexLongEdge':
+                        options['sides'] = 'two-sided-long-edge';
+                        break;
+                      case 'duplexShortEdge':
+                        options['sides'] = 'two-sided-short-edge';
+                        break;
+                    }
+                  }
+
                 }
                 final int numOptions = options.length;
                 Pointer<Pointer<Utf8>> keysPtr = nullptr;
@@ -1674,6 +1863,23 @@ Future<SendPort> _helperIsolateSendPort = () async {
                         break;
                     }
                   }
+
+                  if (options.containsKey('duplex')) {
+                    // Translate duplex option to CUPS standard values
+                    final duplexValue = options.remove('duplex');
+                    switch (duplexValue) {
+                      case 'singleSided':
+                        options['sides'] = 'one-sided';
+                        break;
+                      case 'duplexLongEdge':
+                        options['sides'] = 'two-sided-long-edge';
+                        break;
+                      case 'duplexShortEdge':
+                        options['sides'] = 'two-sided-short-edge';
+                        break;
+                    }
+                  }
+
                 }
 
                 final int numOptions = options.length;
@@ -1805,6 +2011,23 @@ Future<SendPort> _helperIsolateSendPort = () async {
                         break;
                     }
                   }
+
+                  if (options.containsKey('duplex')) {
+                    // Translate duplex option to CUPS standard values
+                    final duplexValue = options.remove('duplex');
+                    switch (duplexValue) {
+                      case 'singleSided':
+                        options['sides'] = 'one-sided';
+                        break;
+                      case 'duplexLongEdge':
+                        options['sides'] = 'two-sided-long-edge';
+                        break;
+                      case 'duplexShortEdge':
+                        options['sides'] = 'two-sided-short-edge';
+                        break;
+                    }
+                  }
+
                 }
                 final int numOptions = options.length;
                 Pointer<Pointer<Utf8>> keysPtr = nullptr;
@@ -1896,6 +2119,23 @@ Future<SendPort> _helperIsolateSendPort = () async {
                         break;
                     }
                   }
+
+                  if (options.containsKey('duplex')) {
+                    // Translate duplex option to CUPS standard values
+                    final duplexValue = options.remove('duplex');
+                    switch (duplexValue) {
+                      case 'singleSided':
+                        options['sides'] = 'one-sided';
+                        break;
+                      case 'duplexLongEdge':
+                        options['sides'] = 'two-sided-long-edge';
+                        break;
+                      case 'duplexShortEdge':
+                        options['sides'] = 'two-sided-short-edge';
+                        break;
+                    }
+                  }
+                  
                 }
 
                 final int numOptions = options.length;

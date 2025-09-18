@@ -21,6 +21,18 @@ class CustomScaling {
   const CustomScaling();
 }
 
+/// Helper function to get display names for duplex modes.
+String _getDuplexModeDisplayName(DuplexMode mode) {
+  switch (mode) {
+    case DuplexMode.singleSided:
+      return 'Single-sided';
+    case DuplexMode.duplexLongEdge:
+      return 'Duplex (Long Edge)';
+    case DuplexMode.duplexShortEdge:
+      return 'Duplex (Short Edge)';
+  }
+}
+
 class PrinterSelector extends StatelessWidget {
   const PrinterSelector({
     super.key,
@@ -224,6 +236,8 @@ class PlatformSettings extends StatelessWidget {
     required this.onColorModeChanged,
     required this.selectedOrientation,
     required this.onOrientationChanged,
+    required this.selectedDuplexMode,
+    required this.onDuplexModeChanged,
     required this.onOpenProperties,
     required this.onShowCapabilities,
   });
@@ -242,6 +256,8 @@ class PlatformSettings extends StatelessWidget {
   final ValueChanged<ColorMode?> onColorModeChanged;
   final WindowsOrientation selectedOrientation;
   final ValueChanged<WindowsOrientation?> onOrientationChanged;
+  final DuplexMode selectedDuplexMode;
+  final ValueChanged<DuplexMode?> onDuplexModeChanged;
   final VoidCallback onOpenProperties;
   final VoidCallback onShowCapabilities;
 
@@ -346,6 +362,17 @@ class PlatformSettings extends StatelessWidget {
             value: o,
             child: Text(o.name[0].toUpperCase() + o.name.substring(1)),
           ),
+        ),
+      ),
+      ShadSelect<DuplexMode>(
+        placeholder: const Text('Duplex Mode'),
+        selectedOptionBuilder: (context, value) =>
+            Text(_getDuplexModeDisplayName(value)),
+        initialValue: selectedDuplexMode,
+        onChanged: onDuplexModeChanged,
+        options: DuplexMode.values.map(
+          (d) =>
+              ShadOption(value: d, child: Text(_getDuplexModeDisplayName(d))),
         ),
       ),
     ];
