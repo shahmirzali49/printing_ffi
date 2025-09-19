@@ -24,8 +24,14 @@
 // Global state for Pdfium initialization
 static bool s_pdfium_initialized = false;
 #endif
-// Global function pointer for the log callback.
-static log_callback_t s_log_callback = NULL;
+// Use thread-local storage for the log callback to ensure isolate safety.
+// Each Dart isolate runs on its own thread, so each will have its own
+// instance of this variable.
+#ifdef _WIN32
+__declspec(thread) static log_callback_t s_log_callback = NULL;
+#else // macOS, Linux
+static __thread log_callback_t s_log_callback = NULL;
+#endif
 
 // Logging macro - enabled when DEBUG_LOGGING is defined (e.g., in debug builds)
 #ifdef DEBUG_LOGGING
@@ -414,7 +420,7 @@ static DEVMODEW* get_modified_devmode(wchar_t* printer_name_w, int paper_size_id
         LOG("get_modified_devmode: Setting dmDuplex to %d.", duplex_mode);
         pDevMode->dmFields |= DM_DUPLEX; pDevMode->dmDuplex = (short)duplex_mode; modified = true;
     }
-    
+
     // Set collate mode
     LOG("get_modified_devmode: Setting dmCollate to %s.", collate ? "true" : "false");
     pDevMode->dmFields |= DM_COLLATE;
