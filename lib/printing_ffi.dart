@@ -29,7 +29,6 @@ class PrintingFfi {
 
   late final PrintingFfiBindings _bindings = PrintingFfiBindings(_dylib);
 
-  late final _getLastError = _dylib.lookup<NativeFunction<Pointer<Utf8> Function()>>('get_last_error').asFunction<Pointer<Utf8> Function()>();
 
   LogHandler? _customLogHandler;
 
