@@ -44,6 +44,10 @@ dependencies:
   cupertino_icons: ^1.0.8
   file_picker: ^10.3.2
   shadcn_ui: ^0.31.3
+  pdfrx: ^2.1.15
+  http: ^1.1.0
+  path_provider: ^2.1.1
+  path: ^1.8.3
 
 dev_dependencies:
   flutter_test:
