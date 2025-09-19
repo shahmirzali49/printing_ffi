@@ -82,7 +82,6 @@ final class PdfPrintScalingCustom extends PdfPrintScaling {
   int get hashCode => Object.hash(nativeValue, scale);
 }
 
-
 /// Represents a page range for printing.
 ///
 /// This class provides a type-safe way to define which pages of a document to print.

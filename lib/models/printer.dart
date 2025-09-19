@@ -1,4 +1,3 @@
-
 class Printer {
   /// The platform specific printer identification (e.g., device URI).
   final String url;
