@@ -707,7 +707,7 @@ class _PrintStatusDialogState extends State<PrintStatusDialog> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
+    Future.delayed(Duration.zero, () {
       if (!mounted) return;
       _subscription = widget.jobStream.listen(
         (job) {
