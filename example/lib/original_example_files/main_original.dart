@@ -7,7 +7,7 @@ import 'package:flutter/material.dart';
 
 import 'package:printing_ffi/printing_ffi.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
-import 'widgets_old.dart';
+import 'widgets_original.dart';
 
 /// A local helper class to represent the custom scaling option in the UI.
 /// This is a marker class for the SegmentedButton.

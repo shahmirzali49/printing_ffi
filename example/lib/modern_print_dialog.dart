@@ -460,7 +460,7 @@ class _ModernPrintDialogState extends State<ModernPrintDialog> {
   Widget build(BuildContext context) {
     return Dialog(
       child: Container(
-        constraints: const BoxConstraints(maxWidth: 900, maxHeight: 720),
+        constraints: const BoxConstraints(maxWidth: 1200, maxHeight: 720),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [

@@ -10,11 +10,11 @@ import 'package:printing_ffi/printing_ffi.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  // PrintingFfi.instance.initialize(
-  //   logHandler: (message) {
-  //     debugPrint('CUSTOM LOG HANDLER: $message');
-  //   },
-  // );
+  PrintingFfi.instance.initialize(
+    logHandler: (message) {
+      debugPrint('CUSTOM LOG HANDLER: $message');
+    },
+  );
   runApp(const MyApp());
 }
 
