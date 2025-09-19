@@ -1260,6 +1260,16 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
                 LOG("print_pdf_job_win: EndPage failed for page %d with error %lu", i, GetLastError());
                 success = false;
             }
+
+            // Manually pump the message queue. This is critical when running on an
+            // STA thread without a traditional message loop. Some printer drivers
+            // send messages and will time out if they are not processed. This prevents
+            // the extreme slowdown seen when printing from a background thread.
+            MSG msg;
+            while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
         }
     }
 
