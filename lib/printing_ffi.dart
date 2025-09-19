@@ -138,6 +138,38 @@ class PrintingFfi {
     final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
     final int requestId = _nextPrintRequestId++;
     final optionsMap = _buildOptions(options);
+
+    if (Platform.isWindows) {
+      // Windows raw data printing must be done on the main isolate due to thread-affinity
+      // requirements of the underlying Windows GDI APIs.
+      return await _performWindowsRawDataFfiCall<bool>(
+        printerName: printerName,
+        data: data,
+        docName: docName,
+        options: optionsMap,
+        nativeCall:
+            (
+              namePtr,
+              dataPtr,
+              dataLength,
+              docNamePtr,
+              numOptions,
+              keysPtr,
+              valuesPtr,
+            ) {
+              return _bindings.raw_data_to_printer(
+                namePtr,
+                dataPtr,
+                dataLength,
+                docNamePtr,
+                numOptions,
+                keysPtr.cast<Pointer<Char>>(),
+                valuesPtr.cast<Pointer<Char>>(),
+              );
+            },
+      );
+    }
+
     final _PrintRequest request = _PrintRequest(
       requestId,
       printerName,
@@ -389,13 +421,72 @@ class PrintingFfi {
     if (!Platform.isWindows) {
       return null;
     }
-    final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
-    final int requestId = _nextGetWindowsCapsRequestId++;
-    final request = _GetWindowsCapsRequest(requestId, printerName);
-    final completer = Completer<WindowsPrinterCapabilitiesModel?>();
-    _getWindowsCapsRequests[requestId] = completer;
-    helperIsolateSendPort.send(request);
-    return completer.future;
+    // This operation is moved to the main isolate for Windows to prevent
+    // potential crashes with callbacks in helper isolates.
+    final namePtr = printerName.toNativeUtf8();
+    try {
+      final capsPtr = _bindings.get_windows_printer_capabilities(namePtr.cast());
+      if (capsPtr == nullptr) {
+        return null;
+      }
+      try {
+        final caps = capsPtr.ref;
+        final paperSizes = <WindowsPaperSize>[];
+        for (var i = 0; i < caps.paper_sizes.count; i++) {
+          final size = caps.paper_sizes.papers[i];
+          paperSizes.add(
+            WindowsPaperSize(
+              id: size.id,
+              name: size.name.cast<Utf8>().toDartString(),
+              widthMillimeters: size.width_mm,
+              heightMillimeters: size.height_mm,
+            ),
+          );
+        }
+
+        final paperSources = <WindowsPaperSource>[];
+        for (var i = 0; i < caps.paper_sources.count; i++) {
+          final source = caps.paper_sources.sources[i];
+          paperSources.add(
+            WindowsPaperSource(
+              id: source.id,
+              name: source.name.cast<Utf8>().toDartString(),
+            ),
+          );
+        }
+
+        final mediaTypes = <WindowsMediaType>[];
+        for (var i = 0; i < caps.media_types.count; i++) {
+          final type = caps.media_types.types[i];
+          mediaTypes.add(
+            WindowsMediaType(
+              id: type.id,
+              name: type.name.cast<Utf8>().toDartString(),
+            ),
+          );
+        }
+
+        final resolutions = <WindowsResolution>[];
+        for (var i = 0; i < caps.resolutions.count; i++) {
+          final res = caps.resolutions.resolutions[i];
+          resolutions.add(WindowsResolution(xdpi: res.x_dpi, ydpi: res.y_dpi));
+        }
+
+        return WindowsPrinterCapabilitiesModel(
+          paperSizes: paperSizes,
+          paperSources: paperSources,
+          mediaTypes: mediaTypes,
+          resolutions: resolutions,
+          isColorSupported: caps.is_color_supported,
+          isMonochromeSupported: caps.is_monochrome_supported,
+          supportsLandscape: caps.supports_landscape,
+        );
+      } finally {
+        _bindings.free_windows_printer_capabilities(capsPtr);
+      }
+    } finally {
+      malloc.free(namePtr);
+    }
   }
 
   Future<List<PrintJob>> listPrintJobs(String printerName) async {
@@ -518,7 +609,7 @@ class PrintingFfi {
       // Windows raw data printing must be done on the main isolate due to thread-affinity
       // requirements of the underlying Windows GDI APIs. Running this in a helper
       // isolate can cause a crash.
-      return await _performWindowsRawDataPrintFfiCall(
+      return await _performWindowsRawDataFfiCall<int>(
         printerName: printerName,
         data: data,
         docName: docName,
@@ -727,12 +818,12 @@ class PrintingFfi {
   /// Encapsulates common Windows FFI call logic for raw data printing.
   /// Handles pointer conversions, memory allocation/deallocation,
   /// and error handling for print operations.
-  Future<int> _performWindowsRawDataPrintFfiCall({
+  Future<T> _performWindowsRawDataFfiCall<T>({
     required String printerName,
     required Uint8List data,
     required String docName,
     required Map<String, String> options,
-    required int Function(
+    required T Function(
       Pointer<Char> namePtr,
       Pointer<Uint8> dataPtr,
       int dataLength,
@@ -765,7 +856,7 @@ class PrintingFfi {
     }
 
     try {
-      final jobId = nativeCall(
+      final result = nativeCall(
         namePtr.cast(),
         dataPtr,
         data.length,
@@ -775,11 +866,14 @@ class PrintingFfi {
         valuesPtr,
       );
 
-      if (jobId <= 0) {
+      if (result is bool && !result) {
+        final errorMsg = _getLastError().toDartString();
+        throw PrintingFfiException(errorMsg);
+      } else if (result is int && result <= 0) {
         final errorMsg = _getLastError().toDartString();
         throw PrintingFfiException(errorMsg);
       }
-      return jobId;
+      return result;
     } finally {
       malloc.free(namePtr);
       malloc.free(docNamePtr);
@@ -802,14 +896,12 @@ class PrintingFfi {
   int _nextGetCupsOptionsRequestId = 0;
   int _nextSubmitRawDataJobRequestId = 0;
   int _nextSubmitPdfJobRequestId = 0;
-  int _nextGetWindowsCapsRequestId = 0;
 
   final Map<int, Completer<bool>> _printRequests = <int, Completer<bool>>{};
   final Map<int, Completer<List<PrintJob>>> _printJobsRequests = <int, Completer<List<PrintJob>>>{};
   final Map<int, Completer<bool>> _printJobActionRequests = <int, Completer<bool>>{};
   final Map<int, Completer<bool>> _printPdfRequests = <int, Completer<bool>>{};
   final Map<int, Completer<List<CupsOptionModel>>> _getCupsOptionsRequests = <int, Completer<List<CupsOptionModel>>>{};
-  final Map<int, Completer<WindowsPrinterCapabilitiesModel?>> _getWindowsCapsRequests = <int, Completer<WindowsPrinterCapabilitiesModel?>>{};
   final Map<int, Completer<int>> _submitRawDataJobRequests = <int, Completer<int>>{};
   final Map<int, Completer<int>> _submitPdfJobRequests = <int, Completer<int>>{};
 
@@ -820,7 +912,6 @@ class PrintingFfi {
       ..._printJobActionRequests.values,
       ..._printPdfRequests.values,
       ..._getCupsOptionsRequests.values,
-      ..._getWindowsCapsRequests.values,
       ..._submitRawDataJobRequests.values,
       ..._submitPdfJobRequests.values,
     ];
@@ -836,7 +927,6 @@ class PrintingFfi {
     _printJobActionRequests.clear();
     _printPdfRequests.clear();
     _getCupsOptionsRequests.clear();
-    _getWindowsCapsRequests.clear();
     _submitRawDataJobRequests.clear();
     _submitPdfJobRequests.clear();
   }
@@ -906,10 +996,6 @@ class PrintingFfi {
         }
         return;
       }
-      if (data is _GetWindowsCapsResponse) {
-        _getWindowsCapsRequests.remove(data.id)!.complete(data.capabilities);
-        return;
-      }
       if (data is _ErrorResponse) {
         final Completer? requestCompleter;
         if (_printRequests.containsKey(data.id)) {
@@ -926,8 +1012,6 @@ class PrintingFfi {
           requestCompleter = _submitRawDataJobRequests.remove(data.id);
         } else if (_submitPdfJobRequests.containsKey(data.id)) {
           requestCompleter = _submitPdfJobRequests.remove(data.id);
-        } else if (_getWindowsCapsRequests.containsKey(data.id)) {
-          requestCompleter = _getWindowsCapsRequests.remove(data.id);
         } else {
           requestCompleter = null;
         }
@@ -1019,13 +1103,6 @@ class _SubmitPdfJobRequest {
   const _SubmitPdfJobRequest(this.id, this.printerName, this.pdfFilePath, this.docName, this.options, this.scaling, this.copies, this.pageRange, this.alignment);
 }
 
-class _GetWindowsCapsRequest {
-  final int id;
-  final String printerName;
-
-  const _GetWindowsCapsRequest(this.id, this.printerName);
-}
-
 class _PrintResponse {
   final int id;
   final bool result;
@@ -1068,13 +1145,6 @@ class _SubmitJobResponse {
   const _SubmitJobResponse(this.id, this.jobId);
 }
 
-class _GetWindowsCapsResponse {
-  final int id;
-  final WindowsPrinterCapabilitiesModel? capabilities;
-
-  const _GetWindowsCapsResponse(this.id, this.capabilities);
-}
-
 class _ErrorResponse {
   final int id;
   final Object error;
@@ -1101,11 +1171,13 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
 
       final helperReceivePort = ReceivePort()
         ..listen((dynamic data) {
-          if (Platform.isWindows && (data is _PrintPdfRequest || data is _SubmitPdfJobRequest || data is _SubmitRawDataJobRequest)) {
+          if (Platform.isWindows && (data is _PrintRequest || data is _PrintPdfRequest || data is _SubmitPdfJobRequest || data is _SubmitRawDataJobRequest)) {
             final error = UnsupportedError('This operation is not supported in a helper isolate on Windows.');
             final stackTrace = StackTrace.current;
             final int requestId;
-            if (data is _PrintPdfRequest) {
+            if (data is _PrintRequest) {
+              requestId = data.id;
+            } else if (data is _PrintPdfRequest) {
               requestId = data.id;
             } else if (data is _SubmitPdfJobRequest) {
               requestId = data.id;
@@ -1615,77 +1687,6 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
                 malloc.free(docNamePtr);
                 if (pageRangePtr != nullptr) malloc.free(pageRangePtr);
                 malloc.free(alignmentPtr);
-              }
-            } catch (e, s) {
-              sendPort.send(_ErrorResponse(data.id, e, s));
-            }
-          } else if (data is _GetWindowsCapsRequest) {
-            try {
-              final namePtr = data.printerName.toNativeUtf8();
-              try {
-                final capsPtr = bindings.get_windows_printer_capabilities(namePtr.cast());
-                if (capsPtr == nullptr) {
-                  sendPort.send(_GetWindowsCapsResponse(data.id, null));
-                  return;
-                }
-                try {
-                  final caps = capsPtr.ref;
-                  final paperSizes = <WindowsPaperSize>[];
-                  for (var i = 0; i < caps.paper_sizes.count; i++) {
-                    final size = caps.paper_sizes.papers[i];
-                    paperSizes.add(
-                      WindowsPaperSize(
-                        id: size.id,
-                        name: size.name.cast<Utf8>().toDartString(),
-                        widthMillimeters: size.width_mm,
-                        heightMillimeters: size.height_mm,
-                      ),
-                    );
-                  }
-
-                  final paperSources = <WindowsPaperSource>[];
-                  for (var i = 0; i < caps.paper_sources.count; i++) {
-                    final source = caps.paper_sources.sources[i];
-                    paperSources.add(
-                      WindowsPaperSource(
-                        id: source.id,
-                        name: source.name.cast<Utf8>().toDartString(),
-                      ),
-                    );
-                  }
-
-                  final mediaTypes = <WindowsMediaType>[];
-                  for (var i = 0; i < caps.media_types.count; i++) {
-                    final type = caps.media_types.types[i];
-                    mediaTypes.add(
-                      WindowsMediaType(
-                        id: type.id,
-                        name: type.name.cast<Utf8>().toDartString(),
-                      ),
-                    );
-                  }
-
-                  final resolutions = <WindowsResolution>[];
-                  for (var i = 0; i < caps.resolutions.count; i++) {
-                    final res = caps.resolutions.resolutions[i];
-                    resolutions.add(WindowsResolution(xdpi: res.x_dpi, ydpi: res.y_dpi));
-                  }
-
-                  final capabilities = WindowsPrinterCapabilitiesModel(
-                    paperSizes: paperSizes,
-                    paperSources: paperSources,
-                    mediaTypes: mediaTypes,
-                    resolutions: resolutions,
-                    isColorSupported: caps.is_color_supported,
-                    isMonochromeSupported: caps.is_monochrome_supported,
-                    supportsLandscape: caps.supports_landscape,
-                  );
-                  sendPort.send(_GetWindowsCapsResponse(data.id, capabilities));
-                } finally {
-                  bindings.free_windows_printer_capabilities(capsPtr);
-                }
-              } finally {
-                malloc.free(namePtr);
               }
             } catch (e, s) {
               sendPort.send(_ErrorResponse(data.id, e, s));
