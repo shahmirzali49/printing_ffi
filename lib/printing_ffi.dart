@@ -161,6 +161,9 @@ class PrintingFfi {
     List<PrintOption> options = const [],
   }) async {
     if (Platform.isWindows) {
+      // Windows PDF printing must be done on the main isolate due to thread-affinity
+      // requirements of the underlying Windows GDI APIs. Running this in a helper
+      // isolate will cause a crash.
       final optionsMap = _buildOptions(options);
       final alignment = optionsMap.remove('alignment') ?? 'center';
       final namePtr = printerName.toNativeUtf8();
@@ -562,6 +565,9 @@ class PrintingFfi {
     String alignment = 'center',
   }) async {
     if (Platform.isWindows) {
+      // Windows PDF printing must be done on the main isolate due to thread-affinity
+      // requirements of the underlying Windows GDI APIs. Running this in a helper
+      // isolate will cause a crash.
       final namePtr = printerName.toNativeUtf8();
       final pathPtr = pdfFilePath.toNativeUtf8();
       final docNamePtr = docName.toNativeUtf8();
@@ -950,9 +956,6 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
 
       final helperReceivePort = ReceivePort()
         ..listen((dynamic data) {
-          if (Platform.isWindows && (data is _PrintPdfRequest || data is _SubmitPdfJobRequest)) {
-            return;
-          }
           if (data is _PrintRequest) {
             try {
               final namePtr = data.printerName.toNativeUtf8();
@@ -1143,6 +1146,8 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
               sendPort.send(_ErrorResponse(data.id, e, s));
             }
           } else if (data is _PrintPdfRequest) {
+            // On Windows, PDF printing is handled on the main isolate. This is a safeguard.
+            if (Platform.isWindows) return;
             try {
               final namePtr = data.printerName.toNativeUtf8();
               final pathPtr = data.pdfFilePath.toNativeUtf8();
@@ -1350,6 +1355,8 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
               sendPort.send(_ErrorResponse(data.id, e, s));
             }
           } else if (data is _SubmitPdfJobRequest) {
+            // On Windows, PDF printing is handled on the main isolate. This is a safeguard.
+            if (Platform.isWindows) return;
             try {
               final namePtr = data.printerName.toNativeUtf8();
               final pathPtr = data.pdfFilePath.toNativeUtf8();
