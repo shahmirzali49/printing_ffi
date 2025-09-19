@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+
 import 'package:printing_ffi/printing_ffi.dart';
 import 'package:shadcn_ui/shadcn_ui.dart';
 import 'widgets.dart';
@@ -81,7 +82,7 @@ void main() {
   WidgetsFlutterBinding.ensureInitialized();
   // Initialize the FFI plugin and provide a custom log handler.
   // This allows you to route native logs to your own logging infrastructure.
-  initializePrintingFfi(
+  PrintingFfi.instance.initialize(
     logHandler: (message) {
       debugPrint('CUSTOM LOG HANDLER: $message');
     },
@@ -158,9 +159,9 @@ class _PrintingScreenState extends State<PrintingScreen> {
   Printer? _selectedPrinter;
   List<PrintJob> _jobs = [];
   StreamSubscription<List<PrintJob>>? _jobsSubscription;
-  List<CupsOption>? _cupsOptions;
+  List<CupsOptionModel>? _cupsOptions;
   Map<String, String> _selectedCupsOptions = {};
-  WindowsPrinterCapabilities? _windowsCapabilities;
+  WindowsPrinterCapabilitiesModel? _windowsCapabilities;
   WindowsPaperSize? _selectedPaperSize;
   WindowsPaperSource? _selectedPaperSource;
   WindowsOrientation _selectedOrientation = WindowsOrientation.portrait;
@@ -258,7 +259,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
       _selectedPdfPath = null;
     });
     try {
-      final printers = listPrinters();
+      final printers = PrintingFfi.instance.listPrinters();
       setState(() {
         _printers = printers;
         if (printers.isNotEmpty) {
@@ -294,20 +295,22 @@ class _PrintingScreenState extends State<PrintingScreen> {
     if (_selectedPrinter == null) return;
     _jobsSubscription?.cancel();
     setState(() => _isLoadingJobs = true);
-    _jobsSubscription = listPrintJobsStream(_selectedPrinter!.name).listen(
-      (jobs) {
-        if (!mounted) return;
-        setState(() {
-          _jobs = jobs;
-          _isLoadingJobs = false;
-        });
-      },
-      onError: (e) {
-        if (!mounted) return;
-        _showToast('Error fetching jobs: $e', isError: true);
-        setState(() => _isLoadingJobs = false);
-      },
-    );
+    _jobsSubscription = PrintingFfi.instance
+        .listPrintJobsStream(_selectedPrinter!.name)
+        .listen(
+          (jobs) {
+            if (!mounted) return;
+            setState(() {
+              _jobs = jobs;
+              _isLoadingJobs = false;
+            });
+          },
+          onError: (e) {
+            if (!mounted) return;
+            _showToast('Error fetching jobs: $e', isError: true);
+            setState(() => _isLoadingJobs = false);
+          },
+        );
   }
 
   Future<void> _fetchCupsOptions() async {
@@ -318,7 +321,9 @@ class _PrintingScreenState extends State<PrintingScreen> {
     });
 
     try {
-      final options = await getSupportedCupsOptions(_selectedPrinter!.name);
+      final options = await PrintingFfi.instance.getSupportedCupsOptions(
+        _selectedPrinter!.name,
+      );
       if (!mounted) return;
       final defaultOptions = <String, String>{};
       for (final option in options) {
@@ -339,7 +344,9 @@ class _PrintingScreenState extends State<PrintingScreen> {
     if (_selectedPrinter == null || !Platform.isWindows) return;
     setState(() => _isLoadingWindowsCaps = true);
     try {
-      final caps = await getWindowsPrinterCapabilities(_selectedPrinter!.name);
+      final caps = await PrintingFfi.instance.getWindowsPrinterCapabilities(
+        _selectedPrinter!.name,
+      );
       if (!mounted) return;
       setState(() {
         _windowsCapabilities = caps;
@@ -461,7 +468,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
         final options = _buildPrintOptions(cupsOptions: cupsOptions);
         _showToast('Printing PDF...');
 
-        final success = await printPdf(
+        final success = await PrintingFfi.instance.printPdf(
           _selectedPrinter!.name,
           path,
           docName: 'My Flutter PDF',
@@ -505,7 +512,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
         builder: (context) => PrintStatusDialog(
           onToast: _showToast,
           printerName: _selectedPrinter!.name,
-          jobStream: printPdfAndStreamStatus(
+          jobStream: PrintingFfi.instance.printPdfAndStreamStatus(
             _selectedPrinter!.name,
             path,
             options: options,
@@ -538,7 +545,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
       builder: (context) => PrintStatusDialog(
         onToast: _showToast,
         printerName: _selectedPrinter!.name,
-        jobStream: rawDataToPrinterAndStreamStatus(
+        jobStream: PrintingFfi.instance.rawDataToPrinterAndStreamStatus(
           _selectedPrinter!.name,
           data,
           docName: 'My Tracked ZPL Label',
@@ -563,7 +570,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
 
     final options = _buildPrintOptions(cupsOptions: _selectedCupsOptions);
     _showToast('Sending raw ZPL data...');
-    final success = await rawDataToPrinter(
+    final success = await PrintingFfi.instance.rawDataToPrinter(
       _selectedPrinter!.name,
       data,
       docName: 'My ZPL Label',
@@ -583,13 +590,22 @@ class _PrintingScreenState extends State<PrintingScreen> {
     try {
       switch (action) {
         case 'pause':
-          success = await pausePrintJob(_selectedPrinter!.name, jobId);
+          success = await PrintingFfi.instance.pausePrintJob(
+            _selectedPrinter!.name,
+            jobId,
+          );
           break;
         case 'resume':
-          success = await resumePrintJob(_selectedPrinter!.name, jobId);
+          success = await PrintingFfi.instance.resumePrintJob(
+            _selectedPrinter!.name,
+            jobId,
+          );
           break;
         case 'cancel':
-          success = await cancelPrintJob(_selectedPrinter!.name, jobId);
+          success = await PrintingFfi.instance.cancelPrintJob(
+            _selectedPrinter!.name,
+            jobId,
+          );
           break;
       }
       if (!mounted) return;
@@ -605,9 +621,8 @@ class _PrintingScreenState extends State<PrintingScreen> {
   Future<void> _showWindowsCapabilities() async {
     if (_selectedPrinter == null || !Platform.isWindows) return;
 
-    final capabilities = await getWindowsPrinterCapabilities(
-      _selectedPrinter!.name,
-    );
+    final capabilities = await PrintingFfi.instance
+        .getWindowsPrinterCapabilities(_selectedPrinter!.name);
 
     if (!mounted) return;
 
@@ -832,7 +847,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
       onOpenProperties: () async {
         if (_selectedPrinter == null) return;
         try {
-          final result = await openPrinterProperties(
+          final result = await PrintingFfi.instance.openPrinterProperties(
             _selectedPrinter!.name,
             hwnd: 0,
           );
