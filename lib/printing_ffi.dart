@@ -641,27 +641,23 @@ class PrintingFfi {
         return;
       }
       if (data is _ErrorResponse) {
-        final Completer? requestCompleter;
-        if (_printRequests.containsKey(data.id)) {
-          requestCompleter = _printRequests.remove(data.id);
-        } else if (_printJobsRequests.containsKey(data.id)) {
-          requestCompleter = _printJobsRequests.remove(data.id);
-        } else if (_printJobActionRequests.containsKey(data.id)) {
-          requestCompleter = _printJobActionRequests.remove(data.id);
-        } else if (_printPdfRequests.containsKey(data.id)) {
-          requestCompleter = _printPdfRequests.remove(data.id);
-        } else if (_getCupsOptionsRequests.containsKey(data.id)) {
-          requestCompleter = _getCupsOptionsRequests.remove(data.id);
-        } else if (_getWindowsCapsRequests.containsKey(data.id)) {
-          requestCompleter = _getWindowsCapsRequests.remove(data.id);
-        } else if (_openPrinterPropertiesRequests.containsKey(data.id)) {
-          requestCompleter = _openPrinterPropertiesRequests.remove(data.id);
-        } else if (_submitRawDataJobRequests.containsKey(data.id)) {
-          requestCompleter = _submitRawDataJobRequests.remove(data.id);
-        } else if (_submitPdfJobRequests.containsKey(data.id)) {
-          requestCompleter = _submitPdfJobRequests.remove(data.id);
-        } else {
-          requestCompleter = null;
+        Completer? requestCompleter;
+        final allRequestMaps = [
+          _printRequests,
+          _printJobsRequests,
+          _printJobActionRequests,
+          _printPdfRequests,
+          _getCupsOptionsRequests,
+          _getWindowsCapsRequests,
+          _openPrinterPropertiesRequests,
+          _submitRawDataJobRequests,
+          _submitPdfJobRequests,
+        ];
+        for (final map in allRequestMaps) {
+          if (map.containsKey(data.id)) {
+            requestCompleter = map.remove(data.id);
+            break;
+          }
         }
         requestCompleter?.completeError(data.error, data.stackTrace);
         return;
@@ -876,9 +872,7 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
               final namePtr = data.printerName.toNativeUtf8();
               final docNamePtr = data.docName.toNativeUtf8();
               final dataPtr = malloc<Uint8>(data.data.length);
-              for (var i = 0; i < data.data.length; i++) {
-                dataPtr[i] = data.data[i];
-              }
+              dataPtr.asTypedList(data.data.length).setAll(0, data.data);
               try {
                 final options = {...?data.options};
                 if (Platform.isWindows) {
@@ -1267,9 +1261,7 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
               final namePtr = data.printerName.toNativeUtf8();
               final docNamePtr = data.docName.toNativeUtf8();
               final dataPtr = malloc<Uint8>(data.data.length);
-              for (var i = 0; i < data.data.length; i++) {
-                dataPtr[i] = data.data[i];
-              }
+              dataPtr.asTypedList(data.data.length).setAll(0, data.data);
               try {
                 final options = {...?data.options};
                 if (Platform.isWindows) {
