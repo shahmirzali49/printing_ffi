@@ -29,7 +29,6 @@ class PrintingFfi {
 
   late final PrintingFfiBindings _bindings = PrintingFfiBindings(_dylib);
 
-
   LogHandler? _customLogHandler;
 
   NativeCallable<Void Function(Pointer<Char>)>? _logCallback;
@@ -115,17 +114,17 @@ class PrintingFfi {
   }
 
   Future<PrinterPropertiesResult> openPrinterProperties(String printerName, {int hwnd = 0}) async {
-    final namePtr = printerName.toNativeUtf8();
-    try {
-      final result = _bindings.open_printer_properties(namePtr.cast(), hwnd);
-      return switch (result) {
-        1 => PrinterPropertiesResult.ok,
-        2 => PrinterPropertiesResult.cancel,
-        _ => PrinterPropertiesResult.error,
-      };
-    } finally {
-      malloc.free(namePtr);
+    if (!Platform.isWindows) {
+      // This function is Windows-specific.
+      return PrinterPropertiesResult.error;
     }
+    final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
+    final int requestId = _nextOpenPrinterPropertiesRequestId++;
+    final request = _OpenPrinterPropertiesRequest(requestId, printerName, hwnd);
+    final completer = Completer<PrinterPropertiesResult>();
+    _openPrinterPropertiesRequests[requestId] = completer;
+    helperIsolateSendPort.send(request);
+    return completer.future;
   }
 
   Future<bool> rawDataToPrinter(
@@ -345,72 +344,13 @@ class PrintingFfi {
     if (!Platform.isWindows) {
       return null;
     }
-    // This operation is moved to the main isolate for Windows to prevent
-    // potential crashes with callbacks in helper isolates.
-    final namePtr = printerName.toNativeUtf8();
-    try {
-      final capsPtr = _bindings.get_windows_printer_capabilities(namePtr.cast());
-      if (capsPtr == nullptr) {
-        return null;
-      }
-      try {
-        final caps = capsPtr.ref;
-        final paperSizes = <WindowsPaperSize>[];
-        for (var i = 0; i < caps.paper_sizes.count; i++) {
-          final size = caps.paper_sizes.papers[i];
-          paperSizes.add(
-            WindowsPaperSize(
-              id: size.id,
-              name: size.name.cast<Utf8>().toDartString(),
-              widthMillimeters: size.width_mm,
-              heightMillimeters: size.height_mm,
-            ),
-          );
-        }
-
-        final paperSources = <WindowsPaperSource>[];
-        for (var i = 0; i < caps.paper_sources.count; i++) {
-          final source = caps.paper_sources.sources[i];
-          paperSources.add(
-            WindowsPaperSource(
-              id: source.id,
-              name: source.name.cast<Utf8>().toDartString(),
-            ),
-          );
-        }
-
-        final mediaTypes = <WindowsMediaType>[];
-        for (var i = 0; i < caps.media_types.count; i++) {
-          final type = caps.media_types.types[i];
-          mediaTypes.add(
-            WindowsMediaType(
-              id: type.id,
-              name: type.name.cast<Utf8>().toDartString(),
-            ),
-          );
-        }
-
-        final resolutions = <WindowsResolution>[];
-        for (var i = 0; i < caps.resolutions.count; i++) {
-          final res = caps.resolutions.resolutions[i];
-          resolutions.add(WindowsResolution(xdpi: res.x_dpi, ydpi: res.y_dpi));
-        }
-
-        return WindowsPrinterCapabilitiesModel(
-          paperSizes: paperSizes,
-          paperSources: paperSources,
-          mediaTypes: mediaTypes,
-          resolutions: resolutions,
-          isColorSupported: caps.is_color_supported,
-          isMonochromeSupported: caps.is_monochrome_supported,
-          supportsLandscape: caps.supports_landscape,
-        );
-      } finally {
-        _bindings.free_windows_printer_capabilities(capsPtr);
-      }
-    } finally {
-      malloc.free(namePtr);
-    }
+    final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
+    final int requestId = _nextGetWindowsCapsRequestId++;
+    final request = _GetWindowsCapsRequest(requestId, printerName);
+    final completer = Completer<WindowsPrinterCapabilitiesModel?>();
+    _getWindowsCapsRequests[requestId] = completer;
+    helperIsolateSendPort.send(request);
+    return completer.future;
   }
 
   Future<List<PrintJob>> listPrintJobs(String printerName) async {
@@ -578,6 +518,8 @@ class PrintingFfi {
   int _nextPrintJobActionRequestId = 0;
   int _nextPrintPdfRequestId = 0;
   int _nextGetCupsOptionsRequestId = 0;
+  int _nextGetWindowsCapsRequestId = 0;
+  int _nextOpenPrinterPropertiesRequestId = 0;
   int _nextSubmitRawDataJobRequestId = 0;
   int _nextSubmitPdfJobRequestId = 0;
 
@@ -586,6 +528,8 @@ class PrintingFfi {
   final Map<int, Completer<bool>> _printJobActionRequests = <int, Completer<bool>>{};
   final Map<int, Completer<bool>> _printPdfRequests = <int, Completer<bool>>{};
   final Map<int, Completer<List<CupsOptionModel>>> _getCupsOptionsRequests = <int, Completer<List<CupsOptionModel>>>{};
+  final Map<int, Completer<WindowsPrinterCapabilitiesModel?>> _getWindowsCapsRequests = <int, Completer<WindowsPrinterCapabilitiesModel?>>{};
+  final Map<int, Completer<PrinterPropertiesResult>> _openPrinterPropertiesRequests = <int, Completer<PrinterPropertiesResult>>{};
   final Map<int, Completer<int>> _submitRawDataJobRequests = <int, Completer<int>>{};
   final Map<int, Completer<int>> _submitPdfJobRequests = <int, Completer<int>>{};
 
@@ -596,6 +540,8 @@ class PrintingFfi {
       ..._printJobActionRequests.values,
       ..._printPdfRequests.values,
       ..._getCupsOptionsRequests.values,
+      ..._getWindowsCapsRequests.values,
+      ..._openPrinterPropertiesRequests.values,
       ..._submitRawDataJobRequests.values,
       ..._submitPdfJobRequests.values,
     ];
@@ -611,6 +557,8 @@ class PrintingFfi {
     _printJobActionRequests.clear();
     _printPdfRequests.clear();
     _getCupsOptionsRequests.clear();
+    _getWindowsCapsRequests.clear();
+    _openPrinterPropertiesRequests.clear();
     _submitRawDataJobRequests.clear();
     _submitPdfJobRequests.clear();
   }
@@ -672,6 +620,18 @@ class PrintingFfi {
         completer.complete(data.options);
         return;
       }
+      if (data is _GetWindowsCapsResponse) {
+        final Completer<WindowsPrinterCapabilitiesModel?> completer = _getWindowsCapsRequests[data.id]!;
+        _getWindowsCapsRequests.remove(data.id);
+        completer.complete(data.capabilities);
+        return;
+      }
+      if (data is _OpenPrinterPropertiesResponse) {
+        final Completer<PrinterPropertiesResult> completer = _openPrinterPropertiesRequests[data.id]!;
+        _openPrinterPropertiesRequests.remove(data.id);
+        completer.complete(data.result);
+        return;
+      }
       if (data is _SubmitJobResponse) {
         if (_submitRawDataJobRequests.containsKey(data.id)) {
           _submitRawDataJobRequests.remove(data.id)!.complete(data.jobId);
@@ -692,6 +652,10 @@ class PrintingFfi {
           requestCompleter = _printPdfRequests.remove(data.id);
         } else if (_getCupsOptionsRequests.containsKey(data.id)) {
           requestCompleter = _getCupsOptionsRequests.remove(data.id);
+        } else if (_getWindowsCapsRequests.containsKey(data.id)) {
+          requestCompleter = _getWindowsCapsRequests.remove(data.id);
+        } else if (_openPrinterPropertiesRequests.containsKey(data.id)) {
+          requestCompleter = _openPrinterPropertiesRequests.remove(data.id);
         } else if (_submitRawDataJobRequests.containsKey(data.id)) {
           requestCompleter = _submitRawDataJobRequests.remove(data.id);
         } else if (_submitPdfJobRequests.containsKey(data.id)) {
@@ -763,6 +727,21 @@ class _GetCupsOptionsRequest {
   const _GetCupsOptionsRequest(this.id, this.printerName);
 }
 
+class _GetWindowsCapsRequest {
+  final int id;
+  final String printerName;
+
+  const _GetWindowsCapsRequest(this.id, this.printerName);
+}
+
+class _OpenPrinterPropertiesRequest {
+  final int id;
+  final String printerName;
+  final int hwnd;
+
+  const _OpenPrinterPropertiesRequest(this.id, this.printerName, this.hwnd);
+}
+
 class _SubmitRawDataJobRequest {
   final int id;
   final String printerName;
@@ -822,6 +801,20 @@ class _GetCupsOptionsResponse {
   const _GetCupsOptionsResponse(this.id, this.options);
 }
 
+class _GetWindowsCapsResponse {
+  final int id;
+  final WindowsPrinterCapabilitiesModel? capabilities;
+
+  const _GetWindowsCapsResponse(this.id, this.capabilities);
+}
+
+class _OpenPrinterPropertiesResponse {
+  final int id;
+  final PrinterPropertiesResult result;
+
+  const _OpenPrinterPropertiesResponse(this.id, this.result);
+}
+
 class _SubmitJobResponse {
   final int id;
   final int jobId;
@@ -865,7 +858,10 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
               }
               try {
                 final options = {...?data.options};
-                if (Platform.isMacOS || Platform.isLinux) {
+                if (Platform.isWindows) {
+                  // No option remapping is needed for Windows.
+                  // The C code parses these options directly.
+                } else if (Platform.isMacOS || Platform.isLinux) {
                   if (options.containsKey('orientation')) {
                     final orientationValue = options.remove('orientation');
                     options['orientation-requested'] = orientationValue == 'landscape' ? '4' : '3';
@@ -1044,6 +1040,94 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
             } catch (e, s) {
               sendPort.send(_ErrorResponse(data.id, e, s));
             }
+          } else if (data is _GetWindowsCapsRequest) {
+            try {
+              final namePtr = data.printerName.toNativeUtf8();
+              try {
+                final capsPtr = bindings.get_windows_printer_capabilities(namePtr.cast());
+                if (capsPtr == nullptr) {
+                  sendPort.send(_GetWindowsCapsResponse(data.id, null));
+                } else {
+                  try {
+                    final caps = capsPtr.ref;
+                    final paperSizes = <WindowsPaperSize>[];
+                    for (var i = 0; i < caps.paper_sizes.count; i++) {
+                      final size = caps.paper_sizes.papers[i];
+                      paperSizes.add(
+                        WindowsPaperSize(
+                          id: size.id,
+                          name: size.name.cast<Utf8>().toDartString(),
+                          widthMillimeters: size.width_mm,
+                          heightMillimeters: size.height_mm,
+                        ),
+                      );
+                    }
+
+                    final paperSources = <WindowsPaperSource>[];
+                    for (var i = 0; i < caps.paper_sources.count; i++) {
+                      final source = caps.paper_sources.sources[i];
+                      paperSources.add(
+                        WindowsPaperSource(
+                          id: source.id,
+                          name: source.name.cast<Utf8>().toDartString(),
+                        ),
+                      );
+                    }
+
+                    final mediaTypes = <WindowsMediaType>[];
+                    for (var i = 0; i < caps.media_types.count; i++) {
+                      final type = caps.media_types.types[i];
+                      mediaTypes.add(
+                        WindowsMediaType(
+                          id: type.id,
+                          name: type.name.cast<Utf8>().toDartString(),
+                        ),
+                      );
+                    }
+
+                    final resolutions = <WindowsResolution>[];
+                    for (var i = 0; i < caps.resolutions.count; i++) {
+                      final res = caps.resolutions.resolutions[i];
+                      resolutions.add(WindowsResolution(xdpi: res.x_dpi, ydpi: res.y_dpi));
+                    }
+
+                    final model = WindowsPrinterCapabilitiesModel(
+                      paperSizes: paperSizes,
+                      paperSources: paperSources,
+                      mediaTypes: mediaTypes,
+                      resolutions: resolutions,
+                      isColorSupported: caps.is_color_supported,
+                      isMonochromeSupported: caps.is_monochrome_supported,
+                      supportsLandscape: caps.supports_landscape,
+                    );
+                    sendPort.send(_GetWindowsCapsResponse(data.id, model));
+                  } finally {
+                    bindings.free_windows_printer_capabilities(capsPtr);
+                  }
+                }
+              } finally {
+                malloc.free(namePtr);
+              }
+            } catch (e, s) {
+              sendPort.send(_ErrorResponse(data.id, e, s));
+            }
+          } else if (data is _OpenPrinterPropertiesRequest) {
+            try {
+              final namePtr = data.printerName.toNativeUtf8();
+              try {
+                final result = bindings.open_printer_properties(namePtr.cast(), data.hwnd);
+                final responseResult = switch (result) {
+                  1 => PrinterPropertiesResult.ok,
+                  2 => PrinterPropertiesResult.cancel,
+                  _ => PrinterPropertiesResult.error,
+                };
+                sendPort.send(_OpenPrinterPropertiesResponse(data.id, responseResult));
+              } finally {
+                malloc.free(namePtr);
+              }
+            } catch (e, s) {
+              sendPort.send(_ErrorResponse(data.id, e, s));
+            }
           } else if (data is _PrintPdfRequest) {
             try {
               final namePtr = data.printerName.toNativeUtf8();
@@ -1056,6 +1140,9 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
                 final options = {...?data.options};
                 if (data.scaling is PdfPrintScalingCustom) {
                   options['custom-scale-factor'] = (data.scaling as PdfPrintScalingCustom).scale.toString();
+                }
+                if (Platform.isWindows) {
+                  // No option remapping is needed for Windows.
                 }
                 if (Platform.isMacOS || Platform.isLinux) {
                   if (data.copies > 1) options['copies'] = data.copies.toString();
@@ -1162,7 +1249,10 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
               }
               try {
                 final options = {...?data.options};
-                if (Platform.isMacOS || Platform.isLinux) {
+                if (Platform.isWindows) {
+                  // No option remapping is needed for Windows.
+                  // The C code parses these options directly.
+                } else if (Platform.isMacOS || Platform.isLinux) {
                   if (options.containsKey('orientation')) {
                     final orientationValue = options.remove('orientation');
                     options['orientation-requested'] = orientationValue == 'landscape' ? '4' : '3';
@@ -1263,6 +1353,9 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
                 final options = {...?data.options};
                 if (data.scaling is PdfPrintScalingCustom) {
                   options['custom-scale-factor'] = (data.scaling as PdfPrintScalingCustom).scale.toString();
+                }
+                if (Platform.isWindows) {
+                  // No option remapping is needed for Windows.
                 }
                 if (Platform.isMacOS || Platform.isLinux) {
                   if (data.copies > 1) options['copies'] = data.copies.toString();
