@@ -841,11 +841,12 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
           final ole32 = DynamicLibrary.open('ole32.dll');
           final coInitializeEx = ole32.lookup<NativeFunction<Int32 Function(Pointer, Uint32)>>('CoInitializeEx');
           final coInitializeExFunc = coInitializeEx.asFunction<int Function(Pointer, int)>();
-          // Initialize the thread for multi-threaded operations. This is crucial for
-          // worker threads that don't have a message loop. Using COINIT_APARTMENTTHREADED
-          // (STA) can cause severe performance issues (timeouts) if the thread doesn't pump messages.
-          const coinitMultiThreaded = 0x0;
-          coInitializeExFunc(nullptr, coinitMultiThreaded);
+          // Revert to STA (Single-Threaded Apartment) as some printer drivers
+          // have strict requirements for it. To prevent the thread from hanging,
+          // we will manually pump the Windows message queue from the native C code
+          // during long-running operations.
+          const coinitApartmentthreaded = 0x2;
+          coInitializeExFunc(nullptr, coinitApartmentthreaded);
           // We don't check the HRESULT. It's okay if it's already initialized (S_FALSE).
           // We just need to ensure it's been called once for this thread.
         } catch (e) {
