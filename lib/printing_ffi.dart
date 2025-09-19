@@ -166,67 +166,42 @@ class PrintingFfi {
       // isolate will cause a crash.
       final optionsMap = _buildOptions(options);
       final alignment = optionsMap.remove('alignment') ?? 'center';
-      final namePtr = printerName.toNativeUtf8();
-      final pathPtr = pdfFilePath.toNativeUtf8();
-      final docNamePtr = docName.toNativeUtf8();
-      final pageRangeValue = pageRange?.toValue();
-      final alignmentPtr = alignment.toNativeUtf8();
-      final pageRangePtr = pageRangeValue?.toNativeUtf8() ?? nullptr;
-      try {
-        final opts = {...optionsMap};
-        if (scaling is PdfPrintScalingCustom) {
-          opts['custom-scale-factor'] = (scaling).scale.toString();
-        }
-
-        final int numOptions = opts.length;
-        Pointer<Pointer<Utf8>> keysPtr = nullptr;
-        Pointer<Pointer<Utf8>> valuesPtr = nullptr;
-        if (numOptions > 0) {
-          keysPtr = malloc<Pointer<Utf8>>(numOptions);
-          valuesPtr = malloc<Pointer<Utf8>>(numOptions);
-          int i = 0;
-          for (var entry in opts.entries) {
-            keysPtr[i] = entry.key.toNativeUtf8();
-            valuesPtr[i] = entry.value.toNativeUtf8();
-            i++;
-          }
-        }
-
-        try {
-          final bool result = _bindings.print_pdf(
-            namePtr.cast(),
-            pathPtr.cast(),
-            docNamePtr.cast(),
-            scaling.nativeValue,
-            copies ?? 1,
-            pageRangePtr.cast(),
-            numOptions,
-            keysPtr.cast(),
-            valuesPtr.cast(),
-            alignmentPtr.cast(),
-          );
-          if (!result) {
-            final errorMsg = _getLastError().toDartString();
-            throw PrintingFfiException(errorMsg);
-          }
-          return true;
-        } finally {
-          if (numOptions > 0) {
-            for (var i = 0; i < numOptions; i++) {
-              malloc.free(keysPtr[i]);
-              malloc.free(valuesPtr[i]);
-            }
-            malloc.free(keysPtr);
-            malloc.free(valuesPtr);
-          }
-        }
-      } finally {
-        malloc.free(namePtr);
-        malloc.free(pathPtr);
-        malloc.free(docNamePtr);
-        if (pageRangePtr != nullptr) malloc.free(pageRangePtr);
-        malloc.free(alignmentPtr);
-      }
+      return await _performWindowsPdfPrintFfiCall<bool>(
+        printerName: printerName,
+        pdfFilePath: pdfFilePath,
+        docName: docName,
+        options: optionsMap,
+        scaling: scaling,
+        copies: copies,
+        pageRange: pageRange,
+        alignment: alignment,
+        nativeCall:
+            (
+              namePtr,
+              pathPtr,
+              docNamePtr,
+              scalingNativeValue,
+              copiesValue,
+              pageRangePtr,
+              numOptions,
+              keysPtr,
+              valuesPtr,
+              alignmentPtr,
+            ) {
+              return _bindings.print_pdf(
+                namePtr,
+                pathPtr,
+                docNamePtr,
+                scalingNativeValue,
+                copiesValue,
+                pageRangePtr,
+                numOptions,
+                keysPtr.cast<Pointer<Char>>(),
+                valuesPtr.cast<Pointer<Char>>(),
+                alignmentPtr,
+              );
+            },
+      );
     }
 
     final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
@@ -543,57 +518,32 @@ class PrintingFfi {
       // Windows raw data printing must be done on the main isolate due to thread-affinity
       // requirements of the underlying Windows GDI APIs. Running this in a helper
       // isolate can cause a crash.
-      final namePtr = printerName.toNativeUtf8();
-      final docNamePtr = docName.toNativeUtf8();
-      final dataPtr = malloc<Uint8>(data.length);
-      for (var i = 0; i < data.length; i++) {
-        dataPtr[i] = data[i];
-      }
-      try {
-        final int numOptions = options.length;
-        Pointer<Pointer<Utf8>> keysPtr = nullptr;
-        Pointer<Pointer<Utf8>> valuesPtr = nullptr;
-        if (numOptions > 0) {
-          keysPtr = malloc<Pointer<Utf8>>(numOptions);
-          valuesPtr = malloc<Pointer<Utf8>>(numOptions);
-          int i = 0;
-          for (var entry in options.entries) {
-            keysPtr[i] = entry.key.toNativeUtf8();
-            valuesPtr[i] = entry.value.toNativeUtf8();
-            i++;
-          }
-        }
-
-        try {
-          final int jobId = _bindings.submit_raw_data_job(
-            namePtr.cast(),
-            dataPtr,
-            data.length,
-            docNamePtr.cast(),
-            numOptions,
-            keysPtr.cast(),
-            valuesPtr.cast(),
-          );
-          if (jobId <= 0) {
-            final errorMsg = _getLastError().toDartString();
-            throw PrintingFfiException(errorMsg);
-          }
-          return jobId;
-        } finally {
-          if (numOptions > 0) {
-            for (var i = 0; i < numOptions; i++) {
-              malloc.free(keysPtr[i]);
-              malloc.free(valuesPtr[i]);
-            }
-            malloc.free(keysPtr);
-            malloc.free(valuesPtr);
-          }
-        }
-      } finally {
-        malloc.free(namePtr);
-        malloc.free(docNamePtr);
-        malloc.free(dataPtr);
-      }
+      return await _performWindowsRawDataPrintFfiCall(
+        printerName: printerName,
+        data: data,
+        docName: docName,
+        options: options,
+        nativeCall:
+            (
+              namePtr,
+              dataPtr,
+              dataLength,
+              docNamePtr,
+              numOptions,
+              keysPtr,
+              valuesPtr,
+            ) {
+              return _bindings.submit_raw_data_job(
+                namePtr,
+                dataPtr,
+                dataLength,
+                docNamePtr,
+                numOptions,
+                keysPtr.cast<Pointer<Char>>(),
+                valuesPtr.cast<Pointer<Char>>(),
+              );
+            },
+      );
     }
 
     final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
@@ -625,67 +575,42 @@ class PrintingFfi {
       // Windows PDF printing must be done on the main isolate due to thread-affinity
       // requirements of the underlying Windows GDI APIs. Running this in a helper
       // isolate will cause a crash.
-      final namePtr = printerName.toNativeUtf8();
-      final pathPtr = pdfFilePath.toNativeUtf8();
-      final docNamePtr = docName.toNativeUtf8();
-      final pageRangeValue = pageRange?.toValue();
-      final alignmentPtr = alignment.toNativeUtf8();
-      final pageRangePtr = pageRangeValue?.toNativeUtf8() ?? nullptr;
-      try {
-        final opts = {...options};
-        if (scaling is PdfPrintScalingCustom) {
-          opts['custom-scale-factor'] = (scaling).scale.toString();
-        }
-
-        final int numOptions = opts.length;
-        Pointer<Pointer<Utf8>> keysPtr = nullptr;
-        Pointer<Pointer<Utf8>> valuesPtr = nullptr;
-        if (numOptions > 0) {
-          keysPtr = malloc<Pointer<Utf8>>(numOptions);
-          valuesPtr = malloc<Pointer<Utf8>>(numOptions);
-          int i = 0;
-          for (var entry in opts.entries) {
-            keysPtr[i] = entry.key.toNativeUtf8();
-            valuesPtr[i] = entry.value.toNativeUtf8();
-            i++;
-          }
-        }
-
-        try {
-          final int jobId = _bindings.submit_pdf_job(
-            namePtr.cast(),
-            pathPtr.cast(),
-            docNamePtr.cast(),
-            scaling.nativeValue,
-            copies ?? 1,
-            pageRangePtr.cast(),
-            numOptions,
-            keysPtr.cast(),
-            valuesPtr.cast(),
-            alignmentPtr.cast(),
-          );
-          if (jobId <= 0) {
-            final errorMsg = _getLastError().toDartString();
-            throw PrintingFfiException(errorMsg);
-          }
-          return jobId;
-        } finally {
-          if (numOptions > 0) {
-            for (var i = 0; i < numOptions; i++) {
-              malloc.free(keysPtr[i]);
-              malloc.free(valuesPtr[i]);
-            }
-            malloc.free(keysPtr);
-            malloc.free(valuesPtr);
-          }
-        }
-      } finally {
-        malloc.free(namePtr);
-        malloc.free(pathPtr);
-        malloc.free(docNamePtr);
-        if (pageRangePtr != nullptr) malloc.free(pageRangePtr);
-        malloc.free(alignmentPtr);
-      }
+      return await _performWindowsPdfPrintFfiCall<int>(
+        printerName: printerName,
+        pdfFilePath: pdfFilePath,
+        docName: docName,
+        options: options,
+        scaling: scaling,
+        copies: copies,
+        pageRange: pageRange,
+        alignment: alignment,
+        nativeCall:
+            (
+              namePtr,
+              pathPtr,
+              docNamePtr,
+              scalingNativeValue,
+              copiesValue,
+              pageRangePtr,
+              numOptions,
+              keysPtr,
+              valuesPtr,
+              alignmentPtr,
+            ) {
+              return _bindings.submit_pdf_job(
+                namePtr,
+                pathPtr,
+                docNamePtr,
+                scalingNativeValue,
+                copiesValue,
+                pageRangePtr,
+                numOptions,
+                keysPtr.cast<Pointer<Char>>(),
+                valuesPtr.cast<Pointer<Char>>(),
+                alignmentPtr,
+              );
+            },
+      );
     }
 
     final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
@@ -705,6 +630,169 @@ class PrintingFfi {
     _submitPdfJobRequests[requestId] = completer;
     helperIsolateSendPort.send(request);
     return completer.future;
+  }
+
+  /// Encapsulates common Windows FFI call logic for PDF printing.
+  /// Handles pointer conversions, memory allocation/deallocation,
+  /// and error handling for print operations.
+  Future<T> _performWindowsPdfPrintFfiCall<T>({
+    required String printerName,
+    required String pdfFilePath,
+    required String docName,
+    required Map<String, String> options,
+    PdfPrintScaling? scaling,
+    int? copies,
+    PageRange? pageRange,
+    String? alignment,
+    required T Function(
+      Pointer<Char> namePtr,
+      Pointer<Char> pathPtr,
+      Pointer<Char> docNamePtr,
+      int scalingNativeValue,
+      int copiesValue,
+      Pointer<Char> pageRangePtr,
+      int numOptions,
+      Pointer<Pointer<Utf8>> keysPtr,
+      Pointer<Pointer<Utf8>> valuesPtr,
+      Pointer<Char> alignmentPtr,
+    )
+    nativeCall,
+  }) async {
+    final namePtr = printerName.toNativeUtf8();
+    final pathPtr = pdfFilePath.toNativeUtf8();
+    final docNamePtr = docName.toNativeUtf8();
+    final pageRangeValue = pageRange?.toValue();
+    String actualAlignment = alignment ?? 'center';
+    final alignmentPtr = actualAlignment.toNativeUtf8();
+    final pageRangePtr = pageRangeValue?.toNativeUtf8() ?? nullptr;
+
+    final opts = {...options};
+    if (scaling is PdfPrintScalingCustom) {
+      opts['custom-scale-factor'] = (scaling).scale.toString();
+    }
+
+    final int numOptions = opts.length;
+    Pointer<Pointer<Utf8>> keysPtr = nullptr;
+    Pointer<Pointer<Utf8>> valuesPtr = nullptr;
+    if (numOptions > 0) {
+      keysPtr = malloc<Pointer<Utf8>>(numOptions);
+      valuesPtr = malloc<Pointer<Utf8>>(numOptions);
+      int i = 0;
+      for (var entry in opts.entries) {
+        keysPtr[i] = entry.key.toNativeUtf8();
+        valuesPtr[i] = entry.value.toNativeUtf8();
+        i++;
+      }
+    }
+
+    try {
+      final result = nativeCall(
+        namePtr.cast(),
+        pathPtr.cast(),
+        docNamePtr.cast(),
+        scaling?.nativeValue ?? PdfPrintScaling.fitToPrintableArea.nativeValue,
+        copies ?? 1,
+        pageRangePtr.cast(),
+        numOptions,
+        keysPtr,
+        valuesPtr,
+        alignmentPtr.cast(),
+      );
+
+      if (result is bool && !result) {
+        final errorMsg = _getLastError().toDartString();
+        throw PrintingFfiException(errorMsg);
+      } else if (result is int && result <= 0) {
+        final errorMsg = _getLastError().toDartString();
+        throw PrintingFfiException(errorMsg);
+      }
+      return result;
+    } finally {
+      malloc.free(namePtr);
+      malloc.free(pathPtr);
+      malloc.free(docNamePtr);
+      malloc.free(alignmentPtr);
+      if (pageRangePtr != nullptr) malloc.free(pageRangePtr);
+      if (numOptions > 0) {
+        for (var i = 0; i < numOptions; i++) {
+          malloc.free(keysPtr[i]);
+          malloc.free(valuesPtr[i]);
+        }
+        malloc.free(keysPtr);
+        malloc.free(valuesPtr);
+      }
+    }
+  }
+
+  /// Encapsulates common Windows FFI call logic for raw data printing.
+  /// Handles pointer conversions, memory allocation/deallocation,
+  /// and error handling for print operations.
+  Future<int> _performWindowsRawDataPrintFfiCall({
+    required String printerName,
+    required Uint8List data,
+    required String docName,
+    required Map<String, String> options,
+    required int Function(
+      Pointer<Char> namePtr,
+      Pointer<Uint8> dataPtr,
+      int dataLength,
+      Pointer<Char> docNamePtr,
+      int numOptions,
+      Pointer<Pointer<Utf8>> keysPtr,
+      Pointer<Pointer<Utf8>> valuesPtr,
+    )
+    nativeCall,
+  }) async {
+    final namePtr = printerName.toNativeUtf8();
+    final docNamePtr = docName.toNativeUtf8();
+    final dataPtr = malloc<Uint8>(data.length);
+    for (var i = 0; i < data.length; i++) {
+      dataPtr[i] = data[i];
+    }
+
+    final int numOptions = options.length;
+    Pointer<Pointer<Utf8>> keysPtr = nullptr;
+    Pointer<Pointer<Utf8>> valuesPtr = nullptr;
+    if (numOptions > 0) {
+      keysPtr = malloc<Pointer<Utf8>>(numOptions);
+      valuesPtr = malloc<Pointer<Utf8>>(numOptions);
+      int i = 0;
+      for (var entry in options.entries) {
+        keysPtr[i] = entry.key.toNativeUtf8();
+        valuesPtr[i] = entry.value.toNativeUtf8();
+        i++;
+      }
+    }
+
+    try {
+      final jobId = nativeCall(
+        namePtr.cast(),
+        dataPtr,
+        data.length,
+        docNamePtr.cast(),
+        numOptions,
+        keysPtr,
+        valuesPtr,
+      );
+
+      if (jobId <= 0) {
+        final errorMsg = _getLastError().toDartString();
+        throw PrintingFfiException(errorMsg);
+      }
+      return jobId;
+    } finally {
+      malloc.free(namePtr);
+      malloc.free(docNamePtr);
+      malloc.free(dataPtr);
+      if (numOptions > 0) {
+        for (var i = 0; i < numOptions; i++) {
+          malloc.free(keysPtr[i]);
+          malloc.free(valuesPtr[i]);
+        }
+        malloc.free(keysPtr);
+        malloc.free(valuesPtr);
+      }
+    }
   }
 
   int _nextPrintRequestId = 0;
