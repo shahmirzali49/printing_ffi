@@ -140,7 +140,7 @@ class AdvancedTab extends StatelessWidget {
   });
 
   final bool isLoading;
-  final List<CupsOption>? cupsOptions;
+  final List<CupsOptionModel>? cupsOptions;
   final Map<String, String> selectedCupsOptions;
   final void Function(String key, String value) onOptionChanged;
   final VoidCallback onPrint;
@@ -199,7 +199,7 @@ class AdvancedTab extends StatelessWidget {
           selectedOptionBuilder: (context, value) {
             final selectedChoice = option.supportedValues.firstWhere(
               (c) => c.choice == value,
-              orElse: () => CupsOptionChoice(choice: value, text: value),
+              orElse: () => CupsOptionChoiceModel(choice: value, text: value),
             );
             return Text(selectedChoice.text);
           },
@@ -243,7 +243,7 @@ class PlatformSettings extends StatelessWidget {
   });
 
   final bool isLoading;
-  final WindowsPrinterCapabilities? windowsCapabilities;
+  final WindowsPrinterCapabilitiesModel? windowsCapabilities;
   final WindowsPaperSize? selectedPaperSize;
   final ValueChanged<WindowsPaperSize?> onPaperSizeChanged;
   final WindowsPaperSource? selectedPaperSource;
@@ -729,7 +729,10 @@ class _PrintStatusDialogState extends State<PrintStatusDialog> {
     if (_job == null || !mounted) return;
     setState(() => _isCancelling = true);
     try {
-      final success = await cancelPrintJob(widget.printerName, _job!.id);
+      final success = await PrintingFfi.instance.cancelPrintJob(
+        widget.printerName,
+        _job!.id,
+      );
       if (!mounted) return;
       Navigator.of(context).pop();
       if (success) {
