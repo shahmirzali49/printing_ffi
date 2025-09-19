@@ -539,6 +539,63 @@ class PrintingFfi {
     String docName = 'Flutter Document',
     Map<String, String> options = const {},
   }) async {
+    if (Platform.isWindows) {
+      // Windows raw data printing must be done on the main isolate due to thread-affinity
+      // requirements of the underlying Windows GDI APIs. Running this in a helper
+      // isolate can cause a crash.
+      final namePtr = printerName.toNativeUtf8();
+      final docNamePtr = docName.toNativeUtf8();
+      final dataPtr = malloc<Uint8>(data.length);
+      for (var i = 0; i < data.length; i++) {
+        dataPtr[i] = data[i];
+      }
+      try {
+        final int numOptions = options.length;
+        Pointer<Pointer<Utf8>> keysPtr = nullptr;
+        Pointer<Pointer<Utf8>> valuesPtr = nullptr;
+        if (numOptions > 0) {
+          keysPtr = malloc<Pointer<Utf8>>(numOptions);
+          valuesPtr = malloc<Pointer<Utf8>>(numOptions);
+          int i = 0;
+          for (var entry in options.entries) {
+            keysPtr[i] = entry.key.toNativeUtf8();
+            valuesPtr[i] = entry.value.toNativeUtf8();
+            i++;
+          }
+        }
+
+        try {
+          final int jobId = _bindings.submit_raw_data_job(
+            namePtr.cast(),
+            dataPtr,
+            data.length,
+            docNamePtr.cast(),
+            numOptions,
+            keysPtr.cast(),
+            valuesPtr.cast(),
+          );
+          if (jobId <= 0) {
+            final errorMsg = _getLastError().toDartString();
+            throw PrintingFfiException(errorMsg);
+          }
+          return jobId;
+        } finally {
+          if (numOptions > 0) {
+            for (var i = 0; i < numOptions; i++) {
+              malloc.free(keysPtr[i]);
+              malloc.free(valuesPtr[i]);
+            }
+            malloc.free(keysPtr);
+            malloc.free(valuesPtr);
+          }
+        }
+      } finally {
+        malloc.free(namePtr);
+        malloc.free(docNamePtr);
+        malloc.free(dataPtr);
+      }
+    }
+
     final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
     final int requestId = _nextSubmitRawDataJobRequestId++;
     final request = _SubmitRawDataJobRequest(
@@ -956,6 +1013,20 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
 
       final helperReceivePort = ReceivePort()
         ..listen((dynamic data) {
+          if (Platform.isWindows && (data is _PrintPdfRequest || data is _SubmitPdfJobRequest || data is _SubmitRawDataJobRequest)) {
+            final error = UnsupportedError('This operation is not supported in a helper isolate on Windows.');
+            final stackTrace = StackTrace.current;
+            final int requestId;
+            if (data is _PrintPdfRequest) {
+              requestId = data.id;
+            } else if (data is _SubmitPdfJobRequest) {
+              requestId = data.id;
+            } else {
+              requestId = (data as _SubmitRawDataJobRequest).id;
+            }
+            sendPort.send(_ErrorResponse(requestId, error, stackTrace));
+            return;
+          }
           if (data is _PrintRequest) {
             try {
               final namePtr = data.printerName.toNativeUtf8();
@@ -1146,8 +1217,6 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
               sendPort.send(_ErrorResponse(data.id, e, s));
             }
           } else if (data is _PrintPdfRequest) {
-            // On Windows, PDF printing is handled on the main isolate. This is a safeguard.
-            if (Platform.isWindows) return;
             try {
               final namePtr = data.printerName.toNativeUtf8();
               final pathPtr = data.pdfFilePath.toNativeUtf8();
@@ -1355,8 +1424,6 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
               sendPort.send(_ErrorResponse(data.id, e, s));
             }
           } else if (data is _SubmitPdfJobRequest) {
-            // On Windows, PDF printing is handled on the main isolate. This is a safeguard.
-            if (Platform.isWindows) return;
             try {
               final namePtr = data.printerName.toNativeUtf8();
               final pathPtr = data.pdfFilePath.toNativeUtf8();
