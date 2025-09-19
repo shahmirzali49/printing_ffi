@@ -834,6 +834,26 @@ class _ErrorResponse {
 void _helperIsolateEntryPoint(SendPort sendPort) {
   runZonedGuarded(
     () {
+      if (Platform.isWindows) {
+        // Initialize COM for the current thread. This is crucial for some Windows APIs,
+        // especially those related to printing and shell services, which may be
+        // used by printer drivers. Without this, calls can hang, fail, or perform
+        // very slowly when run from a background isolate.
+        // COINIT_APARTMENTTHREADED is a common requirement for UI-related components
+        // that printer drivers might interact with.
+        try {
+          final ole32 = DynamicLibrary.open('ole32.dll');
+          final coInitializeEx = ole32.lookup<NativeFunction<Int32 Function(Pointer, Uint32)>>('CoInitializeEx');
+          final coInitializeExFunc = coInitializeEx.asFunction<int Function(Pointer, int)>();
+          const coinitApartmentthreaded = 0x2;
+          coInitializeExFunc(nullptr, coinitApartmentthreaded);
+          // We don't check the HRESULT. It's okay if it's already initialized (S_FALSE).
+          // We just need to ensure it's been called once for this thread.
+        } catch (e) {
+          // If CoInitializeEx is not available or fails, we'll proceed without it,
+          // but this might be the cause of the reported performance issues.
+        }
+      }
       final dylib = () {
         if (Platform.isMacOS) {
           return DynamicLibrary.open('${PrintingFfi._libName}.framework/${PrintingFfi._libName}');
