@@ -770,8 +770,13 @@ typedef LogHandler = void Function(String message);
 // The user-provided log handler.
 LogHandler? _customLogHandler;
 
+// The NativeCallable for the log handler.
+// This must be a top-level variable to be accessible from the top-level _logHandler.
+// It also needs to be managed (created and closed).
+NativeCallable<Void Function(Pointer<Char>)>? _logCallback;
+
 /// Top-level function to handle logs from native code.
-/// This must be a top-level or static function to be used with `Pointer.fromFunction`.
+/// This is the target for the NativeCallable.
 void _logHandler(Pointer<Char> message) {
   final logMessage = message.cast<Utf8>().toDartString();
   if (_customLogHandler != null) {
@@ -785,16 +790,27 @@ void _logHandler(Pointer<Char> message) {
 /// Initializes the printing_ffi plugin.
 ///
 /// This function sets up necessary configurations, such as registering a
-/// log handler to receive debug messages from the native code. It's recommended
-/// to call this once when your application starts. An optional [logHandler]
-/// can be provided to process log messages from the native layer.
+/// log handler to receive debug messages from the native code. It should be
+/// called once when your application starts. An optional [logHandler] can be
+/// provided to process log messages from the native layer.
+///
+/// This function is idempotent; calling it more than once is safe.
 void initializePrintingFfi({LogHandler? logHandler}) {
+  // If already initialized, just update the handler and return.
+  if (_logCallback != null) {
+    _customLogHandler = logHandler;
+    return;
+  }
+
   _customLogHandler = logHandler;
+
+  // Create a NativeCallable that can be called from any thread.
+  _logCallback = NativeCallable<Void Function(Pointer<Char>)>.listener(_logHandler);
+
   final registerer = _dylib.lookup<NativeFunction<_RegisterLogCallbackNative>>('register_log_callback').asFunction<_RegisterLogCallback>();
-  // Use Pointer.fromFunction to get a pointer to our top-level log handler.
-  // This is the correct and most efficient way to create a callback from a
-  // static or top-level function.
-  registerer(Pointer.fromFunction<Void Function(Pointer<Char>)>(_logHandler));
+
+  // Pass the native function pointer from the NativeCallable to the C side.
+  registerer(_logCallback!.nativeFunction);
 }
 
 // Example functions from template
