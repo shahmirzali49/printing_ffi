@@ -707,19 +707,22 @@ class _PrintStatusDialogState extends State<PrintStatusDialog> {
   @override
   void initState() {
     super.initState();
-    _subscription = widget.jobStream.listen(
-      (job) {
-        if (mounted) setState(() => _job = job);
-      },
-      onError: (error) {
-        if (mounted) setState(() => _error = error);
-      },
-      onDone: () {
-        if (mounted) {
-          setState(() => _isDone = true);
-        }
-      },
-    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _subscription = widget.jobStream.listen(
+        (job) {
+          if (mounted) setState(() => _job = job);
+        },
+        onError: (error) {
+          if (mounted) setState(() => _error = error);
+        },
+        onDone: () {
+          if (mounted) {
+            setState(() => _isDone = true);
+          }
+        },
+      );
+    });
   }
 
   Future<void> _cancelJob() async {
