@@ -559,7 +559,7 @@ class PrintingFfi {
     _submitPdfJobRequests.clear();
   }
 
-  Future<SendPort> get _helperIsolateSendPort {
+  Future<SendPort> get _helperIsolateSendPort async {
     if (_helperIsolateSendPortFuture != null) {
       return _helperIsolateSendPortFuture!;
     }
@@ -671,14 +671,16 @@ class PrintingFfi {
       throw UnsupportedError('Unsupported message type: ${data.runtimeType}');
     });
 
-    Isolate.spawn(
-      _helperIsolateEntryPoint,
-      receivePort.sendPort,
-    ).catchError((error, stack) {
+    try {
+      await Isolate.spawn(
+        _helperIsolateEntryPoint,
+        receivePort.sendPort,
+      );
+    } catch (error, stack) {
       if (!completer.isCompleted) {
         completer.completeError(error, stack);
       }
-    });
+    }
 
     _helperIsolateSendPortFuture = completer.future;
     return _helperIsolateSendPortFuture!;
