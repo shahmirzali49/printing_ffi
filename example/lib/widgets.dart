@@ -790,9 +790,16 @@ class _PrintStatusDialogState extends State<PrintStatusDialog> {
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
 
+    final String titleText;
+    if (_currentJob != null) {
+      titleText = 'Tracking Job #${_currentJob!.id}';
+    } else {
+      titleText = 'Tracking Print Job...';
+    }
+
     final isJobTerminal =
         _currentJob != null && _isTerminalStatus(_currentJob!.status);
-    final isSuccess =
+    final isSuccessState =
         _currentJob != null &&
         (_currentJob!.status == PrintJobStatus.completed ||
             _currentJob!.status == PrintJobStatus.printed);
@@ -802,6 +809,13 @@ class _PrintStatusDialogState extends State<PrintStatusDialog> {
             _currentJob!.status == PrintJobStatus.aborted ||
             _currentJob!.status == PrintJobStatus.canceled);
     final hasError = _error != null || isErrorState;
+
+    // Handle the case where the stream completes without ever emitting a job.
+    // This usually means the job printed so quickly it was never seen in the queue.
+    final isImplicitlyComplete =
+        _isDone && _currentJob == null && _error == null;
+
+    final isSuccess = isSuccessState || isImplicitlyComplete;
 
     final isFinished = isJobTerminal || _isDone || hasError;
 
@@ -837,11 +851,13 @@ class _PrintStatusDialogState extends State<PrintStatusDialog> {
         ),
         textAlign: TextAlign.center,
       );
+    } else if (isImplicitlyComplete) {
+      statusText = Text('Job Completed', style: theme.textTheme.large);
     } else if (_currentJob == null) {
       statusText = Text('Submitting job...', style: theme.textTheme.large);
     } else {
       statusText = Text(
-        'Job #${_currentJob!.id}: ${_currentJob!.statusDescription}',
+        _currentJob!.statusDescription,
         style: theme.textTheme.large,
         textAlign: TextAlign.center,
       );
@@ -902,7 +918,7 @@ class _PrintStatusDialogState extends State<PrintStatusDialog> {
     );
 
     return ShadDialog.alert(
-      title: const Text('Tracking Print Job...'),
+      title: Text(titleText),
       actions: <Widget>[
         if (isFinished)
           ShadButton(
