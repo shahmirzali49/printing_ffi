@@ -9,6 +9,49 @@ import 'models/models.dart';
 
 export 'models/models.dart';
 
+void _remapCupsOptions(Map<String, String> options) {
+  if (Platform.isMacOS || Platform.isLinux) {
+    if (options.containsKey('orientation')) {
+      final orientationValue = options.remove('orientation');
+      options['orientation-requested'] = orientationValue == 'landscape' ? '4' : '3';
+    }
+    if (options.containsKey('color-mode')) {
+      final colorValue = options.remove('color-mode');
+      options['print-color-mode'] = colorValue!;
+    }
+    if (options.containsKey('print-quality')) {
+      final qualityValue = options.remove('print-quality');
+      switch (qualityValue) {
+        case 'draft':
+        case 'low':
+          options['print-quality'] = '3';
+          break;
+        case 'normal':
+          options['print-quality'] = '4';
+          break;
+        case 'high':
+          options['print-quality'] = '5';
+          break;
+      }
+    }
+
+    if (options.containsKey('duplex')) {
+      final duplexValue = options.remove('duplex');
+      switch (duplexValue) {
+        case 'singleSided':
+          options['sides'] = 'one-sided';
+          break;
+        case 'duplexLongEdge':
+          options['sides'] = 'two-sided-long-edge';
+          break;
+        case 'duplexShortEdge':
+          options['sides'] = 'two-sided-short-edge';
+          break;
+      }
+    }
+  }
+}
+
 class PrintingFfi {
   PrintingFfi._();
   static final PrintingFfi instance = PrintingFfi._();
@@ -880,49 +923,6 @@ class _DisposeRequest {
 void _helperIsolateEntryPoint(SendPort sendPort) {
   runZonedGuarded(
     () {
-      void _remapCupsOptions(Map<String, String> options) {
-        if (Platform.isMacOS || Platform.isLinux) {
-          if (options.containsKey('orientation')) {
-            final orientationValue = options.remove('orientation');
-            options['orientation-requested'] = orientationValue == 'landscape' ? '4' : '3';
-          }
-          if (options.containsKey('color-mode')) {
-            final colorValue = options.remove('color-mode');
-            options['print-color-mode'] = colorValue!;
-          }
-          if (options.containsKey('print-quality')) {
-            final qualityValue = options.remove('print-quality');
-            switch (qualityValue) {
-              case 'draft':
-              case 'low':
-                options['print-quality'] = '3';
-                break;
-              case 'normal':
-                options['print-quality'] = '4';
-                break;
-              case 'high':
-                options['print-quality'] = '5';
-                break;
-            }
-          }
-
-          if (options.containsKey('duplex')) {
-            final duplexValue = options.remove('duplex');
-            switch (duplexValue) {
-              case 'singleSided':
-                options['sides'] = 'one-sided';
-                break;
-              case 'duplexLongEdge':
-                options['sides'] = 'two-sided-long-edge';
-                break;
-              case 'duplexShortEdge':
-                options['sides'] = 'two-sided-short-edge';
-                break;
-            }
-          }
-        }
-      }
-
       if (Platform.isWindows) {
         // Initialize COM for the current thread. This is crucial for some Windows APIs,
         // especially those related to printing and shell services, which may be
