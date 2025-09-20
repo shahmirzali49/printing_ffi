@@ -40,17 +40,17 @@ typedef void (*FPDF_ClosePage_t)(FPDF_PAGE page);
 // Struct to hold all our dynamically loaded PDFium function pointers.
 static struct {
     HMODULE module;
-    FPDF_InitLibraryWithConfig_t InitLibraryWithConfig;
-    FPDF_LoadDocument_t LoadDocument;
-    FPDF_GetLastError_t GetLastError;
-    FPDF_CloseDocument_t CloseDocument;
-    FPDF_GetPageCount_t GetPageCount;
-    FPDF_LoadPage_t LoadPage;
-    FPDF_GetPageWidthF_t GetPageWidthF;
-    FPDF_GetPageHeightF_t GetPageHeightF;
-    FPDFPage_GetRotation_t GetPageRotation;
-    FPDF_RenderPage_t RenderPage;
-    FPDF_ClosePage_t ClosePage;
+    FPDF_InitLibraryWithConfig_t FPDF_InitLibraryWithConfig;
+    FPDF_LoadDocument_t FPDF_LoadDocument;
+    FPDF_GetLastError_t FPDF_GetLastError;
+    FPDF_CloseDocument_t FPDF_CloseDocument;
+    FPDF_GetPageCount_t FPDF_GetPageCount;
+    FPDF_LoadPage_t FPDF_LoadPage;
+    FPDF_GetPageWidthF_t FPDF_GetPageWidthF;
+    FPDF_GetPageHeightF_t FPDF_GetPageHeightF;
+    FPDFPage_GetRotation_t FPDFPage_GetRotation;
+    FPDF_RenderPage_t FPDF_RenderPage;
+    FPDF_ClosePage_t FPDF_ClosePage;
 } g_pdfium = {0};
 
 static bool s_pdfium_library_initialized = false;
@@ -528,7 +528,7 @@ FFI_PLUGIN_EXPORT void init_pdfium_library()
         memset(&config, 0, sizeof(config));
         config.version = 2;
         // Initialize the library using the dynamically loaded function pointer.
-        g_pdfium.InitLibraryWithConfig(&config);
+        g_pdfium.FPDF_InitLibraryWithConfig(&config);
         s_pdfium_library_initialized = true;
         LOG("PDFium library initialized explicitly.");
     }
@@ -1030,11 +1030,11 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
         return 0;
     }
 
-    FPDF_DOCUMENT doc = g_pdfium.LoadDocument(pdf_file_path, NULL);
+    FPDF_DOCUMENT doc = g_pdfium.FPDF_LoadDocument(pdf_file_path, NULL);
     if (!doc)
     {
-        set_last_error("Failed to load PDF document at path '%s'. Error code: %ld. The file may be missing, corrupt, or password-protected.", pdf_file_path, g_pdfium.GetLastError());
-        LOG("print_pdf_job_win: FPDF_LoadDocument failed for path: %s. Error: %ld", pdf_file_path, g_pdfium.GetLastError());
+        set_last_error("Failed to load PDF document at path '%s'. Error code: %ld. The file may be missing, corrupt, or password-protected.", pdf_file_path, g_pdfium.FPDF_GetLastError());
+        LOG("print_pdf_job_win: FPDF_LoadDocument failed for path: %s. Error: %ld", pdf_file_path, g_pdfium.FPDF_GetLastError());
         free(printer_name_w);
         return 0;
     }
@@ -1050,7 +1050,7 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
     {
         set_last_error("Failed to create device context (CreateDCW) for printer '%s'. Error: %lu. This often indicates an invalid printer name or driver issue.", printer_name, GetLastError());
         LOG("print_pdf_job_win: CreateDCW failed for printer '%s' with error %lu. This often indicates an invalid DEVMODE.", printer_name, GetLastError());
-        g_pdfium.CloseDocument(doc);
+        g_pdfium.FPDF_CloseDocument(doc);
         free(printer_name_w);
         return 0;
     }
@@ -1066,14 +1066,14 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
         if (doc_name_w)
             free(doc_name_w);
         DeleteDC(hdc);
-        g_pdfium.CloseDocument(doc);
+        g_pdfium.FPDF_CloseDocument(doc);
         free(printer_name_w);
         return 0;
     }
     // doc_name_w is used by the system, don't free it until EndDoc.
     LOG("print_pdf_job_win: StartDocW succeeded with Job ID: %d", job_id);
 
-    int page_count = g_pdfium.GetPageCount(doc);
+    int page_count = g_pdfium.FPDF_GetPageCount(doc);
     if (page_count <= 0)
     {
         set_last_error("Could not get page count from the PDF document. The file may be empty, corrupt, or in an unsupported format. (Page count: %d)", page_count);
@@ -1082,7 +1082,7 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
             free(doc_name_w);
         AbortDoc(hdc);
         DeleteDC(hdc);
-        g_pdfium.CloseDocument(doc);
+        g_pdfium.FPDF_CloseDocument(doc);
         free(printer_name_w);
         // We don't need to free pages_to_print as it's not allocated yet.
         return 0;
@@ -1098,7 +1098,7 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
             free(doc_name_w);
         AbortDoc(hdc);
         DeleteDC(hdc);
-        g_pdfium.CloseDocument(doc);
+        g_pdfium.FPDF_CloseDocument(doc);
         free(printer_name_w);
         return 0;
     }
@@ -1114,7 +1114,7 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
             free(doc_name_w);
         AbortDoc(hdc);
         DeleteDC(hdc);
-        g_pdfium.CloseDocument(doc);
+        g_pdfium.FPDF_CloseDocument(doc);
         free(printer_name_w);
         return 0;
     }
@@ -1182,7 +1182,7 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
             // Declare destination rectangle variables for the current page.
             int dest_x = 0, dest_y = 0, dest_width = 0, dest_height = 0;
 
-            FPDF_PAGE page = g_pdfium.LoadPage(doc, i);
+            FPDF_PAGE page = g_pdfium.FPDF_LoadPage(doc, i);
             if (!page)
             {
                 set_last_error("Failed to load PDF page %d.", i + 1);
@@ -1196,16 +1196,16 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
                 set_last_error("Failed to start page %d. Error: %lu.", i + 1, GetLastError());
                 LOG("print_pdf_job_win: StartPage failed for page %d with error %lu", i, GetLastError());
                 // Clean up the page resource before breaking from the loop.
-                g_pdfium.ClosePage(page);
+                g_pdfium.FPDF_ClosePage(page);
                 success = false;
                 break;
             }
 
             // --- Get PDF page dimensions and rotation ---
-            float pdf_width_pt = g_pdfium.GetPageWidthF(page);
-            float pdf_height_pt = g_pdfium.GetPageHeightF(page);
+            float pdf_width_pt = g_pdfium.FPDF_GetPageWidthF(page);
+            float pdf_height_pt = g_pdfium.FPDF_GetPageHeightF(page);
 
-            int rotation = g_pdfium.GetPageRotation(page);
+            int rotation = g_pdfium.FPDFPage_GetRotation(page);
             if (rotation == 1 || rotation == 3)
             { // 90 or 270 degrees, swap dimensions
                 float temp = pdf_width_pt;
@@ -1292,9 +1292,9 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
             LOG("print_pdf_job_win: Page %d: Final DestRect=(%d,%d, %dx%d)", i, dest_x, dest_y, dest_width, dest_height);
             // Render directly to the printer DC. The rotation argument is 0 because we already
             // swapped the page dimensions to calculate the correct aspect ratio for scaling.
-            g_pdfium.RenderPage(hdc, page, dest_x, dest_y, dest_width, dest_height, 0, FPDF_ANNOT);
+            g_pdfium.FPDF_RenderPage(hdc, page, dest_x, dest_y, dest_width, dest_height, 0, FPDF_ANNOT);
 
-            g_pdfium.ClosePage(page);
+            g_pdfium.FPDF_ClosePage(page);
 
             if (EndPage(hdc) <= 0)
             {
@@ -1321,7 +1321,7 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
     }
 
     DeleteDC(hdc);
-    g_pdfium.CloseDocument(doc);
+    g_pdfium.FPDF_CloseDocument(doc);
     free(printer_name_w);
 
     if (submit_job)
