@@ -851,8 +851,12 @@ class _PrintStatusDialogState extends State<PrintStatusDialog> {
         ),
         textAlign: TextAlign.center,
       );
-    } else if (isImplicitlyComplete) {
-      statusText = Text('Job Completed', style: theme.textTheme.large);
+    } else if (isImplicitlyComplete || isSuccessState) {
+      statusText = Text(
+        'Job Completed',
+        style: theme.textTheme.large,
+        textAlign: TextAlign.center,
+      );
     } else if (_currentJob == null) {
       statusText = Text('Submitting job...', style: theme.textTheme.large);
     } else {
