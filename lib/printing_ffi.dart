@@ -148,13 +148,18 @@ class PrintingFfi {
     final optionsMap = _buildOptions(options);
     final pageRangeValue = pageRange?.toValue();
     final alignment = optionsMap.remove('alignment') ?? 'center';
+    final finalOptions = {...optionsMap};
+    if (scaling is PdfPrintScalingCustom) {
+      finalOptions['custom-scale-factor'] = scaling.scale.toString();
+    }
+
     final _PrintPdfRequest request = _PrintPdfRequest(
       requestId,
       printerName,
       pdfFilePath,
       docName,
-      optionsMap,
-      scaling,
+      finalOptions,
+      scaling.nativeValue,
       copies ?? 1,
       pageRangeValue,
       alignment,
@@ -200,14 +205,18 @@ class PrintingFfi {
       submitJob: () {
         final optionsMap = _buildOptions(options);
         final alignment = optionsMap.remove('alignment') ?? 'center';
+        final finalOptions = {...optionsMap};
+        if (scaling is PdfPrintScalingCustom) {
+          finalOptions['custom-scale-factor'] = scaling.scale.toString();
+        }
         return _sendPdfJobRequest(
           printerName,
           pdfFilePath,
           docName: docName,
-          scaling: scaling,
+          scalingMode: scaling.nativeValue,
           copies: copies,
           pageRange: pageRange,
-          options: optionsMap,
+          options: finalOptions,
           alignment: alignment,
         );
       },
@@ -499,7 +508,7 @@ class PrintingFfi {
     String printerName,
     String pdfFilePath, {
     String docName = 'Flutter PDF Document',
-    PdfPrintScaling scaling = PdfPrintScaling.fitToPrintableArea,
+    required int scalingMode,
     int? copies,
     PageRange? pageRange,
     Map<String, String> options = const {},
@@ -514,7 +523,7 @@ class PrintingFfi {
       pdfFilePath,
       docName,
       options,
-      scaling,
+      scalingMode,
       copies ?? 1,
       pageRangeValue,
       alignment,
@@ -745,12 +754,12 @@ class _PrintPdfRequest {
   final String pdfFilePath;
   final String docName;
   final Map<String, String>? options;
-  final PdfPrintScaling scaling;
+  final int scalingMode;
   final int copies;
   final String? pageRange;
   final String alignment;
 
-  const _PrintPdfRequest(this.id, this.printerName, this.pdfFilePath, this.docName, this.options, this.scaling, this.copies, this.pageRange, this.alignment);
+  const _PrintPdfRequest(this.id, this.printerName, this.pdfFilePath, this.docName, this.options, this.scalingMode, this.copies, this.pageRange, this.alignment);
 }
 
 class _GetCupsOptionsRequest {
@@ -791,12 +800,12 @@ class _SubmitPdfJobRequest {
   final String pdfFilePath;
   final String docName;
   final Map<String, String>? options;
-  final PdfPrintScaling scaling;
+  final int scalingMode;
   final int copies;
   final String? pageRange;
   final String alignment;
 
-  const _SubmitPdfJobRequest(this.id, this.printerName, this.pdfFilePath, this.docName, this.options, this.scaling, this.copies, this.pageRange, this.alignment);
+  const _SubmitPdfJobRequest(this.id, this.printerName, this.pdfFilePath, this.docName, this.options, this.scalingMode, this.copies, this.pageRange, this.alignment);
 }
 
 class _PrintResponse {
@@ -871,6 +880,49 @@ class _DisposeRequest {
 void _helperIsolateEntryPoint(SendPort sendPort) {
   runZonedGuarded(
     () {
+      void _remapCupsOptions(Map<String, String> options) {
+        if (Platform.isMacOS || Platform.isLinux) {
+          if (options.containsKey('orientation')) {
+            final orientationValue = options.remove('orientation');
+            options['orientation-requested'] = orientationValue == 'landscape' ? '4' : '3';
+          }
+          if (options.containsKey('color-mode')) {
+            final colorValue = options.remove('color-mode');
+            options['print-color-mode'] = colorValue!;
+          }
+          if (options.containsKey('print-quality')) {
+            final qualityValue = options.remove('print-quality');
+            switch (qualityValue) {
+              case 'draft':
+              case 'low':
+                options['print-quality'] = '3';
+                break;
+              case 'normal':
+                options['print-quality'] = '4';
+                break;
+              case 'high':
+                options['print-quality'] = '5';
+                break;
+            }
+          }
+
+          if (options.containsKey('duplex')) {
+            final duplexValue = options.remove('duplex');
+            switch (duplexValue) {
+              case 'singleSided':
+                options['sides'] = 'one-sided';
+                break;
+              case 'duplexLongEdge':
+                options['sides'] = 'two-sided-long-edge';
+                break;
+              case 'duplexShortEdge':
+                options['sides'] = 'two-sided-short-edge';
+                break;
+            }
+          }
+        }
+      }
+
       if (Platform.isWindows) {
         // Initialize COM for the current thread. This is crucial for some Windows APIs,
         // especially those related to printing and shell services, which may be
@@ -921,49 +973,7 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
             dataPtr.asTypedList(data.data.length).setAll(0, data.data);
             try {
               final options = {...?data.options};
-              if (Platform.isWindows) {
-                // No option remapping is needed for Windows.
-                // The C code parses these options directly.
-              } else if (Platform.isMacOS || Platform.isLinux) {
-                if (options.containsKey('orientation')) {
-                  final orientationValue = options.remove('orientation');
-                  options['orientation-requested'] = orientationValue == 'landscape' ? '4' : '3';
-                }
-                if (options.containsKey('color-mode')) {
-                  final colorValue = options.remove('color-mode');
-                  options['print-color-mode'] = colorValue!;
-                }
-                if (options.containsKey('print-quality')) {
-                  final qualityValue = options.remove('print-quality');
-                  switch (qualityValue) {
-                    case 'draft':
-                    case 'low':
-                      options['print-quality'] = '3';
-                      break;
-                    case 'normal':
-                      options['print-quality'] = '4';
-                      break;
-                    case 'high':
-                      options['print-quality'] = '5';
-                      break;
-                  }
-                }
-
-                if (options.containsKey('duplex')) {
-                  final duplexValue = options.remove('duplex');
-                  switch (duplexValue) {
-                    case 'singleSided':
-                      options['sides'] = 'one-sided';
-                      break;
-                    case 'duplexLongEdge':
-                      options['sides'] = 'two-sided-long-edge';
-                      break;
-                    case 'duplexShortEdge':
-                      options['sides'] = 'two-sided-short-edge';
-                      break;
-                  }
-                }
-              }
+              _remapCupsOptions(options);
               final int numOptions = options.length;
               Pointer<Pointer<Utf8>> keysPtr = nullptr;
               Pointer<Pointer<Utf8>> valuesPtr = nullptr;
@@ -1201,54 +1211,11 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
             final pageRangePtr = pageRangeValue?.toNativeUtf8() ?? nullptr;
             try {
               final options = {...?data.options};
-              if (data.scaling is PdfPrintScalingCustom) {
-                options['custom-scale-factor'] = (data.scaling as PdfPrintScalingCustom).scale.toString();
-              }
-              if (Platform.isWindows) {
-                // No option remapping is needed for Windows.
-              }
               if (Platform.isMacOS || Platform.isLinux) {
                 if (data.copies > 1) options['copies'] = data.copies.toString();
                 if (pageRangeValue != null && pageRangeValue.isNotEmpty) options['page-ranges'] = pageRangeValue;
-                if (options.containsKey('orientation')) {
-                  final orientationValue = options.remove('orientation');
-                  options['orientation-requested'] = orientationValue == 'landscape' ? '4' : '3';
-                }
-                if (options.containsKey('color-mode')) {
-                  final colorValue = options.remove('color-mode');
-                  options['print-color-mode'] = colorValue!;
-                }
-                if (options.containsKey('print-quality')) {
-                  final qualityValue = options.remove('print-quality');
-                  switch (qualityValue) {
-                    case 'draft':
-                    case 'low':
-                      options['print-quality'] = '3';
-                      break;
-                    case 'normal':
-                      options['print-quality'] = '4';
-                      break;
-                    case 'high':
-                      options['print-quality'] = '5';
-                      break;
-                  }
-                }
-
-                if (options.containsKey('duplex')) {
-                  final duplexValue = options.remove('duplex');
-                  switch (duplexValue) {
-                    case 'singleSided':
-                      options['sides'] = 'one-sided';
-                      break;
-                    case 'duplexLongEdge':
-                      options['sides'] = 'two-sided-long-edge';
-                      break;
-                    case 'duplexShortEdge':
-                      options['sides'] = 'two-sided-short-edge';
-                      break;
-                  }
-                }
               }
+              _remapCupsOptions(options);
 
               final int numOptions = options.length;
               Pointer<Pointer<Utf8>> keysPtr = nullptr;
@@ -1269,7 +1236,7 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
                 namePtr.cast(),
                 pathPtr.cast(),
                 docNamePtr.cast(),
-                data.scaling.nativeValue,
+                data.scalingMode,
                 data.copies,
                 pageRangePtr.cast(),
                 numOptions,
@@ -1310,49 +1277,7 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
             dataPtr.asTypedList(data.data.length).setAll(0, data.data);
             try {
               final options = {...?data.options};
-              if (Platform.isWindows) {
-                // No option remapping is needed for Windows.
-                // The C code parses these options directly.
-              } else if (Platform.isMacOS || Platform.isLinux) {
-                if (options.containsKey('orientation')) {
-                  final orientationValue = options.remove('orientation');
-                  options['orientation-requested'] = orientationValue == 'landscape' ? '4' : '3';
-                }
-                if (options.containsKey('color-mode')) {
-                  final colorValue = options.remove('color-mode');
-                  options['print-color-mode'] = colorValue!;
-                }
-                if (options.containsKey('print-quality')) {
-                  final qualityValue = options.remove('print-quality');
-                  switch (qualityValue) {
-                    case 'draft':
-                    case 'low':
-                      options['print-quality'] = '3';
-                      break;
-                    case 'normal':
-                      options['print-quality'] = '4';
-                      break;
-                    case 'high':
-                      options['print-quality'] = '5';
-                      break;
-                  }
-                }
-
-                if (options.containsKey('duplex')) {
-                  final duplexValue = options.remove('duplex');
-                  switch (duplexValue) {
-                    case 'singleSided':
-                      options['sides'] = 'one-sided';
-                      break;
-                    case 'duplexLongEdge':
-                      options['sides'] = 'two-sided-long-edge';
-                      break;
-                    case 'duplexShortEdge':
-                      options['sides'] = 'two-sided-short-edge';
-                      break;
-                  }
-                }
-              }
+              _remapCupsOptions(options);
               final int numOptions = options.length;
               Pointer<Pointer<Utf8>> keysPtr = nullptr;
               Pointer<Pointer<Utf8>> valuesPtr = nullptr;
@@ -1412,54 +1337,11 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
             final pageRangePtr = pageRangeValue?.toNativeUtf8() ?? nullptr;
             try {
               final options = {...?data.options};
-              if (data.scaling is PdfPrintScalingCustom) {
-                options['custom-scale-factor'] = (data.scaling as PdfPrintScalingCustom).scale.toString();
-              }
-              if (Platform.isWindows) {
-                // No option remapping is needed for Windows.
-              }
               if (Platform.isMacOS || Platform.isLinux) {
                 if (data.copies > 1) options['copies'] = data.copies.toString();
                 if (pageRangeValue != null && pageRangeValue.isNotEmpty) options['page-ranges'] = pageRangeValue;
-                if (options.containsKey('orientation')) {
-                  final orientationValue = options.remove('orientation');
-                  options['orientation-requested'] = orientationValue == 'landscape' ? '4' : '3';
-                }
-                if (options.containsKey('color-mode')) {
-                  final colorValue = options.remove('color-mode');
-                  options['print-color-mode'] = colorValue!;
-                }
-                if (options.containsKey('print-quality')) {
-                  final qualityValue = options.remove('print-quality');
-                  switch (qualityValue) {
-                    case 'draft':
-                    case 'low':
-                      options['print-quality'] = '3';
-                      break;
-                    case 'normal':
-                      options['print-quality'] = '4';
-                      break;
-                    case 'high':
-                      options['print-quality'] = '5';
-                      break;
-                  }
-                }
-
-                if (options.containsKey('duplex')) {
-                  final duplexValue = options.remove('duplex');
-                  switch (duplexValue) {
-                    case 'singleSided':
-                      options['sides'] = 'one-sided';
-                      break;
-                    case 'duplexLongEdge':
-                      options['sides'] = 'two-sided-long-edge';
-                      break;
-                    case 'duplexShortEdge':
-                      options['sides'] = 'two-sided-short-edge';
-                      break;
-                  }
-                }
               }
+              _remapCupsOptions(options);
 
               final int numOptions = options.length;
               Pointer<Pointer<Utf8>> keysPtr = nullptr;
@@ -1480,7 +1362,7 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
                 namePtr.cast(),
                 pathPtr.cast(),
                 docNamePtr.cast(),
-                data.scaling.nativeValue,
+                data.scalingMode,
                 data.copies,
                 pageRangePtr.cast(),
                 numOptions,
