@@ -34,8 +34,16 @@ typedef FPDF_PAGE (*FPDF_LoadPage_t)(FPDF_DOCUMENT document, int page_index);
 typedef float (*FPDF_GetPageWidthF_t)(FPDF_PAGE page);
 typedef float (*FPDF_GetPageHeightF_t)(FPDF_PAGE page);
 typedef int (*FPDFPage_GetRotation_t)(FPDF_PAGE page);
-typedef void (*FPDF_RenderPage_t)(HDC dc, FPDF_PAGE page, int dest_x, int dest_y, int dest_width, int dest_height, int rotate, int flags);
 typedef void (*FPDF_ClosePage_t)(FPDF_PAGE page);
+
+// New types for progressive rendering and bitmap handling
+typedef FPDF_BITMAP (*FPDFBitmap_Create_t)(int width, int height, int alpha);
+typedef void (*FPDFBitmap_FillRect_t)(FPDF_BITMAP bitmap, int left, int top, int width, int height, FPDF_DWORD color);
+typedef void (*FPDFBitmap_Destroy_t)(FPDF_BITMAP bitmap);
+typedef void* (*FPDFBitmap_GetBuffer_t)(FPDF_BITMAP bitmap);
+typedef int (*FPDF_RenderPageBitmap_Start_t)(FPDF_BITMAP bitmap, FPDF_PAGE page, int start_x, int start_y, int size_x, int size_y, int rotate, int flags, void* pause_handle);
+typedef int (*FPDF_RenderPage_Continue_t)(FPDF_PAGE page, void* pause_handle);
+typedef void (*FPDF_RenderPage_Close_t)(FPDF_PAGE page);
 
 // Struct to hold all our dynamically loaded PDFium function pointers.
 static struct {
@@ -49,8 +57,15 @@ static struct {
     FPDF_GetPageWidthF_t FPDF_GetPageWidthF;
     FPDF_GetPageHeightF_t FPDF_GetPageHeightF;
     FPDFPage_GetRotation_t FPDFPage_GetRotation;
-    FPDF_RenderPage_t FPDF_RenderPage;
     FPDF_ClosePage_t FPDF_ClosePage;
+    // New progressive rendering functions
+    FPDFBitmap_Create_t FPDFBitmap_Create;
+    FPDFBitmap_FillRect_t FPDFBitmap_FillRect;
+    FPDFBitmap_Destroy_t FPDFBitmap_Destroy;
+    FPDFBitmap_GetBuffer_t FPDFBitmap_GetBuffer;
+    FPDF_RenderPageBitmap_Start_t FPDF_RenderPageBitmap_Start;
+    FPDF_RenderPage_Continue_t FPDF_RenderPage_Continue;
+    FPDF_RenderPage_Close_t FPDF_RenderPage_Close;
 } g_pdfium = {0};
 
 static bool s_pdfium_library_initialized = false;
@@ -140,8 +155,16 @@ static bool load_pdfium_library() {
     LOAD_PDFIUM_FUNC(FPDF_GetPageWidthF);
     LOAD_PDFIUM_FUNC(FPDF_GetPageHeightF);
     LOAD_PDFIUM_FUNC(FPDFPage_GetRotation);
-    LOAD_PDFIUM_FUNC(FPDF_RenderPage);
     LOAD_PDFIUM_FUNC(FPDF_ClosePage);
+
+    // Load new progressive rendering functions
+    LOAD_PDFIUM_FUNC(FPDFBitmap_Create);
+    LOAD_PDFIUM_FUNC(FPDFBitmap_FillRect);
+    LOAD_PDFIUM_FUNC(FPDFBitmap_Destroy);
+    LOAD_PDFIUM_FUNC(FPDFBitmap_GetBuffer);
+    LOAD_PDFIUM_FUNC(FPDF_RenderPageBitmap_Start);
+    LOAD_PDFIUM_FUNC(FPDF_RenderPage_Continue);
+    LOAD_PDFIUM_FUNC(FPDF_RenderPage_Close);
 
     #undef LOAD_PDFIUM_FUNC
 
@@ -1292,9 +1315,58 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
             LOG("print_pdf_job_win: Page %d: Final DestRect=(%d,%d, %dx%d)", i, dest_x, dest_y, dest_width, dest_height);
             // Render directly to the printer DC. The rotation argument is 0 because we already
             // swapped the page dimensions to calculate the correct aspect ratio for scaling.
-            g_pdfium.FPDF_RenderPage(hdc, page, dest_x, dest_y, dest_width, dest_height, 0, FPDF_ANNOT);
 
-            g_pdfium.FPDF_ClosePage(page);
+            // --- Progressive Rendering to Bitmap ---
+            // Create a bitmap with BGRA format (required by StretchDIBits).
+            FPDF_BITMAP bitmap = g_pdfium.FPDFBitmap_Create(dest_width, dest_height, 1); // 1 for alpha
+            if (!bitmap) {
+                set_last_error("Failed to create bitmap for page %d.", i + 1);
+                LOG("print_pdf_job_win: FPDFBitmap_Create failed for page %d", i);
+                g_pdfium.FPDF_ClosePage(page);
+                success = false;
+                break;
+            }
+            // Fill the bitmap with a white background.
+            g_pdfium.FPDFBitmap_FillRect(bitmap, 0, 0, dest_width, dest_height, 0xFFFFFFFF);
+            // Start rendering. The rotation argument is 0 because we already handled it
+            // by swapping page dimensions for aspect ratio calculation.
+            int render_status = g_pdfium.FPDF_RenderPageBitmap_Start(bitmap, page, 0, 0, dest_width, dest_height, 0, FPDF_ANNOT, NULL);
+            // Loop to continue rendering, pumping messages to keep the thread responsive.
+            while (render_status == FPDF_RENDER_TOBECONTINUED) {
+                // Pump the Windows message queue.
+                MSG msg;
+                while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE)) {
+                    TranslateMessage(&msg);
+                    DispatchMessageW(&msg);
+                }
+                render_status = g_pdfium.FPDF_RenderPage_Continue(page, NULL);
+            }
+            // Check if rendering finished successfully.
+            if (render_status == FPDF_RENDER_DONE) {
+                // Get the bitmap buffer and send it to the printer DC.
+                void* buffer = g_pdfium.FPDFBitmap_GetBuffer(bitmap);
+                BITMAPINFO bmi;
+                memset(&bmi, 0, sizeof(bmi));
+                bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+                bmi.bmiHeader.biWidth = dest_width;
+                bmi.bmiHeader.biHeight = -dest_height; // Negative height for top-down DIB
+                bmi.bmiHeader.biPlanes = 1;
+                bmi.bmiHeader.biBitCount = 32; // BGRA format
+                bmi.bmiHeader.biCompression = BI_RGB;
+                // Use StretchDIBits to print the bitmap.
+                StretchDIBits(hdc, dest_x, dest_y, dest_width, dest_height, 0, 0, dest_width, dest_height, buffer, &bmi, DIB_RGB_COLORS, SRCCOPY);
+            } else {
+                set_last_error("Failed to render PDF page %d.", i + 1);
+                LOG("print_pdf_job_win: FPDF_RenderPage_Continue failed for page %d with status %d", i, render_status);
+                success = false;
+            }
+            // Clean up resources for the current page.
+            g_pdfium.FPDFBitmap_Destroy(bitmap);
+            g_pdfium.FPDF_RenderPage_Close(page); // Use this instead of FPDF_ClosePage after progressive rendering.
+
+            if (!success) {
+                break; // Exit the loop on failure
+            }
 
             if (EndPage(hdc) <= 0)
             {
