@@ -1,6 +1,33 @@
 import 'dart:io';
 
 /// Represents the status of a print job.
+///
+/// ## Print Job Lifecycle
+///
+/// A print job typically progresses through several states from submission to completion.
+/// The exact flow can vary between operating systems.
+///
+/// ### Windows State Graph
+/// A common lifecycle for a successful print job on Windows is:
+///
+/// `pending` -> `spooling` -> `processing` -> `printed` -> `completed`
+///
+/// - **pending**: The job is in the queue, waiting for its turn.
+/// - **spooling**: The job's data is being written to a temporary file.
+/// - **processing**: The spooled data is being sent to the printer.
+/// - **printed**: The computer has finished sending all data to the printer.
+/// - **completed**: The printer has finished the job, and it is removed from the queue.
+///
+/// Other states can interrupt this flow:
+/// - **Error States**: `error`, `userIntervention`, `paperOut`, `offline`, `blocked`.
+/// - **User Actions**: `paused`, `restarting`, `deleting` -> `canceled`.
+///
+/// ### CUPS (macOS & Linux) State Graph
+/// A common lifecycle on CUPS-based systems is simpler:
+///
+/// `pending` -> `processing` -> `completed`
+///
+/// Other states can interrupt this flow: `held`, `stopped`, `canceled`, `aborted`.
 enum PrintJobStatus {
   // Common states
   /// The job has been created but is not yet processing. It may be waiting for
@@ -13,19 +40,19 @@ enum PrintJobStatus {
   /// The job is currently being sent to the printer or is being printed.
   /// - **CUPS**: `IPP_JOB_PROCESSING` (5)
   /// - **Windows**: `JOB_STATUS_PRINTING` (16)
-  /// - **Example**: The printer has started to pull paper and print the first page of the document. The job is now `processing`.
+  /// - **Example**: After spooling, the job's data is actively being sent to the printer. The printer has started to pull paper and print the first page. The job is now `processing`. This continues until the print process is finished.
   processing('Processing'),
 
   /// The job has finished sending data to the printer. On some systems, this
   /// may be a transitional state before `completed`.
   /// - **Windows**: `JOB_STATUS_PRINTED` (128)
-  /// - **Example**: (Windows) The print spooler has successfully sent all pages of the document to the printer's internal buffer. The job is marked as `printed`, but the printer might still be physically printing the last few pages.
+  /// - **Example**: (Windows) The print spooler has successfully sent all pages of the document to the printer's internal buffer. The job is marked as `printed`. The computer's role is done, but the printer might still be physically printing the last few pages before the job is finally `completed`.
   printed('Printed'), // Windows
 
   /// The job has finished all processing and is considered fully complete.
   /// - **CUPS**: `IPP_JOB_COMPLETED` (9)
   /// - **Windows**: `JOB_STATUS_COMPLETE` (4096)
-  /// - **Example**: All pages have been physically ejected from the printer. The job is removed from the active queue and marked as `completed`.
+  /// - **Example**: The printing process is finished, and all pages have been physically ejected from the printer. The job is removed from the active queue and marked as `completed`.
   completed('Completed'),
 
   /// The job was explicitly canceled by a user or an administrator.
@@ -66,7 +93,7 @@ enum PrintJobStatus {
 
   /// The job is being written to a spool file on the disk.
   /// - **Windows**: `JOB_STATUS_SPOOLING` (8)
-  /// - **Example**: (Windows) A large PDF is being printed. The system first writes the print-ready data to a temporary file on the hard drive. During this process, the job is `spooling`.
+  /// - **Example**: (Windows) A large PDF is being printed. The system first writes the print-ready data to a temporary file on the hard drive. During this process, the job is `spooling`. Once finished, it will transition to `processing`.
   spooling('Spooling'), // Windows
 
   /// The job is in the process of being deleted.
