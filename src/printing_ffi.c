@@ -1053,7 +1053,7 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
         return 0;
     }
 
-    FPDF_DOCUMENT doc = g_pdfium.FPDF_LoadDocument(pdf_file_path, NULL);
+    FPDF_DOCUMENT doc = g_pdfium.FPDF_LoadDocument((FPDF_STRING)pdf_file_path, NULL);
     if (!doc)
     {
         set_last_error("Failed to load PDF document at path '%s'. Error code: %ld. The file may be missing, corrupt, or password-protected.", pdf_file_path, g_pdfium.FPDF_GetLastError());
@@ -1079,7 +1079,10 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
     }
 
     wchar_t *doc_name_w = to_utf16(doc_name);
-    DOCINFOW di = {sizeof(DOCINFOW), doc_name_w, NULL, 0};
+    DOCINFOW di;
+    memset(&di, 0, sizeof(DOCINFOW));
+    di.cbSize = sizeof(DOCINFOW);
+    di.lpszDocName = doc_name_w;
     int job_id = StartDocW(hdc, &di);
 
     if (job_id <= 0)
@@ -1362,7 +1365,16 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
             }
             // Clean up resources for the current page.
             g_pdfium.FPDFBitmap_Destroy(bitmap);
-            g_pdfium.FPDF_RenderPage_Close(page); // Use this instead of FPDF_ClosePage after progressive rendering.
+            // FPDF_RenderPage_Close is for when you need to continue rendering later.
+            // Since we are done with the page completely, we should use FPDF_ClosePage.
+            // However, the documentation implies FPDF_RenderPage_Close should be used if
+            // FPDF_RenderPageBitmap_Start was called. Let's stick to the documented API pairing.
+            // If FPDF_RenderPage_Close is not available, fall back to FPDF_ClosePage.
+            if (g_pdfium.FPDF_RenderPage_Close) {
+                g_pdfium.FPDF_RenderPage_Close(page);
+            } else {
+                g_pdfium.FPDF_ClosePage(page);
+            }
 
             if (!success) {
                 break; // Exit the loop on failure
