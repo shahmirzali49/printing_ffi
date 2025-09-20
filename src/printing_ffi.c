@@ -790,7 +790,36 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char *printer_name, const uint8
         return false;
     }
 
-    bool result = WritePrinter(hPrinter, (LPVOID)data, (DWORD)length, &written);
+    // --- Chunked Write with Message Pump ---
+    // This prevents the STA thread from blocking if a very large raw data file is sent.
+    const DWORD CHUNK_SIZE = 65536; // 64 KB
+    DWORD total_written = 0;
+    DWORD bytes_to_write = (DWORD)length;
+    bool write_success = true;
+
+    while (total_written < bytes_to_write)
+    {
+        DWORD chunk_to_write = (bytes_to_write - total_written > CHUNK_SIZE) ? CHUNK_SIZE : (bytes_to_write - total_written);
+        DWORD written_this_chunk = 0;
+
+        if (!WritePrinter(hPrinter, (LPVOID)(data + total_written), chunk_to_write, &written_this_chunk))
+        {
+            LOG("WritePrinter failed during chunked write with error %lu", GetLastError());
+            write_success = false;
+            break;
+        }
+
+        total_written += written_this_chunk;
+
+        // Pump messages to keep the STA thread responsive.
+        MSG msg;
+        while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE))
+        {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+
     EndPagePrinter(hPrinter);
     EndDocPrinter(hPrinter);
     ClosePrinter(hPrinter);
@@ -798,10 +827,10 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char *printer_name, const uint8
     if (pDevMode)
         free(pDevMode);
 
-    bool success = result && written == (DWORD)length;
+    bool success = write_success && (total_written == (DWORD)length);
     if (!success)
     {
-        LOG("WritePrinter failed. Result: %d, Bytes written: %lu, Expected: %d", result, written, length);
+        LOG("WritePrinter failed. Success: %d, Bytes written: %lu, Expected: %d", write_success, total_written, length);
     }
     return success;
 #else // macOS / Linux
@@ -1062,6 +1091,16 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
                 continue;
             }
             LOG("print_pdf_job_win: Printing page %d (0-indexed).", i);
+
+            // Manually pump the Windows message queue. This is CRITICAL for STA threads
+            // that perform long-running operations. It prevents the thread from becoming
+            // unresponsive and causing deadlocks or other COM errors with the printer driver.
+            MSG msg;
+            while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE))
+            {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
 
             // Declare destination rectangle variables for the current page.
             int dest_x = 0, dest_y = 0, dest_width = 0, dest_height = 0;
@@ -2082,7 +2121,36 @@ FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char *printer_name, const ui
         return 0;
     }
 
-    bool result = WritePrinter(hPrinter, (LPVOID)data, (DWORD)length, &written);
+    // --- Chunked Write with Message Pump ---
+    // This prevents the STA thread from blocking if a very large raw data file is sent.
+    const DWORD CHUNK_SIZE = 65536; // 64 KB
+    DWORD total_written = 0;
+    DWORD bytes_to_write = (DWORD)length;
+    bool write_success = true;
+
+    while (total_written < bytes_to_write)
+    {
+        DWORD chunk_to_write = (bytes_to_write - total_written > CHUNK_SIZE) ? CHUNK_SIZE : (bytes_to_write - total_written);
+        DWORD written_this_chunk = 0;
+
+        if (!WritePrinter(hPrinter, (LPVOID)(data + total_written), chunk_to_write, &written_this_chunk))
+        {
+            LOG("WritePrinter failed during chunked write with error %lu", GetLastError());
+            write_success = false;
+            break;
+        }
+
+        total_written += written_this_chunk;
+
+        // Pump messages to keep the STA thread responsive.
+        MSG msg;
+        while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE))
+        {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+
     EndPagePrinter(hPrinter);
     EndDocPrinter(hPrinter);
     ClosePrinter(hPrinter);
@@ -2090,9 +2158,9 @@ FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char *printer_name, const ui
     if (pDevMode)
         free(pDevMode);
 
-    if (!result || written != (DWORD)length)
+    if (!write_success || total_written != (DWORD)length)
     {
-        LOG("WritePrinter failed. Result: %d, Bytes written: %lu, Expected: %d", result, written, length);
+        LOG("WritePrinter failed. Success: %d, Bytes written: %lu, Expected: %d", write_success, total_written, length);
         // The job might have been created but failed to write. The caller can still track this job ID to see its error state.
     }
     return (int32_t)job_id;
