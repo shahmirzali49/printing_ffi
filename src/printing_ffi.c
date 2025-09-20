@@ -244,13 +244,17 @@ static void parse_windows_options(int num_options, const char** option_keys, con
             if (strcmp(option_values[i], "monochrome") == 0)
             {
                 *color_mode = 1; // DMCOLOR_MONOCHROME
-                // For monochrome, also ensure print quality is set to trigger driver update.
-                // If it's not already being set, use a neutral value.
-                if (*print_quality == 0)
-                    *print_quality = -3; // DMRES_MEDIUM
             }
             else
+            {
                 *color_mode = 2; // DMCOLOR_COLOR
+            }
+            // For color/monochrome, also ensure print quality is set to trigger driver update.
+            // If it's not already being set, use a neutral value.
+            if (*print_quality == 0)
+            {
+                *print_quality = -3; // DMRES_MEDIUM
+            }
         }
         else if (strcmp(option_keys[i], "print-quality") == 0)
         {
