@@ -9,6 +9,12 @@ import 'modern_print_dialog.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  // On Windows, it's crucial to initialize the PDFium library.
+  // This should be done once when the app starts.
+  // If you use another PDF plugin (like pdfrx) that also initializes PDFium,
+  // you might not need this call, but it's safe to leave it in as this plugin's
+  // initialization is guarded against being run more than once.
+  PrintingFfi.instance.initPdfium();
   runApp(const MyApp());
 }
 

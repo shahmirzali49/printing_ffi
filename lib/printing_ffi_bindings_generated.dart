@@ -325,6 +325,21 @@ class PrintingFfiBindings {
       >('submit_pdf_job');
   late final _submit_pdf_job = _submit_pdf_jobPtr
       .asFunction<int Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, int, int, ffi.Pointer<ffi.Char>, int, ffi.Pointer<ffi.Pointer<ffi.Char>>, ffi.Pointer<ffi.Pointer<ffi.Char>>, ffi.Pointer<ffi.Char>)>();
+
+  /// Function to initialize the PDFium library. Must be called once on startup on Windows.
+  void init_pdfium_library() {
+    return _init_pdfium_library();
+  }
+
+  late final _init_pdfium_libraryPtr = _lookup<ffi.NativeFunction<ffi.Void Function()>>('init_pdfium_library');
+  late final _init_pdfium_library = _init_pdfium_libraryPtr.asFunction<void Function()>();
+
+  void shutdown_pdfium_library() {
+    return _shutdown_pdfium_library();
+  }
+
+  late final _shutdown_pdfium_libraryPtr = _lookup<ffi.NativeFunction<ffi.Void Function()>>('shutdown_pdfium_library');
+  late final _shutdown_pdfium_library = _shutdown_pdfium_libraryPtr.asFunction<void Function()>();
 }
 
 /// Struct for returning printer information

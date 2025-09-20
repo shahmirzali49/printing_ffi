@@ -53,7 +53,7 @@ void _remapCupsOptions(Map<String, String> options) {
 }
 
 class PrintingFfi {
-  PrintingFfi._();
+  PrintingFfi._(); // Private constructor
   static final PrintingFfi instance = PrintingFfi._();
 
   static const String _libName = 'printing_ffi';
@@ -88,6 +88,32 @@ class PrintingFfi {
     _mainPortSubscription = null;
     _mainReceivePort = null;
     _failAllPendingRequests(IsolateError('PrintingFfi instance disposed.'));
+  }
+
+  /// Initializes the bundled PDFium library for Windows.
+  ///
+  /// This method should be called from the main isolate, preferably in your `main()`
+  /// function, before any other PDF-related operations if you are using this
+  /// plugin for PDF printing on Windows **and are not using another plugin
+  /// that already initializes PDFium (like `pdfrx`)**.
+  ///
+  /// ```dart
+  /// void main() {
+  ///   WidgetsFlutterBinding.ensureInitialized();
+  ///   if (Platform.isWindows) {
+  ///     // Call this if printing_ffi is your only PDFium-based plugin.
+  ///     PrintingFfi.instance.initPdfium();
+  ///   }
+  ///   runApp(const MyApp());
+  /// }
+  /// ```
+  ///
+  /// If you are using `pdfrx` or a similar plugin, you do not need to call this
+  /// method, as that plugin will handle the initialization. This optional,
+  /// explicit initialization prevents conflicts in apps with multiple PDFium-based plugins.
+  void initPdfium() {
+    if (!Platform.isWindows) return;
+    _bindings.init_pdfium_library();
   }
 
   List<Printer> listPrinters() {
@@ -962,6 +988,10 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
       final helperReceivePort = ReceivePort();
       helperReceivePort.listen((dynamic data) {
         if (data is _DisposeRequest) {
+          if (Platform.isWindows) {
+            // Clean up the PDFium library before the isolate exits.
+            bindings.shutdown_pdfium_library();
+          }
           helperReceivePort.close();
           return;
         }

@@ -1,6 +1,11 @@
 #ifndef PRINTING_FFI_H
 #define PRINTING_FFI_H
 
+// Add extern "C" guard to prevent C++ name mangling
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -147,5 +152,13 @@ FFI_PLUGIN_EXPORT const char* get_last_error();
 // Functions that submit a job and return a job ID for status tracking.
 FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char* printer_name, const uint8_t* data, int length, const char* doc_name, int num_options, const char** option_keys, const char** option_values);
 FFI_PLUGIN_EXPORT int32_t submit_pdf_job(const char* printer_name, const char* pdf_file_path, const char* doc_name, int scaling_mode, int copies, const char* page_range, int num_options, const char** option_keys, const char** option_values, const char* alignment);
+
+// Function to initialize the PDFium library. Must be called once on startup on Windows.
+FFI_PLUGIN_EXPORT void init_pdfium_library(void);
+FFI_PLUGIN_EXPORT void shutdown_pdfium_library(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
