@@ -1,6 +1,11 @@
 #ifndef PRINTING_FFI_H
 #define PRINTING_FFI_H
 
+// Add extern "C" guard to prevent C++ name mangling
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -150,5 +155,9 @@ FFI_PLUGIN_EXPORT int32_t submit_pdf_job(const char* printer_name, const char* p
 
 // Function to initialize the PDFium library. Must be called once on startup on Windows.
 FFI_PLUGIN_EXPORT void init_pdfium_library(void);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

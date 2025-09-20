@@ -16,6 +16,7 @@
 #include <unistd.h>
 #endif
 #include <ctype.h>
+#include <stdarg.h>
 
 #ifdef _WIN32
 // Include the main Pdfium header. Ensure this is in your src/ directory.
@@ -1223,6 +1224,21 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
     }
 }
 #endif
+
+FFI_PLUGIN_EXPORT void init_pdfium_library()
+{
+#ifdef _WIN32
+    if (!s_pdfium_library_initialized)
+    {
+        FPDF_LIBRARY_CONFIG config;
+        memset(&config, 0, sizeof(config));
+        config.version = 2;
+        FPDF_InitLibraryWithConfig(&config);
+        s_pdfium_library_initialized = true;
+        LOG("PDFium library initialized explicitly.");
+    }
+#endif
+}
 
 FFI_PLUGIN_EXPORT const char *get_last_error()
 {
