@@ -60,6 +60,7 @@ class PrintingFfi {
   void dispose() {
     _logCallback?.close();
     _logCallback = null;
+    _helperIsolateSendPortFuture = null;
     _failAllPendingRequests(IsolateError('PrintingFfi instance disposed.'));
   }
 
@@ -533,6 +534,8 @@ class PrintingFfi {
   final Map<int, Completer<int>> _submitRawDataJobRequests = <int, Completer<int>>{};
   final Map<int, Completer<int>> _submitPdfJobRequests = <int, Completer<int>>{};
 
+  Future<SendPort>? _helperIsolateSendPortFuture;
+
   void _failAllPendingRequests(Object error, [StackTrace? stackTrace]) {
     final allCompleters = [
       ..._printRequests.values,
@@ -563,20 +566,28 @@ class PrintingFfi {
     _submitPdfJobRequests.clear();
   }
 
-  Future<SendPort> get _helperIsolateSendPort async {
+  Future<SendPort> get _helperIsolateSendPort {
+    if (_helperIsolateSendPortFuture != null) {
+      return _helperIsolateSendPortFuture!;
+    }
+
     final Completer<SendPort> completer = Completer<SendPort>();
     final ReceivePort receivePort = ReceivePort();
 
     receivePort.listen((dynamic data) {
       if (data is SendPort) {
-        completer.complete(data);
+        if (!completer.isCompleted) {
+          completer.complete(data);
+        }
         return;
       }
 
       if (data is List && data.length == 2 && data[0] is String) {
         final error = IsolateError('Uncaught exception in helper isolate: ${data[0]}');
         final stack = StackTrace.fromString(data[1].toString());
-        if (!completer.isCompleted) completer.completeError(error, stack);
+        if (!completer.isCompleted) {
+          completer.completeError(error, stack);
+        }
         _failAllPendingRequests(error, stack);
         receivePort.close();
         return;
@@ -584,7 +595,9 @@ class PrintingFfi {
 
       if (data == null) {
         final error = IsolateError('Helper isolate exited unexpectedly.');
-        if (!completer.isCompleted) completer.completeError(error);
+        if (!completer.isCompleted) {
+          completer.completeError(error);
+        }
         _failAllPendingRequests(error);
         receivePort.close();
         return;
@@ -665,12 +678,17 @@ class PrintingFfi {
       throw UnsupportedError('Unsupported message type: ${data.runtimeType}');
     });
 
-    await Isolate.spawn(
+    Isolate.spawn(
       _helperIsolateEntryPoint,
       receivePort.sendPort,
-    );
+    ).catchError((error, stack) {
+      if (!completer.isCompleted) {
+        completer.completeError(error, stack);
+      }
+    });
 
-    return completer.future;
+    _helperIsolateSendPortFuture = completer.future;
+    return _helperIsolateSendPortFuture!;
   }
 }
 
