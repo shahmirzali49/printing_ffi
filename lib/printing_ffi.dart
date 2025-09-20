@@ -146,6 +146,7 @@ class PrintingFfi {
     final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
     final int requestId = _nextPrintPdfRequestId++;
     final optionsMap = _buildOptions(options);
+    final pageRangeValue = pageRange?.toValue();
     final alignment = optionsMap.remove('alignment') ?? 'center';
     final _PrintPdfRequest request = _PrintPdfRequest(
       requestId,
@@ -155,7 +156,7 @@ class PrintingFfi {
       optionsMap,
       scaling,
       copies ?? 1,
-      pageRange,
+      pageRangeValue,
       alignment,
     );
     final Completer<bool> completer = Completer<bool>();
@@ -506,6 +507,7 @@ class PrintingFfi {
   }) async {
     final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
     final int requestId = _nextSubmitPdfJobRequestId++;
+    final pageRangeValue = pageRange?.toValue();
     final request = _SubmitPdfJobRequest(
       requestId,
       printerName,
@@ -514,7 +516,7 @@ class PrintingFfi {
       options,
       scaling,
       copies ?? 1,
-      pageRange,
+      pageRangeValue,
       alignment,
     );
     final completer = Completer<int>();
@@ -745,7 +747,7 @@ class _PrintPdfRequest {
   final Map<String, String>? options;
   final PdfPrintScaling scaling;
   final int copies;
-  final PageRange? pageRange;
+  final String? pageRange;
   final String alignment;
 
   const _PrintPdfRequest(this.id, this.printerName, this.pdfFilePath, this.docName, this.options, this.scaling, this.copies, this.pageRange, this.alignment);
@@ -791,7 +793,7 @@ class _SubmitPdfJobRequest {
   final Map<String, String>? options;
   final PdfPrintScaling scaling;
   final int copies;
-  final PageRange? pageRange;
+  final String? pageRange;
   final String alignment;
 
   const _SubmitPdfJobRequest(this.id, this.printerName, this.pdfFilePath, this.docName, this.options, this.scaling, this.copies, this.pageRange, this.alignment);
@@ -1194,7 +1196,7 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
             final namePtr = data.printerName.toNativeUtf8();
             final pathPtr = data.pdfFilePath.toNativeUtf8();
             final docNamePtr = data.docName.toNativeUtf8();
-            final pageRangeValue = data.pageRange?.toValue();
+            final pageRangeValue = data.pageRange;
             final alignmentPtr = data.alignment.toNativeUtf8();
             final pageRangePtr = pageRangeValue?.toNativeUtf8() ?? nullptr;
             try {
@@ -1405,7 +1407,7 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
             final namePtr = data.printerName.toNativeUtf8();
             final pathPtr = data.pdfFilePath.toNativeUtf8();
             final docNamePtr = data.docName.toNativeUtf8();
-            final pageRangeValue = data.pageRange?.toValue();
+            final pageRangeValue = data.pageRange;
             final alignmentPtr = data.alignment.toNativeUtf8();
             final pageRangePtr = pageRangeValue?.toNativeUtf8() ?? nullptr;
             try {
