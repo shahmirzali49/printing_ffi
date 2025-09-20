@@ -292,10 +292,10 @@ static void parse_windows_options(int num_options, const char** option_keys, con
 #ifdef _WIN32
 // Helper to get a modified DEVMODE struct for a printer.
 // The caller is responsible for freeing the returned struct.
-static DEVMODEW* get_modified_devmode(wchar_t* printer_name_w, int paper_size_id, int paper_source_id, int orientation, int color_mode, int print_quality, int media_type_id, bool collate, int duplex_mode) {
+static DEVMODEW* get_modified_devmode(wchar_t* printer_name_w, int paper_size_id, int paper_source_id, int orientation, int color_mode, int print_quality, int media_type_id, int copies, bool collate, int duplex_mode) {
     if (!printer_name_w) return NULL;
-    LOG("get_modified_devmode: Creating DEVMODE for '%ls' with paper_id:%d, source_id:%d, orientation:%d, color:%d, quality:%d, media_id:%d, duplex:%d",
-        printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, duplex_mode);
+    LOG("get_modified_devmode: Creating DEVMODE for '%ls' with paper_id:%d, source_id:%d, orientation:%d, color:%d, quality:%d, media_id:%d, copies:%d, duplex:%d",
+        printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, copies, duplex_mode);
 
     HANDLE hPrinter;
     if (!OpenPrinterW(printer_name_w, &hPrinter, NULL))
@@ -388,6 +388,13 @@ static DEVMODEW* get_modified_devmode(wchar_t* printer_name_w, int paper_size_id
     if (duplex_mode > 0) {
         LOG("get_modified_devmode: Setting dmDuplex to %d.", duplex_mode);
         pDevMode->dmFields |= DM_DUPLEX; pDevMode->dmDuplex = (short)duplex_mode; modified = true;
+    }
+
+    if (copies > 1) {
+        LOG("get_modified_devmode: Setting dmCopies to %d.", copies);
+        pDevMode->dmFields |= DM_COPIES;
+        pDevMode->dmCopies = (short)copies;
+        modified = true;
     }
 
     // Set collate mode
@@ -728,14 +735,14 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char *printer_name, const uint8
     bool collate = true; // Default to collated (complete copies printed together)
     parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id, &custom_scale, &collate, &duplex_mode);
 
-    HANDLE hPrinter;
-    DOC_INFO_1W docInfo;
-    DWORD written;
     wchar_t *printer_name_w = to_utf16(printer_name);
     if (!printer_name_w)
         return false;
 
-    DEVMODEW *pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, collate, duplex_mode);
+    HANDLE hPrinter;
+    DOC_INFO_1W docInfo;
+    DWORD written;
+    DEVMODEW *pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, 1, collate, duplex_mode);
 
     PRINTER_DEFAULTSW printerDefaults = {NULL, pDevMode, PRINTER_ACCESS_USE};
     printerDefaults.pDatatype = L"RAW";
@@ -923,7 +930,7 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
     }
     LOG("print_pdf_job_win: PDF document loaded successfully.");
 
-    DEVMODEW* pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, collate, duplex_mode);
+    DEVMODEW* pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, copies, collate, duplex_mode);
 
     HDC hdc = CreateDCW(L"WINSPOOL", printer_name_w, NULL, pDevMode);
     if (pDevMode)
@@ -1040,9 +1047,10 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
     }
 
     bool success = true;
-    for (int c = 0; c < copies && success; c++)
-    {
-        LOG("print_pdf_job_win: Starting copy %d of %d.", c + 1, copies);
+    // The outer loop for copies is removed. The driver will handle it via DEVMODE.
+    // for (int c = 0; c < copies && success; c++)
+    // {
+        // LOG("print_pdf_job_win: Starting copy %d of %d.", c + 1, copies);
         for (int i = 0; i < page_count && success; ++i)
         {
             if (!pages_to_print[i])
@@ -1089,82 +1097,34 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
             int dpi_y = GetDeviceCaps(hdc, LOGPIXELSY);
             int printable_width_pixels = GetDeviceCaps(hdc, HORZRES);
             int printable_height_pixels = GetDeviceCaps(hdc, VERTRES);
-            int paper_width_pixels = GetDeviceCaps(hdc, PHYSICALWIDTH);
-            int paper_height_pixels = GetDeviceCaps(hdc, PHYSICALHEIGHT);
 
             LOG("print_pdf_job_win: Page %d: PDF Dimensions (pt): %.2f x %.2f", i, pdf_width_pt, pdf_height_pt);
             LOG("print_pdf_job_win: Page %d: Device DPI: %d x %d", i, dpi_x, dpi_y);
             LOG("print_pdf_job_win: Page %d: Printable Area (pixels): %d x %d", i, printable_width_pixels, printable_height_pixels);
-            LOG("print_pdf_job_win: Page %d: Physical Paper (pixels): %d x %d", i, paper_width_pixels, paper_height_pixels);
 
-            // Render the bitmap using the device's specific DPI for each axis to avoid distortion.
-            int bitmap_width = (int)(pdf_width_pt / 72.0f * dpi_x);
-            int bitmap_height = (int)(pdf_height_pt / 72.0f * dpi_y);
-            LOG("print_pdf_job_win: Page %d: Bitmap Dimensions (pixels): %d x %d", i, bitmap_width, bitmap_height);
-
-            BITMAPINFO bmi;
-            memset(&bmi, 0, sizeof(bmi));
-            bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-            bmi.bmiHeader.biWidth = bitmap_width;
-            bmi.bmiHeader.biHeight = -bitmap_height; // Negative for top-down DIB
-            bmi.bmiHeader.biPlanes = 1;
-            bmi.bmiHeader.biBitCount = 32; // Using 32-bit BGRA for alignment safety, as in the original working code.
-            bmi.bmiHeader.biCompression = BI_RGB;
-
-            void *pBitmapData = NULL;
-            HBITMAP hBitmap = CreateDIBSection(hdc, &bmi, DIB_RGB_COLORS, &pBitmapData, NULL, 0);
-            if (!hBitmap || !pBitmapData)
-            {
-                set_last_error("Failed to create bitmap for rendering page %d. Error: %lu.", i + 1, GetLastError());
-                LOG("print_pdf_job_win: CreateDIBSection failed for page %d with error %lu", i, GetLastError());
-                FPDF_ClosePage(page);
-                EndPage(hdc);
-                success = false;
-                break;
-            }
-
-            FPDF_BITMAP pdfBitmap = FPDFBitmap_CreateEx(bitmap_width, bitmap_height, FPDFBitmap_BGRA, pBitmapData, bitmap_width * 4);
-            if (!pdfBitmap)
-            {
-                set_last_error("Failed to create PDFium bitmap for page %d.", i + 1);
-                LOG("print_pdf_job_win: FPDFBitmap_CreateEx failed for page %d", i);
-                DeleteObject(hBitmap);
-                FPDF_ClosePage(page);
-                EndPage(hdc);
-                success = false;
-                break;
-            }
-
-            FPDFBitmap_FillRect(pdfBitmap, 0, 0, bitmap_width, bitmap_height, 0xFFFFFFFF); // Fill with white
-            // Pass the rotation value to PDFium so it handles rendering the page correctly.
-            // IMPORTANT: We have already swapped the width/height to create a correctly-oriented
-            // bitmap. We must now render the page with NO additional rotation, so we pass 0.
-            // The page content itself will be correctly oriented within the unrotated bitmap.
-            FPDF_RenderPageBitmap(pdfBitmap, page, 0, 0, bitmap_width, bitmap_height, 0, FPDF_ANNOT);
-            FPDFBitmap_Destroy(pdfBitmap);
+            // Calculate the PDF page size in device pixels.
+            int pdf_pixel_width = (int)(pdf_width_pt / 72.0f * dpi_x);
+            int pdf_pixel_height = (int)(pdf_height_pt / 72.0f * dpi_y);
 
             if (scaling_mode == 0)
             { // Fit to Printable Area (formerly Fit Page)
-                _scale_to_fit(bitmap_width, bitmap_height, printable_width_pixels, printable_height_pixels, &dest_width, &dest_height);
+                _scale_to_fit(pdf_pixel_width, pdf_pixel_height, printable_width_pixels, printable_height_pixels, &dest_width, &dest_height);
                 LOG("print_pdf_job_win: Page %d: ScalingMode=FitToPrintableArea, Dest=(%d,%d)", i, dest_width, dest_height);
             }
             else if (scaling_mode == 1)
             { // Actual Size
                 // Calculate actual size in device pixels
-                dest_width = (int)(pdf_width_pt / 72.0f * dpi_x);
-                dest_height = (int)(pdf_height_pt / 72.0f * dpi_y);
+                dest_width = pdf_pixel_width;
+                dest_height = pdf_pixel_height;
                 LOG("print_pdf_job_win: Page %d: ScalingMode=ActualSize, Dest=(%d,%d)", i, dest_width, dest_height);
             }
             else if (scaling_mode == 2)
             { // Shrink to Fit
                 // If the PDF page is larger than the printable area, scale down to fit.
                 // Otherwise, print at actual size.
-                int pdf_pixel_width = (int)(pdf_width_pt / 72.0f * dpi_x);
-                int pdf_pixel_height = (int)(pdf_height_pt / 72.0f * dpi_y);
-
                 if (pdf_pixel_width > printable_width_pixels || pdf_pixel_height > printable_height_pixels)
                 {
-                    _scale_to_fit(bitmap_width, bitmap_height, printable_width_pixels, printable_height_pixels, &dest_width, &dest_height);
+                    _scale_to_fit(pdf_pixel_width, pdf_pixel_height, printable_width_pixels, printable_height_pixels, &dest_width, &dest_height);
                     LOG("print_pdf_job_win: Page %d: ScalingMode=ShrinkToFit (scaled), Dest=(%d,%d)", i, dest_width, dest_height);
                 }
                 else
@@ -1178,14 +1138,11 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
             { // Fit to Paper
                 int paper_width = GetDeviceCaps(hdc, PHYSICALWIDTH);
                 int paper_height = GetDeviceCaps(hdc, PHYSICALHEIGHT);
-                _scale_to_fit(bitmap_width, bitmap_height, paper_width, paper_height, &dest_width, &dest_height);
+                _scale_to_fit(pdf_pixel_width, pdf_pixel_height, paper_width, paper_height, &dest_width, &dest_height);
                 LOG("print_pdf_job_win: Page %d: ScalingMode=FitToPaper, Dest=(%d,%d)", i, dest_width, dest_height);
             }
             else if (scaling_mode == 4)
             { // Custom Scale
-                // Calculate actual size in device pixels first
-                int pdf_pixel_width = (int)(pdf_width_pt / 72.0f * dpi_x);
-                int pdf_pixel_height = (int)(pdf_height_pt / 72.0f * dpi_y);
                 // Apply custom scale factor
                 dest_width = (int)(pdf_pixel_width * custom_scale);
                 dest_height = (int)(pdf_pixel_height * custom_scale);
@@ -1193,7 +1150,7 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
             }
             else
             { // Default to Fit to Printable Area
-                _scale_to_fit(bitmap_width, bitmap_height, printable_width_pixels, printable_height_pixels, &dest_width, &dest_height);
+                _scale_to_fit(pdf_pixel_width, pdf_pixel_height, printable_width_pixels, printable_height_pixels, &dest_width, &dest_height);
                 LOG("print_pdf_job_win: Page %d: ScalingMode=Default (FitToPrintableArea), Dest=(%d,%d)", i, dest_width, dest_height);
             }
 
@@ -1213,14 +1170,10 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
             }
 
             LOG("print_pdf_job_win: Page %d: Final DestRect=(%d,%d, %dx%d)", i, dest_x, dest_y, dest_width, dest_height);
-            if (StretchDIBits(hdc, dest_x, dest_y, dest_width, dest_height, 0, 0, bitmap_width, bitmap_height, pBitmapData, &bmi, DIB_RGB_COLORS, SRCCOPY) == GDI_ERROR)
-            {
-                set_last_error("Failed to draw page %d to the printer device context. Error: %lu.", i + 1, GetLastError());
-                LOG("print_pdf_job_win: StretchDIBits failed for page %d with error %lu", i, GetLastError());
-                success = false;
-            }
+            // Render directly to the printer DC. The rotation argument is 0 because we already
+            // swapped the page dimensions to calculate the correct aspect ratio for scaling.
+            FPDF_RenderPage(hdc, page, dest_x, dest_y, dest_width, dest_height, 0, FPDF_ANNOT);
 
-            DeleteObject(hBitmap);
             FPDF_ClosePage(page);
 
             if (EndPage(hdc) <= 0)
@@ -1230,7 +1183,7 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
                 success = false;
             }
         }
-    }
+    // }
 
     free(pages_to_print);
     if (doc_name_w)
@@ -2072,16 +2025,15 @@ FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char *printer_name, const ui
     bool collate = true; // Default to collated (complete copies printed together)
     parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id, &custom_scale, &collate, &duplex_mode);
 
-    HANDLE hPrinter;
-    DOC_INFO_1W docInfo;
-    DWORD written;
     DWORD job_id = 0;
-
     wchar_t *printer_name_w = to_utf16(printer_name);
     if (!printer_name_w)
         return 0;
 
-    DEVMODEW* pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, collate, duplex_mode);
+    HANDLE hPrinter;
+    DOC_INFO_1W docInfo;
+    DWORD written;
+    DEVMODEW* pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, 1, collate, duplex_mode);
 
     PRINTER_DEFAULTSW printerDefaults = {NULL, pDevMode, PRINTER_ACCESS_USE};
     printerDefaults.pDatatype = L"RAW";
