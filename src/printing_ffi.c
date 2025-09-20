@@ -721,7 +721,6 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char *printer_name, const uint8
 
     HANDLE hPrinter;
     DOC_INFO_1W docInfo;
-    DWORD written;
     DEVMODEW *pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, 1, collate, duplex_mode);
 
     PRINTER_DEFAULTSW printerDefaults = {NULL, pDevMode, PRINTER_ACCESS_USE};
@@ -903,19 +902,8 @@ static void _scale_to_fit(int src_width, int src_height, int target_width, int t
 // Returns a job ID if `submit_job` is true, otherwise returns 1 for success or 0 for failure.
 static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file_path, const char *doc_name, int scaling_mode, int copies, const char *page_range, const char *alignment, int num_options, const char **option_keys, const char **option_values, bool submit_job)
 {
-    LOG("print_pdf_job_win: Initializing for printer '%s', path '%s'", printer_name, pdf_file_path);
-    if (!s_pdfium_initialized)
-    {
-        FPDF_LIBRARY_CONFIG config;
-        memset(&config, 0, sizeof(config));
-        config.version = 2;
-        FPDF_InitLibraryWithConfig(&config);
-        s_pdfium_initialized = true;
-        LOG("Pdfium library initialized for the first time.");
-    }
     // Clear any previous errors at the start of an operation.
     set_last_error("");
-
     double custom_scale;
     int paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, duplex_mode;
     bool collate = true; // Default to collated (complete copies printed together)
@@ -2051,7 +2039,6 @@ FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char *printer_name, const ui
 
     HANDLE hPrinter;
     DOC_INFO_1W docInfo;
-    DWORD written;
     DEVMODEW* pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, 1, collate, duplex_mode);
 
     PRINTER_DEFAULTSW printerDefaults = {NULL, pDevMode, PRINTER_ACCESS_USE};
