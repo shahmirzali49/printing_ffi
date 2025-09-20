@@ -25,8 +25,12 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(pdfium)
 
 # Rename the pdfium DLL to avoid conflicts with other plugins.
+set(ORIGINAL_PDFIUM_DLL "${pdfium_SOURCE_DIR}/bin/pdfium.dll")
 set(RENAMED_PDFIUM_DLL "${pdfium_SOURCE_DIR}/bin/printing_ffi_pdfium.dll")
-file(RENAME "${pdfium_SOURCE_DIR}/bin/pdfium.dll" "${RENAMED_PDFIUM_DLL}")
+
+if(EXISTS "${ORIGINAL_PDFIUM_DLL}" AND NOT EXISTS "${RENAMED_PDFIUM_DLL}")
+  file(RENAME "${ORIGINAL_PDFIUM_DLL}" "${RENAMED_PDFIUM_DLL}")
+endif()
 
 # Set variables for the src/CMakeLists.txt to use.
 # The pdfium_SOURCE_DIR variable is automatically set by FetchContent.
