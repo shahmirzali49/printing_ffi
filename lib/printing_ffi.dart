@@ -988,6 +988,10 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
       final helperReceivePort = ReceivePort();
       helperReceivePort.listen((dynamic data) {
         if (data is _DisposeRequest) {
+          if (Platform.isWindows) {
+            // Clean up the PDFium library before the isolate exits.
+            bindings.shutdown_pdfium_library();
+          }
           helperReceivePort.close();
           return;
         }

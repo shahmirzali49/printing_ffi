@@ -333,6 +333,13 @@ class PrintingFfiBindings {
 
   late final _init_pdfium_libraryPtr = _lookup<ffi.NativeFunction<ffi.Void Function()>>('init_pdfium_library');
   late final _init_pdfium_library = _init_pdfium_libraryPtr.asFunction<void Function()>();
+
+  void shutdown_pdfium_library() {
+    return _shutdown_pdfium_library();
+  }
+
+  late final _shutdown_pdfium_libraryPtr = _lookup<ffi.NativeFunction<ffi.Void Function()>>('shutdown_pdfium_library');
+  late final _shutdown_pdfium_library = _shutdown_pdfium_libraryPtr.asFunction<void Function()>();
 }
 
 /// Struct for returning printer information

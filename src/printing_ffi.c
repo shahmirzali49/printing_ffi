@@ -35,6 +35,7 @@ typedef float (*FPDF_GetPageWidthF_t)(FPDF_PAGE page);
 typedef float (*FPDF_GetPageHeightF_t)(FPDF_PAGE page);
 typedef int (*FPDFPage_GetRotation_t)(FPDF_PAGE page);
 typedef void (*FPDF_ClosePage_t)(FPDF_PAGE page);
+typedef void (*FPDF_DestroyLibrary_t)(void);
 // Type for direct rendering to a device context.
 typedef void (*FPDF_RenderPage_t)(HDC dc, FPDF_PAGE page, int start_x, int start_y, int size_x, int size_y, int rotate, int flags);
 
@@ -53,9 +54,12 @@ static struct
     FPDFPage_GetRotation_t FPDFPage_GetRotation;
     FPDF_ClosePage_t FPDF_ClosePage;
     FPDF_RenderPage_t FPDF_RenderPage;
+    FPDF_DestroyLibrary_t FPDF_DestroyLibrary;
 } g_pdfium = {0};
 
-static bool s_pdfium_library_initialized = false;
+// Thread-safe initialization control for PDFium
+static INIT_ONCE g_pdfium_init_once = INIT_ONCE_STATIC_INIT;
+static bool g_pdfium_init_succeeded = false;
 #endif
 
 #define LOG(...)
@@ -98,15 +102,9 @@ static void set_last_error(const char *format, ...)
 }
 
 #ifdef _WIN32
-// Loads the PDFium DLL and resolves all required function pointers.
-// Returns true on success, false on failure.
-static bool load_pdfium_library()
+// This is the function that will be called only once to initialize PDFium.
+static BOOL CALLBACK InitPdfiumCallback(PINIT_ONCE InitOnce, PVOID Parameter, PVOID *Context)
 {
-    if (g_pdfium.module)
-    {
-        return true; // Already loaded.
-    }
-
     // Attempt to load the isolated DLL first, then fall back to the standard name.
     const char *pdfium_names[] = {"printing_ffi_pdfium.dll", "pdfium.dll", NULL};
     for (int i = 0; pdfium_names[i] != NULL; ++i)
@@ -123,10 +121,10 @@ static bool load_pdfium_library()
     {
         set_last_error("Failed to load pdfium.dll. Make sure it is present alongside the application executable.");
         LOG("Failed to load any of the PDFium DLL candidates.");
-        return false;
+        g_pdfium_init_succeeded = false;
+        return TRUE; // The one-time initialization itself completed, even if the logic failed.
     }
 
-// Macro to simplify loading functions.
 #define LOAD_PDFIUM_FUNC(name)                                                \
     g_pdfium.name = (name##_t)GetProcAddress(g_pdfium.module, #name);         \
     if (!g_pdfium.name)                                                       \
@@ -135,7 +133,8 @@ static bool load_pdfium_library()
         LOG("Failed to find function '%s' in PDFium DLL.", #name);            \
         FreeLibrary(g_pdfium.module);                                         \
         g_pdfium.module = NULL;                                               \
-        return false;                                                         \
+        g_pdfium_init_succeeded = false;                                      \
+        return TRUE;                                                          \
     }
 
     // Load all required functions.
@@ -149,13 +148,43 @@ static bool load_pdfium_library()
     LOAD_PDFIUM_FUNC(FPDF_GetPageHeightF);
     LOAD_PDFIUM_FUNC(FPDFPage_GetRotation);
     LOAD_PDFIUM_FUNC(FPDF_ClosePage);
-    // Load direct rendering function
     LOAD_PDFIUM_FUNC(FPDF_RenderPage);
+    LOAD_PDFIUM_FUNC(FPDF_DestroyLibrary);
 
 #undef LOAD_PDFIUM_FUNC
 
-    return true;
+    // Now initialize the library
+    FPDF_LIBRARY_CONFIG config;
+    memset(&config, 0, sizeof(config));
+    config.version = 2;
+    g_pdfium.FPDF_InitLibraryWithConfig(&config);
+    LOG("PDFium library initialized successfully.");
+    g_pdfium_init_succeeded = true;
+    return TRUE;
 }
+
+// Loads and initializes the PDFium DLL. This function is thread-safe and idempotent.
+// Returns true on success, false on failure.
+static bool ensure_pdfium_initialized()
+{
+    if (!InitOnceExecuteOnce(&g_pdfium_init_once, InitPdfiumCallback, NULL, NULL))
+    {
+        // This means the InitOnceExecuteOnce call itself failed, which is a system-level error.
+        set_last_error("Failed to execute one-time PDFium initialization (InitOnceExecuteOnce failed).");
+        return false;
+    }
+    // g_pdfium_init_succeeded is set inside the callback.
+    if (!g_pdfium_init_succeeded)
+    {
+        // If the error message is not already set by the callback, set a generic one.
+        if (g_last_error_message == NULL || strlen(g_last_error_message) == 0)
+        {
+            set_last_error("PDFium initialization failed for an unknown reason.");
+        }
+    }
+    return g_pdfium_init_succeeded;
+}
+
 #endif
 
 #ifdef _WIN32
@@ -539,24 +568,29 @@ static DEVMODEW *get_modified_devmode(wchar_t *printer_name_w, int paper_size_id
 }
 #endif
 
+FFI_PLUGIN_EXPORT void shutdown_pdfium_library()
+{
+#ifdef _WIN32
+    if (g_pdfium_init_succeeded && g_pdfium.module && g_pdfium.FPDF_DestroyLibrary)
+    {
+        g_pdfium.FPDF_DestroyLibrary();
+        // We don't free the library handle, as the process is likely shutting down.
+        // Re-initializing after shutdown is not a supported scenario.
+        LOG("PDFium library shut down.");
+    }
+#endif
+}
+
 FFI_PLUGIN_EXPORT void init_pdfium_library()
 {
 #ifdef _WIN32
-    if (s_pdfium_library_initialized)
+    // This function now just ensures initialization. It's safe to call multiple times
+    // from any thread. The underlying implementation uses InitOnceExecuteOnce.
+    if (ensure_pdfium_initialized())
     {
-        return;
+        LOG("PDFium library explicitly initialized or already initialized.");
     }
 
-    if (load_pdfium_library())
-    {
-        FPDF_LIBRARY_CONFIG config;
-        memset(&config, 0, sizeof(config));
-        config.version = 2;
-        // Initialize the library using the dynamically loaded function pointer.
-        g_pdfium.FPDF_InitLibraryWithConfig(&config);
-        s_pdfium_library_initialized = true;
-        LOG("PDFium library initialized explicitly.");
-    }
 #endif
 }
 
@@ -1032,13 +1066,10 @@ static void _scale_to_fit(int src_width, int src_height, int target_width, int t
 // Returns a job ID if `submit_job` is true, otherwise returns 1 for success or 0 for failure.
 static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file_path, const char *doc_name, int scaling_mode, int copies, const char *page_range, const char *alignment, int num_options, const char **option_keys, const char **option_values, bool submit_job)
 {
-    // Ensure the PDFium library is loaded. This is safe to call multiple times.
-    // If init_pdfium_library() was called by the user, this will just return true.
-    // If not, it will attempt to load the DLL and get function pointers, assuming
-    // another plugin (like pdfrx) has already called FPDF_InitLibraryWithConfig.
-    if (!load_pdfium_library())
+    // Ensure the PDFium library is loaded and initialized. This is thread-safe and idempotent.
+    if (!ensure_pdfium_initialized())
     {
-        // Error is already set by load_pdfium_library.
+        // Error is already set by ensure_pdfium_initialized or its callback.
         return 0;
     }
 
