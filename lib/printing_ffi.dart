@@ -357,20 +357,28 @@ class PrintingFfi {
 
           // If the job has reached a terminal state, stop polling.
           final status = currentJob.status;
-          if (status == PrintJobStatus.completed || status == PrintJobStatus.canceled || status == PrintJobStatus.aborted || status == PrintJobStatus.error) {
+          if (status == PrintJobStatus.completed || status == PrintJobStatus.printed || status == PrintJobStatus.canceled || status == PrintJobStatus.aborted || status == PrintJobStatus.error) {
             poller?.cancel();
             await controller.close();
           }
         } else {
           // Job is no longer in the queue. This usually means it has completed.
-          // If we have a last known state and it wasn't already 'completed',
-          // we can emit a final 'completed' status before closing the stream.
-          if (lastJobState != null && lastJobState!.status != PrintJobStatus.completed) {
-            // Create a synthetic 'completed' job status.
-            final completedRawStatus = Platform.isWindows
-                ? 0x00000080 // JOB_STATUS_PRINTED
+          // If we have a last known state and it wasn't already in a terminal state,
+          // we can emit a final "printed" or "completed" status before closing the stream.
+          const terminalStates = {
+            PrintJobStatus.completed,
+            PrintJobStatus.printed,
+            PrintJobStatus.canceled,
+            PrintJobStatus.aborted,
+            PrintJobStatus.error,
+          };
+          if (lastJobState != null && !terminalStates.contains(lastJobState!.status)) {
+            // Create a synthetic 'printed'/'completed' job status.
+            // We use the most common success state for each platform.
+            final finalRawStatus = Platform.isWindows
+                ? 128 // JOB_STATUS_PRINTED
                 : 9; // IPP_JOB_COMPLETED
-            final finalJob = PrintJob(lastJobState!.id, lastJobState!.title, completedRawStatus);
+            final finalJob = PrintJob(lastJobState!.id, lastJobState!.title, finalRawStatus);
 
             // Only add if the status is actually different.
             if (finalJob.rawStatus != lastJobState!.rawStatus) {
