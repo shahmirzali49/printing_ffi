@@ -21,10 +21,8 @@ if (ANDROID)
   target_link_options(printing_ffi PRIVATE "-Wl,-z,max-page-size=16384")
 elseif(WIN32)
   # On Windows, link against Pdfium and the Graphics Device Interface library.
-  # Use an absolute path to ensure the compiler can always find the headers.
-  if(NOT IS_ABSOLUTE "${PDFIUM_INCLUDE_DIR}")
-    set(PDFIUM_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/windows/${PDFIUM_INCLUDE_DIR}")
-  endif()
+  # The PDFIUM_INCLUDE_DIR variable is set by the parent windows/CMakeLists.txt
+  # and is expected to be an absolute path to the pdfium include directory.
   target_include_directories(printing_ffi PUBLIC "${PDFIUM_INCLUDE_DIR}")
   target_link_libraries(printing_ffi PUBLIC "gdi32.lib")
 endif()
