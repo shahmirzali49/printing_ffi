@@ -24,34 +24,8 @@
 // Global state for Pdfium initialization
 static bool s_pdfium_initialized = false;
 #endif
-// Use thread-local storage for the log callback to ensure isolate safety.
-// Each Dart isolate runs on its own thread, so each will have its own
-// instance of this variable.
-#ifdef _WIN32
-__declspec(thread) static log_callback_t s_log_callback = NULL;
-#else // macOS, Linux
-static __thread log_callback_t s_log_callback = NULL;
-#endif
 
-// Logging macro - enabled when DEBUG_LOGGING is defined (e.g., in debug builds)
-#ifdef DEBUG_LOGGING
-#define LOG(format, ...)                                                                     \
-    do                                                                                       \
-    {                                                                                        \
-        char log_message[1024];                                                              \
-        snprintf(log_message, sizeof(log_message), "[printing_ffi] " format, ##__VA_ARGS__); \
-        if (s_log_callback != NULL)                                                          \
-        {                                                                                    \
-            s_log_callback(log_message);                                                     \
-        }                                                                                    \
-        else                                                                                 \
-        {                                                                                    \
-            fprintf(stderr, "%s\n", log_message);                                            \
-        }                                                                                    \
-    } while (0)
-#else
 #define LOG(...)
-#endif
 
 // --- Last Error Handling ---
 
@@ -88,11 +62,6 @@ static void set_last_error(const char *format, ...)
             vsnprintf(g_last_error_message, size + 1, format, args);
     }
     va_end(args);
-}
-
-FFI_PLUGIN_EXPORT void register_log_callback(log_callback_t callback)
-{
-    s_log_callback = callback;
 }
 
 #ifdef _WIN32

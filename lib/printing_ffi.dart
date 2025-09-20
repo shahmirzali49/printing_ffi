@@ -9,9 +9,6 @@ import 'models/models.dart';
 
 export 'models/models.dart';
 
-/// A function that handles log messages from the native side.
-typedef LogHandler = void Function(String message);
-
 class PrintingFfi {
   PrintingFfi._();
   static final PrintingFfi instance = PrintingFfi._();
@@ -29,37 +26,7 @@ class PrintingFfi {
 
   late final PrintingFfiBindings _bindings = PrintingFfiBindings(_dylib);
 
-  LogHandler? _customLogHandler;
-
-  NativeCallable<Void Function(Pointer<Char>)>? _logCallback;
-
-  void _logHandler(Pointer<Char> message) {
-    final logMessage = message.cast<Utf8>().toDartString();
-    if (_customLogHandler != null) {
-      _customLogHandler!(logMessage);
-    } else {
-      debugPrint(logMessage);
-    }
-  }
-
-  void initialize({LogHandler? logHandler}) {
-    if (_logCallback != null) {
-      _customLogHandler = logHandler;
-      return;
-    }
-
-    _customLogHandler = logHandler;
-
-    _logCallback = NativeCallable<Void Function(Pointer<Char>)>.listener(_logHandler);
-
-    final registerer = _dylib.lookup<NativeFunction<Void Function(Pointer<NativeFunction<Void Function(Pointer<Char>)>>)>>('register_log_callback').asFunction<void Function(Pointer<NativeFunction<Void Function(Pointer<Char>)>>)>();
-
-    registerer(_logCallback!.nativeFunction);
-  }
-
   void dispose() {
-    _logCallback?.close();
-    _logCallback = null;
     _helperIsolateSendPortFuture = null;
     _failAllPendingRequests(IsolateError('PrintingFfi instance disposed.'));
   }
@@ -266,58 +233,84 @@ class PrintingFfi {
   }) {
     late StreamController<PrintJob> controller;
     Timer? poller;
-    PrintJob? lastJob;
+    PrintJob? lastJobState;
+
+    PrintJob? findJobById(List<PrintJob> jobs, int jobId) {
+      for (final job in jobs) {
+        if (job.id == jobId) return job;
+      }
+      return null;
+    }
 
     Future<void> poll(int jobId) async {
-      if (controller.isClosed) return;
+      if (controller.isClosed) {
+        poller?.cancel();
+        return;
+      }
+
       try {
         final jobs = await listPrintJobs(printerName);
-        PrintJob? foundJob;
-        try {
-          foundJob = jobs.firstWhere((j) => j.id == jobId);
-        } on StateError {
-          foundJob = null;
-        }
+        final currentJob = findJobById(jobs, jobId);
 
-        if (foundJob != null) {
-          if (foundJob.rawStatus != lastJob?.rawStatus) {
-            controller.add(foundJob);
+        if (currentJob != null) {
+          // Job is still in the queue.
+          // Only emit an update if the status has changed.
+          if (currentJob.rawStatus != lastJobState?.rawStatus) {
+            controller.add(currentJob);
           }
-          lastJob = foundJob;
+          lastJobState = currentJob;
 
-          final status = foundJob.status;
+          // If the job has reached a terminal state, stop polling.
+          final status = currentJob.status;
           if (status == PrintJobStatus.completed || status == PrintJobStatus.canceled || status == PrintJobStatus.aborted || status == PrintJobStatus.error) {
             poller?.cancel();
             await controller.close();
           }
         } else {
-          if (lastJob != null && lastJob!.status != PrintJobStatus.completed) {
-            final completedRawStatus = Platform.isWindows ? 0x00001000 : 9;
-            final finalJob = PrintJob(lastJob!.id, lastJob!.title, completedRawStatus);
-            if (finalJob.rawStatus != lastJob!.rawStatus) {
+          // Job is no longer in the queue. This usually means it has completed.
+          // If we have a last known state and it wasn't already 'completed',
+          // we can emit a final 'completed' status before closing the stream.
+          if (lastJobState != null && lastJobState!.status != PrintJobStatus.completed) {
+            // Create a synthetic 'completed' job status.
+            final completedRawStatus = Platform.isWindows
+                ? 0x00001000 // JOB_STATUS_PRINTED
+                : 9; // IPP_JOB_COMPLETED
+            final finalJob = PrintJob(lastJobState!.id, lastJobState!.title, completedRawStatus);
+
+            // Only add if the status is actually different.
+            if (finalJob.rawStatus != lastJobState!.rawStatus) {
               controller.add(finalJob);
             }
           }
+          // The job is gone, so we stop polling and close the stream.
           poller?.cancel();
           await controller.close();
         }
       } catch (e, s) {
-        if (!controller.isClosed) controller.addError(e, s);
-        poller?.cancel();
-        await controller.close();
+        if (!controller.isClosed) {
+          controller.addError(e, s);
+          poller?.cancel();
+          await controller.close();
+        }
       }
     }
 
     controller = StreamController<PrintJob>(
       onListen: () async {
-        final jobId = await submitJob();
-        if (jobId <= 0) {
-          controller.addError(Exception('Failed to submit job to the print queue.'));
-          await controller.close();
-        } else {
-          poller = Timer.periodic(pollInterval, (_) => poll(jobId));
-          poll(jobId);
-        }
+        submitJob()
+            .then((jobId) {
+              // Got a job ID, start polling.
+              // An initial poll is done right away to get the first status.
+              poll(jobId);
+              poller = Timer.periodic(pollInterval, (_) => poll(jobId));
+            })
+            .catchError((Object e, StackTrace s) {
+              // The job submission failed.
+              if (!controller.isClosed) {
+                controller.addError(e, s);
+                controller.close();
+              }
+            });
       },
       onCancel: () {
         poller?.cancel();

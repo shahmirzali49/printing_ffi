@@ -80,13 +80,6 @@ const List<AppColorScheme> availableColorSchemes = [
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  // Initialize the FFI plugin and provide a custom log handler.
-  // This allows you to route native logs to your own logging infrastructure.
-  PrintingFfi.instance.initialize(
-    logHandler: (message) {
-      debugPrint('CUSTOM LOG HANDLER: $message');
-    },
-  );
   runApp(const PrintingFfiExampleApp());
 }
 

@@ -55,17 +55,6 @@ class PrintingFfiBindings {
   late final _get_printersPtr = _lookup<ffi.NativeFunction<ffi.Pointer<PrinterList> Function()>>('get_printers');
   late final _get_printers = _get_printersPtr.asFunction<ffi.Pointer<PrinterList> Function()>();
 
-  void register_log_callback(
-    log_callback_t callback,
-  ) {
-    return _register_log_callback(
-      callback,
-    );
-  }
-
-  late final _register_log_callbackPtr = _lookup<ffi.NativeFunction<ffi.Void Function(log_callback_t)>>('register_log_callback');
-  late final _register_log_callback = _register_log_callbackPtr.asFunction<void Function(log_callback_t)>();
-
   void free_printer_list(
     ffi.Pointer<PrinterList> printer_list,
   ) {
@@ -337,12 +326,6 @@ class PrintingFfiBindings {
   late final _submit_pdf_job = _submit_pdf_jobPtr
       .asFunction<int Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, int, int, ffi.Pointer<ffi.Char>, int, ffi.Pointer<ffi.Pointer<ffi.Char>>, ffi.Pointer<ffi.Pointer<ffi.Char>>, ffi.Pointer<ffi.Char>)>();
 }
-
-typedef log_callback_tFunction = ffi.Void Function(ffi.Pointer<ffi.Char> message);
-typedef Dartlog_callback_tFunction = void Function(ffi.Pointer<ffi.Char> message);
-
-/// Define a function pointer type for the log callback.
-typedef log_callback_t = ffi.Pointer<ffi.NativeFunction<log_callback_tFunction>>;
 
 /// Struct for returning printer information
 final class PrinterInfo extends ffi.Struct {

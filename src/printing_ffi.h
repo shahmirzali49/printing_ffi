@@ -13,9 +13,6 @@
 #define FFI_PLUGIN_EXPORT __attribute__((visibility("default")))
 #endif
 
-// Define a function pointer type for the log callback.
-typedef void (*log_callback_t)(const char* message);
-
 // Struct for returning printer information
 typedef struct {
     char* name;
@@ -130,7 +127,6 @@ typedef struct {
 FFI_PLUGIN_EXPORT int sum(int a, int b);
 FFI_PLUGIN_EXPORT int sum_long_running(int a, int b);
 FFI_PLUGIN_EXPORT PrinterList* get_printers(void);
-FFI_PLUGIN_EXPORT void register_log_callback(log_callback_t callback);
 FFI_PLUGIN_EXPORT void free_printer_list(PrinterList* printer_list);
 FFI_PLUGIN_EXPORT PrinterInfo* get_default_printer(void);
 FFI_PLUGIN_EXPORT void free_printer_info(PrinterInfo* printer_info);
