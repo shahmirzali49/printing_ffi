@@ -22,6 +22,7 @@
 // Include the main Pdfium header. Ensure this is in your src/ directory.
 #include "fpdfview.h"
 #include "fpdf_edit.h"
+#include "fpdf_render.h"
 
 // --- PDFium Dynamic Loading ---
 // Define function pointer types for all used PDFium functions.
