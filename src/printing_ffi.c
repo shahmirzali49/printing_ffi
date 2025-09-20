@@ -431,30 +431,6 @@ static DEVMODEW* get_modified_devmode(wchar_t* printer_name_w, int paper_size_id
 }
 #endif
 
-#ifdef _WIN32
-BOOL WINAPI DllMain(
-    HINSTANCE hinstDLL,
-    DWORD fdwReason,
-    LPVOID lpvReserved)
-{
-    (void)hinstDLL;    // Suppress unused parameter warning
-    (void)lpvReserved; // Suppress unused parameter warning
-
-    switch (fdwReason)
-    {
-    case DLL_PROCESS_DETACH:
-        if (s_pdfium_initialized)
-        {
-            FPDF_DestroyLibrary();
-            s_pdfium_initialized = false;
-            LOG("Pdfium library destroyed on process detach.");
-        }
-        break;
-    }
-    return TRUE;
-}
-#endif
-
 FFI_PLUGIN_EXPORT int sum(int a, int b)
 {
     return a + b;
