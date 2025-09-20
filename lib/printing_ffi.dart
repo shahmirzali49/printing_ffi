@@ -53,7 +53,13 @@ void _remapCupsOptions(Map<String, String> options) {
 }
 
 class PrintingFfi {
-  PrintingFfi._();
+  PrintingFfi._() {
+    // Automatically initialize PDFium on Windows when the singleton is created.
+    // This ensures it's done once on the main isolate.
+    if (Platform.isWindows) {
+      _bindings.init_pdfium_library();
+    }
+  }
   static final PrintingFfi instance = PrintingFfi._();
 
   static const String _libName = 'printing_ffi';

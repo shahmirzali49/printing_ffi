@@ -130,7 +130,7 @@ flutter pub get
 
 ### Windows Setup 🪟
 
-No additional setup is required, as the plugin uses the native `winspool` API included with Windows. 🎉
+No additional setup is required. The plugin uses the native `winspool` API and automatically handles initialization of its bundled PDFium library for PDF printing. This ensures compatibility with other plugins that also use PDFium (like `pdfrx`) by initializing the library safely on the main application thread.
 
 ### Linux Setup 🐧
 

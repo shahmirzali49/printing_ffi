@@ -22,7 +22,7 @@
 #include "fpdfview.h"
 #include "fpdf_edit.h"
 // Global state for Pdfium initialization
-static bool s_pdfium_initialized = false;
+static bool s_pdfium_library_initialized = false;
 #endif
 
 #define LOG(...)
