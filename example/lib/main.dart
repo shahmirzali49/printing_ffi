@@ -6,15 +6,9 @@ import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
 import 'pdf_viewer_dialog.dart';
 import 'modern_print_dialog.dart';
-import 'package:printing_ffi/printing_ffi.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  PrintingFfi.instance.initialize(
-    logHandler: (message) {
-      debugPrint('CUSTOM LOG HANDLER: $message');
-    },
-  );
   runApp(const MyApp());
 }
 

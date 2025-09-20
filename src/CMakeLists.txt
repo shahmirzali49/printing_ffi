@@ -16,11 +16,6 @@ set_target_properties(printing_ffi PROPERTIES
 
 target_compile_definitions(printing_ffi PUBLIC DART_SHARED_LIB)
 
-# Add a compile definition to enable logging in debug builds.
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-  target_compile_definitions(printing_ffi PUBLIC DEBUG_LOGGING)
-endif()
-
 if (ANDROID)
   # Support Android 15 16k page size
   target_link_options(printing_ffi PRIVATE "-Wl,-z,max-page-size=16384")
