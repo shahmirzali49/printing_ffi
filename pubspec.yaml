@@ -22,6 +22,7 @@ dependencies:
   flutter:
     sdk: flutter
   plugin_platform_interface: ^2.0.2
+  image: ^4.2.0
 
 dev_dependencies:
   ffigen: ^20.0.0-dev.0

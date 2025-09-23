@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:ffi';
 import 'dart:io';
 import 'dart:isolate';
+import 'package:image/image.dart' as img;
 import 'package:ffi/ffi.dart';
 import 'package:flutter/foundation.dart';
 import 'package:printing_ffi/printing_ffi_bindings_generated.dart';
@@ -233,6 +234,35 @@ class PrintingFfi {
     _printRequests[requestId] = completer;
     helperIsolateSendPort.send(request);
     return completer.future;
+  }
+
+  /// Convenience helper to rotate raster/image bytes before sending as RAW.
+  ///
+  /// - [degrees] should be 0, 90, 180, or 270.
+  /// - Decodes common formats (PNG/JPEG), rotates, and re-encodes as PNG.
+  /// - Use when your printer expects raster/image bytes as part of your RAW pipeline.
+  Future<bool> rawDataToPrinterWithRotation(
+    String printerName,
+    Uint8List imageBytes, {
+    required int degrees,
+    String docName = 'Rotated Raw',
+    List<PrintOption> options = const [],
+  }) async {
+    if (degrees % 90 != 0) {
+      throw ArgumentError('degrees must be one of 0, 90, 180, 270');
+    }
+    final decoded = img.decodeImage(imageBytes);
+    if (decoded == null) {
+      throw ArgumentError('Unsupported or corrupted image bytes');
+    }
+    final rotated = degrees == 0 ? decoded : img.copyRotate(decoded, angle: degrees);
+    final rotatedBytes = Uint8List.fromList(img.encodePng(rotated));
+    return rawDataToPrinter(
+      printerName,
+      rotatedBytes,
+      docName: docName,
+      options: options,
+    );
   }
 
   Future<bool> printPdf(

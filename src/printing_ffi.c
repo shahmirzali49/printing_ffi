@@ -881,7 +881,8 @@ FFI_PLUGIN_EXPORT bool raw_data_to_printer(const char *printer_name, const uint8
     int paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, duplex_mode;
     double custom_scale; // Dummy for raw printing
     bool collate = true; // Default to collated (complete copies printed together)
-    parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id, &custom_scale, &collate, &duplex_mode);
+	int pdf_rotation = -1; // Not used for raw printing
+	parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id, &custom_scale, &collate, &duplex_mode, &pdf_rotation);
 
     wchar_t *printer_name_w = to_utf16(printer_name);
     if (!printer_name_w)
@@ -2225,7 +2226,8 @@ FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char *printer_name, const ui
     int paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, duplex_mode;
     double custom_scale; // Dummy
     bool collate = true; // Default to collated (complete copies printed together)
-    parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id, &custom_scale, &collate, &duplex_mode);
+	int pdf_rotation = -1; // Not used for raw printing
+	parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id, &custom_scale, &collate, &duplex_mode, &pdf_rotation);
 
     DWORD job_id = 0;
     wchar_t *printer_name_w = to_utf16(printer_name);
