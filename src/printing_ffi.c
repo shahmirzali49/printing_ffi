@@ -332,13 +332,14 @@ static bool parse_page_range(const char *range_str, bool *page_flags, int total_
 // Helper function to parse Windows-specific print options from the generic key-value array.
 static void parse_windows_options(int num_options, const char **option_keys, const char **option_values,
                                   int *paper_size_id, int *paper_source_id, int *orientation,
-                                  int *color_mode, int *print_quality, int *media_type_id, double *custom_scale,
-                                  bool *collate, int *duplex_mode)
+                                  int *color_mode, int *print_quality, int *media_type_id,
+                                  double *custom_scale, bool *collate, int *duplex_mode, int *pdf_rotation)
 {
     // Set default values
     *paper_size_id = 0;
     *paper_source_id = 0;
     *orientation = 0;
+    *pdf_rotation = -1; // Default to -1 (auto from PDF)
     *color_mode = 0;
     *print_quality = 0;
     *media_type_id = 0;
@@ -419,6 +420,10 @@ static void parse_windows_options(int num_options, const char **option_keys, con
             {
                 *duplex_mode = 3; // DMDUP_HORIZONTAL (short edge)
             }
+        }
+        else if (strcmp(option_keys[i], "pdf-rotation") == 0)
+        {
+            *pdf_rotation = atoi(option_values[i]);
         }
     }
 }
@@ -1076,9 +1081,9 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
     // Clear any previous errors at the start of an operation.
     set_last_error("");
     double custom_scale;
-    int paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, duplex_mode;
+    int paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, duplex_mode, pdf_rotation;
     bool collate = true; // Default to collated (complete copies printed together)
-    parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id, &custom_scale, &collate, &duplex_mode);
+    parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id, &custom_scale, &collate, &duplex_mode, &pdf_rotation);
 
     wchar_t *printer_name_w = to_utf16(printer_name);
     if (!printer_name_w)
@@ -1267,6 +1272,10 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
         float pdf_height_pt = g_pdfium.FPDF_GetPageHeightF(page);
 
         int rotation = g_pdfium.FPDFPage_GetRotation(page);
+        if (pdf_rotation != -1)
+        {
+            rotation = pdf_rotation;
+        }
         if (rotation == 1 || rotation == 3)
         { // 90 or 270 degrees, swap dimensions
             float temp = pdf_width_pt;
