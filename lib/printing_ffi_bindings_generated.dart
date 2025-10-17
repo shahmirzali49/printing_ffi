@@ -340,6 +340,29 @@ class PrintingFfiBindings {
 
   late final _shutdown_pdfium_libraryPtr = _lookup<ffi.NativeFunction<ffi.Void Function()>>('shutdown_pdfium_library');
   late final _shutdown_pdfium_library = _shutdown_pdfium_libraryPtr.asFunction<void Function()>();
+
+  // Windows defaults (DEVMODE)
+  ffi.Pointer<WindowsPrinterDefaults> get_windows_printer_defaults(
+    ffi.Pointer<ffi.Char> printer_name,
+  ) {
+    return _get_windows_printer_defaults(
+      printer_name,
+    );
+  }
+
+  late final _get_windows_printer_defaultsPtr = _lookup<ffi.NativeFunction<ffi.Pointer<WindowsPrinterDefaults> Function(ffi.Pointer<ffi.Char>)>>('get_windows_printer_defaults');
+  late final _get_windows_printer_defaults = _get_windows_printer_defaultsPtr.asFunction<ffi.Pointer<WindowsPrinterDefaults> Function(ffi.Pointer<ffi.Char>)>();
+
+  void free_windows_printer_defaults(
+    ffi.Pointer<WindowsPrinterDefaults> defaults,
+  ) {
+    return _free_windows_printer_defaults(
+      defaults,
+    );
+  }
+
+  late final _free_windows_printer_defaultsPtr = _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<WindowsPrinterDefaults>)>>('free_windows_printer_defaults');
+  late final _free_windows_printer_defaults = _free_windows_printer_defaultsPtr.asFunction<void Function(ffi.Pointer<WindowsPrinterDefaults>)>();
 }
 
 /// Struct for returning printer information
@@ -505,4 +528,27 @@ final class WindowsPrinterCapabilities extends ffi.Struct {
 
   @ffi.Bool()
   external bool supports_landscape;
+}
+
+final class WindowsPrinterDefaults extends ffi.Struct {
+  @ffi.Int()
+  external int paper_size_id;
+
+  @ffi.Int()
+  external int paper_source_id;
+
+  @ffi.Int()
+  external int orientation;
+
+  @ffi.Int()
+  external int color_mode;
+
+  @ffi.Int()
+  external int print_quality;
+
+  @ffi.Int()
+  external int duplex_mode;
+
+  @ffi.Bool()
+  external bool collate;
 }

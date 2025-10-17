@@ -529,6 +529,19 @@ class PrintingFfi {
     return completer.future;
   }
 
+  Future<WindowsPrinterDefaultsModel?> getWindowsPrinterDefaults(String printerName) async {
+    if (!_isWindows) {
+      return null;
+    }
+    final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
+    final int requestId = _nextGetWindowsDefaultsRequestId++;
+    final request = kDebugMode ? GetWindowsDefaultsRequest(requestId, printerName) : _GetWindowsDefaultsRequest(requestId, printerName);
+    final completer = Completer<WindowsPrinterDefaultsModel?>();
+    _getWindowsDefaultsRequests[requestId] = completer;
+    helperIsolateSendPort.send(request);
+    return completer.future;
+  }
+
   Future<List<PrintJob>> listPrintJobs(String printerName) async {
     final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
     final int requestId = _nextPrintJobsRequestId++;
@@ -677,6 +690,7 @@ class PrintingFfi {
   int _nextPrintPdfRequestId = 0;
   int _nextGetCupsOptionsRequestId = 0;
   int _nextGetWindowsCapsRequestId = 0;
+  int _nextGetWindowsDefaultsRequestId = 0;
   int _nextOpenPrinterPropertiesRequestId = 0;
   int _nextSubmitRawDataJobRequestId = 0;
   int _nextSubmitPdfJobRequestId = 0;
@@ -687,6 +701,7 @@ class PrintingFfi {
   final Map<int, Completer<bool>> _printPdfRequests = <int, Completer<bool>>{};
   final Map<int, Completer<List<CupsOptionModel>>> _getCupsOptionsRequests = <int, Completer<List<CupsOptionModel>>>{};
   final Map<int, Completer<WindowsPrinterCapabilitiesModel?>> _getWindowsCapsRequests = <int, Completer<WindowsPrinterCapabilitiesModel?>>{};
+  final Map<int, Completer<WindowsPrinterDefaultsModel?>> _getWindowsDefaultsRequests = <int, Completer<WindowsPrinterDefaultsModel?>>{};
   final Map<int, Completer<PrinterPropertiesResult>> _openPrinterPropertiesRequests = <int, Completer<PrinterPropertiesResult>>{};
   final Map<int, Completer<int>> _submitRawDataJobRequests = <int, Completer<int>>{};
   final Map<int, Completer<int>> _submitPdfJobRequests = <int, Completer<int>>{};
@@ -819,6 +834,18 @@ class PrintingFfi {
       completer.complete(data.capabilities);
       return;
     }
+    if (data is _GetWindowsDefaultsResponse) {
+      final Completer<WindowsPrinterDefaultsModel?> completer = _getWindowsDefaultsRequests[data.id]!;
+      _getWindowsDefaultsRequests.remove(data.id);
+      completer.complete(data.defaults);
+      return;
+    }
+    if (data is _GetWindowsDefaultsResponse) {
+      final Completer<WindowsPrinterDefaultsModel?> completer = _getWindowsDefaultsRequests[data.id]!;
+      _getWindowsDefaultsRequests.remove(data.id);
+      completer.complete(data.defaults);
+      return;
+    }
     if (data is _OpenPrinterPropertiesResponse) {
       final Completer<PrinterPropertiesResult> completer = _openPrinterPropertiesRequests[data.id]!;
       _openPrinterPropertiesRequests.remove(data.id);
@@ -915,6 +942,13 @@ class _GetWindowsCapsRequest {
   const _GetWindowsCapsRequest(this.id, this.printerName);
 }
 
+class _GetWindowsDefaultsRequest {
+  final int id;
+  final String printerName;
+
+  const _GetWindowsDefaultsRequest(this.id, this.printerName);
+}
+
 class _OpenPrinterPropertiesRequest {
   final int id;
   final String printerName;
@@ -987,6 +1021,13 @@ class _GetWindowsCapsResponse {
   final WindowsPrinterCapabilitiesModel? capabilities;
 
   const _GetWindowsCapsResponse(this.id, this.capabilities);
+}
+
+class _GetWindowsDefaultsResponse {
+  final int id;
+  final WindowsPrinterDefaultsModel? defaults;
+
+  const _GetWindowsDefaultsResponse(this.id, this.defaults);
 }
 
 class _OpenPrinterPropertiesResponse {
@@ -1276,6 +1317,76 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
                   sendPort.send(_GetWindowsCapsResponse(data.id, model));
                 } finally {
                   bindings.free_windows_printer_capabilities(capsPtr);
+                }
+              }
+            } finally {
+              malloc.free(namePtr);
+            }
+          } catch (e, s) {
+            sendPort.send(_ErrorResponse(data.id, e, s));
+          }
+        } else if (data is _GetWindowsDefaultsRequest) {
+          try {
+            final namePtr = data.printerName.toNativeUtf8();
+            try {
+              final defsPtr = bindings.get_windows_printer_defaults(namePtr.cast());
+              if (defsPtr == nullptr) {
+                sendPort.send(_GetWindowsDefaultsResponse(data.id, null));
+              } else {
+                try {
+                  final d = defsPtr.ref;
+
+                  WindowsOrientation? orientation;
+                  if (d.orientation == 1) orientation = WindowsOrientation.portrait; // DMORIENT_PORTRAIT
+                  if (d.orientation == 2) orientation = WindowsOrientation.landscape; // DMORIENT_LANDSCAPE
+
+                  ColorMode? colorMode;
+                  if (d.color_mode == 1) colorMode = ColorMode.monochrome;
+                  if (d.color_mode == 2) colorMode = ColorMode.color;
+
+                  PrintQuality? quality;
+                  // mapping draft=0, low=1, normal=2, high=3
+                  switch (d.print_quality) {
+                    case 0:
+                      quality = PrintQuality.draft;
+                      break;
+                    case 1:
+                      quality = PrintQuality.low;
+                      break;
+                    case 3:
+                      quality = PrintQuality.high;
+                      break;
+                    case 2:
+                    default:
+                      quality = PrintQuality.normal;
+                  }
+
+                  DuplexMode? duplex;
+                  // 1=Simplex, 2=Vertical(long edge)=duplexLongEdge, 3=Horizontal(short edge)=duplexShortEdge
+                  switch (d.duplex_mode) {
+                    case 1:
+                      duplex = DuplexMode.singleSided;
+                      break;
+                    case 2:
+                      duplex = DuplexMode.duplexLongEdge;
+                      break;
+                    case 3:
+                      duplex = DuplexMode.duplexShortEdge;
+                      break;
+                  }
+
+                  final model = WindowsPrinterDefaultsModel(
+                    paperSizeId: d.paper_size_id == 0 ? null : d.paper_size_id,
+                    paperSourceId: d.paper_source_id == 0 ? null : d.paper_source_id,
+                    orientation: orientation,
+                    colorMode: colorMode,
+                    printQuality: quality,
+                    duplexMode: duplex,
+                    collate: d.collate,
+                  );
+                  sendPort.send(_GetWindowsDefaultsResponse(data.id, model));
+                } finally {
+                  bindings.free_windows_printer_defaults(defsPtr);
                 }
               }
             } finally {
@@ -1601,6 +1712,16 @@ class DisposeRequest extends _DisposeRequest {
 @visibleForTesting
 class GetWindowsCapsResponse extends _GetWindowsCapsResponse {
   const GetWindowsCapsResponse(super.id, super.capabilities);
+}
+
+@visibleForTesting
+class GetWindowsDefaultsRequest extends _GetWindowsDefaultsRequest {
+  const GetWindowsDefaultsRequest(super.id, super.printerName);
+}
+
+@visibleForTesting
+class GetWindowsDefaultsResponse extends _GetWindowsDefaultsResponse {
+  const GetWindowsDefaultsResponse(super.id, super.defaults);
 }
 
 @visibleForTesting

@@ -146,6 +146,18 @@ extern "C"
         bool supports_landscape;
     } WindowsPrinterCapabilities;
 
+    // Struct for Windows printer default settings (read from DEVMODE)
+    typedef struct
+    {
+        int paper_size_id;   // dmPaperSize (WORD), promoted to int
+        int paper_source_id; // dmDefaultSource (WORD), promoted to int
+        int orientation;     // DMORIENT_PORTRAIT (1) or DMORIENT_LANDSCAPE (2)
+        int color_mode;      // 1 = monochrome, 2 = color, 0 = unknown/not supported
+        int print_quality;   // 0=draft,1=low,2=normal,3=high
+        int duplex_mode;     // 1=Simplex, 2=Vertical(long edge), 3=Horizontal(short edge), 0=unknown
+        bool collate;        // true if DMCOLLATE_TRUE
+    } WindowsPrinterDefaults;
+
     FFI_PLUGIN_EXPORT int sum(int a, int b);
     FFI_PLUGIN_EXPORT int sum_long_running(int a, int b);
     FFI_PLUGIN_EXPORT PrinterList *get_printers(void);
@@ -165,6 +177,10 @@ extern "C"
     FFI_PLUGIN_EXPORT WindowsPrinterCapabilities *get_windows_printer_capabilities(const char *printer_name);
     FFI_PLUGIN_EXPORT void free_windows_printer_capabilities(WindowsPrinterCapabilities *capabilities);
     FFI_PLUGIN_EXPORT const char *get_last_error();
+
+    // Windows defaults (DEVMODE) helpers
+    FFI_PLUGIN_EXPORT WindowsPrinterDefaults *get_windows_printer_defaults(const char *printer_name);
+    FFI_PLUGIN_EXPORT void free_windows_printer_defaults(WindowsPrinterDefaults *defaults);
 
     // Functions that submit a job and return a job ID for status tracking.
     FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char *printer_name, const uint8_t *data, int length, const char *doc_name, int num_options, const char **option_keys, const char **option_values);

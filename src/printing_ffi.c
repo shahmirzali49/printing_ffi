@@ -1438,6 +1438,130 @@ FFI_PLUGIN_EXPORT const char *get_last_error()
     return g_last_error_message ? g_last_error_message : "";
 }
 
+FFI_PLUGIN_EXPORT WindowsPrinterDefaults *get_windows_printer_defaults(const char *printer_name)
+{
+#ifndef _WIN32
+    (void)printer_name;
+    return NULL;
+#else
+    if (!printer_name)
+        return NULL;
+
+    wchar_t *printer_name_w = to_utf16(printer_name);
+    if (!printer_name_w)
+        return NULL;
+
+    HANDLE hPrinter;
+    if (!OpenPrinterW(printer_name_w, &hPrinter, NULL))
+    {
+        free(printer_name_w);
+        return NULL;
+    }
+
+    LONG devModeSize = DocumentPropertiesW(NULL, hPrinter, printer_name_w, NULL, NULL, 0);
+    if (devModeSize <= 0)
+    {
+        ClosePrinter(hPrinter);
+        free(printer_name_w);
+        return NULL;
+    }
+
+    DEVMODEW *pDevMode = (DEVMODEW *)malloc(devModeSize);
+    if (!pDevMode)
+    {
+        ClosePrinter(hPrinter);
+        free(printer_name_w);
+        return NULL;
+    }
+
+    if (DocumentPropertiesW(NULL, hPrinter, printer_name_w, pDevMode, NULL, DM_OUT_BUFFER) != IDOK)
+    {
+        free(pDevMode);
+        ClosePrinter(hPrinter);
+        free(printer_name_w);
+        return NULL;
+    }
+
+    WindowsPrinterDefaults *defaults = (WindowsPrinterDefaults *)calloc(1, sizeof(WindowsPrinterDefaults));
+    if (!defaults)
+    {
+        free(pDevMode);
+        ClosePrinter(hPrinter);
+        free(printer_name_w);
+        return NULL;
+    }
+
+    // Populate from DEVMODE; check dmFields where appropriate
+    defaults->paper_size_id = (pDevMode->dmFields & DM_PAPERSIZE) ? pDevMode->dmPaperSize : 0;
+    defaults->paper_source_id = (pDevMode->dmFields & DM_DEFAULTSOURCE) ? pDevMode->dmDefaultSource : 0;
+    defaults->orientation = (pDevMode->dmFields & DM_ORIENTATION) ? pDevMode->dmOrientation : 0;
+
+    if (pDevMode->dmFields & DM_COLOR)
+    {
+        if (pDevMode->dmColor == DMCOLOR_MONOCHROME)
+            defaults->color_mode = 1; // monochrome
+        else if (pDevMode->dmColor == DMCOLOR_COLOR)
+            defaults->color_mode = 2; // color
+        else
+            defaults->color_mode = 0;
+    }
+    else
+    {
+        defaults->color_mode = 0; // unknown/not supported
+    }
+
+    if (pDevMode->dmFields & DM_PRINTQUALITY)
+    {
+        // Map Windows DMRES_* to our simple 0..3 scale
+        // draft=0, low=1, normal=2, high=3
+        int q = pDevMode->dmPrintQuality;
+        if (q == DMRES_DRAFT)
+            defaults->print_quality = 0;
+        else if (q == DMRES_LOW)
+            defaults->print_quality = 1;
+        else if (q == DMRES_HIGH)
+            defaults->print_quality = 3;
+        else
+            defaults->print_quality = 2; // DMRES_MEDIUM or DPI value -> treat as normal
+    }
+    else
+    {
+        defaults->print_quality = 2; // normal
+    }
+
+    if (pDevMode->dmFields & DM_DUPLEX)
+    {
+        // DMDUP_SIMPLEX=1, DMDUP_VERTICAL=2, DMDUP_HORIZONTAL=3
+        defaults->duplex_mode = pDevMode->dmDuplex;
+    }
+    else
+    {
+        defaults->duplex_mode = 0;
+    }
+
+    if (pDevMode->dmFields & DM_COLLATE)
+    {
+        defaults->collate = (pDevMode->dmCollate == DMCOLLATE_TRUE);
+    }
+    else
+    {
+        defaults->collate = true; // common default
+    }
+
+    free(pDevMode);
+    ClosePrinter(hPrinter);
+    free(printer_name_w);
+    return defaults;
+#endif
+}
+
+FFI_PLUGIN_EXPORT void free_windows_printer_defaults(WindowsPrinterDefaults *defaults)
+{
+    if (!defaults)
+        return;
+    free(defaults);
+}
+
 FFI_PLUGIN_EXPORT bool print_pdf(const char *printer_name, const char *pdf_file_path, const char *doc_name, int scaling_mode, int copies, const char *page_range, int num_options, const char **option_keys, const char **option_values, const char *alignment)
 {
     LOG("print_pdf called for printer: '%s', path: '%s', doc: '%s'", printer_name, pdf_file_path, doc_name);

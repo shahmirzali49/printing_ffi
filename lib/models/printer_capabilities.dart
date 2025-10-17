@@ -1,3 +1,5 @@
+import 'print_options.dart';
+
 class CupsOptionChoiceModel {
   /// The value to be sent to CUPS (e.g., "A4", "4").
   final String choice;
@@ -94,5 +96,26 @@ class WindowsPrinterCapabilitiesModel {
     required this.isColorSupported,
     required this.isMonochromeSupported,
     required this.supportsLandscape,
+  });
+}
+
+/// Represents default printer settings on Windows read from DEVMODE.
+class WindowsPrinterDefaultsModel {
+  final int? paperSizeId;
+  final int? paperSourceId;
+  final WindowsOrientation? orientation;
+  final ColorMode? colorMode;
+  final PrintQuality? printQuality;
+  final DuplexMode? duplexMode;
+  final bool collate;
+
+  const WindowsPrinterDefaultsModel({
+    this.paperSizeId,
+    this.paperSourceId,
+    this.orientation,
+    this.colorMode,
+    this.printQuality,
+    this.duplexMode,
+    this.collate = true,
   });
 }

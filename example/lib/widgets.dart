@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:async';
+import 'dart:developer' as developer;
 
 import 'package:flutter/material.dart';
 import 'package:printing_ffi/printing_ffi.dart';
@@ -73,7 +74,13 @@ class PrinterSelector extends StatelessWidget {
             placeholder: const Text('Select a printer'),
             selectedOptionBuilder: (context, value) => Text(value.name),
             initialValue: selectedPrinter,
-            onChanged: onChanged,
+            onChanged: (printer) {
+              developer.log(
+                'Printer selector changed to: ${printer?.name ?? 'null'}',
+                name: 'ui',
+              );
+              onChanged(printer);
+            },
             options: printers.map(
               (p) => ShadOption(value: p, child: Text(p.name)),
             ),
@@ -98,6 +105,10 @@ class JobsList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    developer.log(
+      'Building JobsList with ${jobs.length} jobs, loading: $isLoading',
+      name: 'ui',
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -123,15 +134,27 @@ class JobsList extends StatelessWidget {
                       children: [
                         ShadIconButton.ghost(
                           icon: const Icon(Icons.pause, size: 16),
-                          onPressed: () => onManageJob(job.id, 'pause'),
+                          onPressed: () {
+                            developer.log('Pausing job ${job.id}', name: 'ui');
+                            onManageJob(job.id, 'pause');
+                          },
                         ),
                         ShadIconButton.ghost(
                           icon: const Icon(Icons.play_arrow, size: 16),
-                          onPressed: () => onManageJob(job.id, 'resume'),
+                          onPressed: () {
+                            developer.log('Resuming job ${job.id}', name: 'ui');
+                            onManageJob(job.id, 'resume');
+                          },
                         ),
                         ShadIconButton.ghost(
                           icon: const Icon(Icons.cancel, size: 16),
-                          onPressed: () => onManageJob(job.id, 'cancel'),
+                          onPressed: () {
+                            developer.log(
+                              'Cancelling job ${job.id}',
+                              name: 'ui',
+                            );
+                            onManageJob(job.id, 'cancel');
+                          },
                         ),
                       ],
                     ),
@@ -163,7 +186,15 @@ class AdvancedTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    developer.log(
+      'Building AdvancedTab with ${cupsOptions?.length ?? 0} CUPS options, loading: $isLoading',
+      name: 'ui',
+    );
     if (!Platform.isMacOS && !Platform.isLinux) {
+      developer.log(
+        'AdvancedTab: CUPS options not available on this platform',
+        name: 'ui',
+      );
       return const Center(
         child: Text(
           'Advanced CUPS options are only available on macOS and Linux.',
@@ -193,7 +224,10 @@ class AdvancedTab extends StatelessWidget {
                 const SizedBox(height: 20),
                 ShadButton(
                   leading: const Icon(Icons.picture_as_pdf_outlined, size: 16),
-                  onPressed: onPrint,
+                  onPressed: () {
+                    developer.log('Printing PDF with CUPS options', name: 'ui');
+                    onPrint();
+                  },
                   child: const Text('Print PDF with Selected Options'),
                 ),
               ],
@@ -221,7 +255,13 @@ class AdvancedTab extends StatelessWidget {
           },
           initialValue: currentValue,
           onChanged: (newValue) {
-            if (newValue != null) onOptionChanged(option.name, newValue);
+            if (newValue != null) {
+              developer.log(
+                'CUPS option changed: ${option.name} = $newValue',
+                name: 'ui',
+              );
+              onOptionChanged(option.name, newValue);
+            }
           },
           options: option.supportedValues.map(
             (choice) => ShadOption(
@@ -283,6 +323,10 @@ class PlatformSettings extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    developer.log(
+      'Building PlatformSettings with Windows capabilities: ${windowsCapabilities != null}',
+      name: 'ui',
+    );
     final List<Widget> windowsChildren = [];
     if (Platform.isWindows) {
       if (isLoading) {
@@ -293,7 +337,13 @@ class PlatformSettings extends StatelessWidget {
             placeholder: const Text('Paper Size'),
             selectedOptionBuilder: (context, value) => Text(value.name),
             initialValue: selectedPaperSize,
-            onChanged: onPaperSizeChanged,
+            onChanged: (paperSize) {
+              developer.log(
+                'Paper size changed to: ${paperSize?.name}',
+                name: 'ui',
+              );
+              onPaperSizeChanged(paperSize);
+            },
             options: windowsCapabilities!.paperSizes.map(
               (p) => ShadOption(
                 value: p,
@@ -305,7 +355,13 @@ class PlatformSettings extends StatelessWidget {
             placeholder: const Text('Paper Source'),
             selectedOptionBuilder: (context, value) => Text(value.name),
             initialValue: selectedPaperSource,
-            onChanged: onPaperSourceChanged,
+            onChanged: (paperSource) {
+              developer.log(
+                'Paper source changed to: ${paperSource?.name}',
+                name: 'ui',
+              );
+              onPaperSourceChanged(paperSource);
+            },
             options: windowsCapabilities!.paperSources.map(
               (s) => ShadOption(
                 value: s,
@@ -318,7 +374,13 @@ class PlatformSettings extends StatelessWidget {
             selectedOptionBuilder: (context, value) =>
                 Text(value.name[0].toUpperCase() + value.name.substring(1)),
             initialValue: selectedAlignment,
-            onChanged: onAlignmentChanged,
+            onChanged: (alignment) {
+              developer.log(
+                'Alignment changed to: ${alignment?.name}',
+                name: 'ui',
+              );
+              onAlignmentChanged(alignment);
+            },
             options: PdfPrintAlignment.values.map(
               (a) => ShadOption(
                 value: a,
@@ -337,7 +399,13 @@ class PlatformSettings extends StatelessWidget {
         selectedOptionBuilder: (context, value) =>
             Text(value.name[0].toUpperCase() + value.name.substring(1)),
         initialValue: selectedPrintQuality,
-        onChanged: onPrintQualityChanged,
+        onChanged: (quality) {
+          developer.log(
+            'Print quality changed to: ${quality?.name}',
+            name: 'ui',
+          );
+          onPrintQualityChanged(quality);
+        },
         options: PrintQuality.values.map(
           (q) => ShadOption(
             value: q,
@@ -350,7 +418,13 @@ class PlatformSettings extends StatelessWidget {
         selectedOptionBuilder: (context, value) =>
             Text(value.name[0].toUpperCase() + value.name.substring(1)),
         initialValue: selectedColorMode,
-        onChanged: onColorModeChanged,
+        onChanged: (colorMode) {
+          developer.log(
+            'Color mode changed to: ${colorMode?.name}',
+            name: 'ui',
+          );
+          onColorModeChanged(colorMode);
+        },
         options: ColorMode.values.map(
           (c) => Builder(
             builder: (context) {
@@ -376,7 +450,13 @@ class PlatformSettings extends StatelessWidget {
         selectedOptionBuilder: (context, value) =>
             Text(value.name[0].toUpperCase() + value.name.substring(1)),
         initialValue: selectedOrientation,
-        onChanged: onOrientationChanged,
+        onChanged: (orientation) {
+          developer.log(
+            'Orientation changed to: ${orientation?.name}',
+            name: 'ui',
+          );
+          onOrientationChanged(orientation);
+        },
         options: WindowsOrientation.values.map(
           (o) => ShadOption(
             value: o,
@@ -389,7 +469,13 @@ class PlatformSettings extends StatelessWidget {
         selectedOptionBuilder: (context, value) =>
             Text(_getDuplexModeDisplayName(value)),
         initialValue: selectedDuplexMode,
-        onChanged: onDuplexModeChanged,
+        onChanged: (duplexMode) {
+          developer.log(
+            'Duplex mode changed to: ${duplexMode?.name}',
+            name: 'ui',
+          );
+          onDuplexModeChanged(duplexMode);
+        },
         options: DuplexMode.values.map(
           (d) =>
               ShadOption(value: d, child: Text(_getDuplexModeDisplayName(d))),
@@ -400,7 +486,13 @@ class PlatformSettings extends StatelessWidget {
         selectedOptionBuilder: (context, value) =>
             Text(_getPdfRotationDisplayName(value)),
         initialValue: selectedPdfRotation,
-        onChanged: onPdfRotationChanged,
+        onChanged: (pdfRotation) {
+          developer.log(
+            'PDF rotation changed to: ${pdfRotation?.name}',
+            name: 'ui',
+          );
+          onPdfRotationChanged(pdfRotation);
+        },
         options: PdfRotation.values.map(
           (r) =>
               ShadOption(value: r, child: Text(_getPdfRotationDisplayName(r))),
@@ -440,7 +532,10 @@ class PlatformSettings extends StatelessWidget {
               Center(
                 child: ShadButton.outline(
                   leading: const Icon(Icons.settings_outlined, size: 16),
-                  onPressed: onOpenProperties,
+                  onPressed: () {
+                    developer.log('Opening printer properties', name: 'ui');
+                    onOpenProperties();
+                  },
                   child: const Text('Open Printer Properties'),
                 ),
               ),
@@ -449,7 +544,10 @@ class PlatformSettings extends StatelessWidget {
                 Center(
                   child: ShadButton.secondary(
                     leading: const Icon(Icons.inventory_2_outlined, size: 16),
-                    onPressed: onShowCapabilities,
+                    onPressed: () {
+                      developer.log('Showing printer capabilities', name: 'ui');
+                      onShowCapabilities();
+                    },
                     child: const Text('Show All Capabilities'),
                   ),
                 ),
@@ -511,6 +609,7 @@ class StandardActionsCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = ShadTheme.of(context);
+    developer.log('Building StandardActionsCard', name: 'ui');
     return ShadCard(
       title: Text('Standard Actions', style: theme.textTheme.h4),
       child: Padding(
@@ -520,6 +619,10 @@ class StandardActionsCard extends StatelessWidget {
             const breakpoint = 800; // Breakpoint for desktop/tablet layout
             if (constraints.maxWidth < breakpoint) {
               // Mobile/Tablet layout (stacked)
+              developer.log(
+                'Using mobile/tablet layout (width: ${constraints.maxWidth})',
+                name: 'ui',
+              );
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -530,6 +633,10 @@ class StandardActionsCard extends StatelessWidget {
               );
             } else {
               // Desktop layout (side-by-side)
+              developer.log(
+                'Using desktop layout (width: ${constraints.maxWidth})',
+                name: 'ui',
+              );
               return Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -572,7 +679,13 @@ class StandardActionsCard extends StatelessWidget {
               ButtonSegment(value: CustomScaling(), label: Text('Custom')),
             ],
             selected: {selectedScaling},
-            onSelectionChanged: onScalingChanged,
+            onSelectionChanged: (selection) {
+              developer.log(
+                'Scaling changed to: ${selection.first}',
+                name: 'ui',
+              );
+              onScalingChanged(selection);
+            },
           ),
         if (Platform.isWindows && selectedScaling is CustomScaling) ...[
           const SizedBox(height: 12),
@@ -592,15 +705,23 @@ class StandardActionsCard extends StatelessWidget {
             ),
             trailing: ShadIconButton.ghost(
               icon: const Icon(Icons.clear, size: 16),
-              onPressed: onClearPdfPath,
+              onPressed: () {
+                developer.log('Clearing PDF path', name: 'ui');
+                onClearPdfPath();
+              },
             ),
           ),
         ShadButton(
           leading: const Icon(Icons.picture_as_pdf, size: 16),
-          onPressed: () => onPrintPdf(
-            copies: int.tryParse(copiesController.text) ?? 1,
-            pageRangeString: pageRangeController.text,
-          ),
+          onPressed: () {
+            final copies = int.tryParse(copiesController.text) ?? 1;
+            final pageRange = pageRangeController.text;
+            developer.log(
+              'Printing PDF: $copies copies, page range: $pageRange',
+              name: 'ui',
+            );
+            onPrintPdf(copies: copies, pageRangeString: pageRange);
+          },
           child: Text(
             selectedPdfPath == null
                 ? 'Select & Print PDF'
@@ -629,7 +750,13 @@ class StandardActionsCard extends StatelessWidget {
         const SizedBox(height: 12),
         Row(
           children: [
-            ShadSwitch(value: collate, onChanged: onCollateChanged),
+            ShadSwitch(
+              value: collate,
+              onChanged: (value) {
+                developer.log('Collate changed to: $value', name: 'ui');
+                onCollateChanged(value);
+              },
+            ),
             const SizedBox(width: 12),
             const Expanded(
               child: Column(
@@ -648,7 +775,10 @@ class StandardActionsCard extends StatelessWidget {
         const SizedBox(height: 12),
         ShadButton.outline(
           leading: const Icon(Icons.track_changes, size: 16),
-          onPressed: onPrintPdfAndTrack,
+          onPressed: () {
+            developer.log('Printing PDF and tracking status', name: 'ui');
+            onPrintPdfAndTrack();
+          },
           child: const Text('Print PDF and Track Status'),
         ),
         const SizedBox(height: 24),
@@ -665,7 +795,13 @@ class StandardActionsCard extends StatelessWidget {
               child: ShadSelect<RawDataType>(
                 selectedOptionBuilder: (context, value) => Text(value.label),
                 initialValue: selectedRawDataType,
-                onChanged: onRawDataTypeChanged,
+                onChanged: (dataType) {
+                  developer.log(
+                    'Raw data type changed to: ${dataType?.label}',
+                    name: 'ui',
+                  );
+                  onRawDataTypeChanged(dataType);
+                },
                 options: RawDataType.values
                     .map((e) => ShadOption(value: e, child: Text(e.label)))
                     .toList(),
@@ -685,7 +821,10 @@ class StandardActionsCard extends StatelessWidget {
             Expanded(
               child: ShadButton(
                 leading: const Icon(Icons.send, size: 16),
-                onPressed: onPrintRawData,
+                onPressed: () {
+                  developer.log('Printing raw data', name: 'ui');
+                  onPrintRawData();
+                },
                 child: const Text('Print Raw Data'),
               ),
             ),
@@ -693,7 +832,10 @@ class StandardActionsCard extends StatelessWidget {
             Expanded(
               child: ShadButton.outline(
                 leading: const Icon(Icons.track_changes, size: 16),
-                onPressed: onPrintRawDataAndTrack,
+                onPressed: () {
+                  developer.log('Printing raw data and tracking', name: 'ui');
+                  onPrintRawDataAndTrack();
+                },
                 child: const Text('Print & Track'),
               ),
             ),
@@ -703,7 +845,10 @@ class StandardActionsCard extends StatelessWidget {
           const SizedBox(height: 12),
           ShadButton.secondary(
             leading: const Icon(Icons.inventory_2_outlined, size: 16),
-            onPressed: onShowWindowsCapabilities,
+            onPressed: () {
+              developer.log('Showing Windows capabilities', name: 'ui');
+              onShowWindowsCapabilities();
+            },
             child: const Text('Show Printer Capabilities'),
           ),
         ],
@@ -739,11 +884,19 @@ class _PrintStatusDialogState extends State<PrintStatusDialog> {
   @override
   void initState() {
     super.initState();
+    developer.log(
+      'PrintStatusDialog initialized for printer: ${widget.printerName}',
+      name: 'ui',
+    );
     Future.delayed(Duration.zero, () {
       if (!mounted) return;
       _subscription = widget.jobStream.listen(
         (job) {
           if (mounted) {
+            developer.log(
+              'Print job status update: ${job.statusDescription}',
+              name: 'ui',
+            );
             setState(() {
               _previousJob = _currentJob;
               _currentJob = job;
@@ -751,10 +904,18 @@ class _PrintStatusDialogState extends State<PrintStatusDialog> {
           }
         },
         onError: (error) {
-          if (mounted) setState(() => _error = error);
+          if (mounted) {
+            developer.log(
+              'Print job stream error: $error',
+              name: 'ui',
+              level: 1000,
+            );
+            setState(() => _error = error);
+          }
         },
         onDone: () {
           if (mounted) {
+            developer.log('Print job stream completed', name: 'ui');
             setState(() {
               _isDone = true;
               // If the stream closes and the last known state wasn't terminal,
@@ -789,6 +950,7 @@ class _PrintStatusDialogState extends State<PrintStatusDialog> {
 
   Future<void> _cancelJob() async {
     if (_currentJob == null || !mounted) return;
+    developer.log('Cancelling print job ${_currentJob!.id}', name: 'ui');
     setState(() => _isCancelling = true);
     try {
       final success = await PrintingFfi.instance.cancelPrintJob(
@@ -798,14 +960,17 @@ class _PrintStatusDialogState extends State<PrintStatusDialog> {
       if (!mounted) return;
       // Don't pop here; let the status stream update to 'canceled'.
       if (success) {
+        developer.log('Cancel command sent successfully', name: 'ui');
         widget.onToast('Cancel command sent successfully.');
       } else {
+        developer.log('Failed to send cancel command', name: 'ui', level: 1000);
         widget.onToast('Failed to send cancel command.', isError: true);
         // If it failed, re-enable the button.
         setState(() => _isCancelling = false);
       }
     } catch (e) {
       if (!mounted) return;
+      developer.log('Error cancelling job: $e', name: 'ui', level: 1000);
       setState(() => _isCancelling = false);
       widget.onToast('Error cancelling job: $e', isError: true);
     }
@@ -813,6 +978,7 @@ class _PrintStatusDialogState extends State<PrintStatusDialog> {
 
   @override
   void dispose() {
+    developer.log('PrintStatusDialog disposed', name: 'ui');
     _subscription?.cancel();
     super.dispose();
   }

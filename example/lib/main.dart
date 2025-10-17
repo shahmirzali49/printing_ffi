@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:async';
 import 'dart:typed_data';
+import 'dart:developer' as developer;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
@@ -79,13 +80,20 @@ const List<AppColorScheme> availableColorSchemes = [
 ];
 
 void main() {
+  developer.log('Starting Printing FFI Example App', name: 'main');
   WidgetsFlutterBinding.ensureInitialized();
   // On Windows, it's crucial to initialize the PDFium library.
   // This should be done once when the app starts.
   // If you use another PDF plugin (like pdfrx) that also initializes PDFium,
   // you might not need this call, but it's safe to leave it in as this plugin's
   // initialization is guarded against being run more than once.
-  PrintingFfi.instance.initPdfium();
+  try {
+    developer.log('Initializing PDFium library', name: 'main');
+    PrintingFfi.instance.initPdfium();
+    developer.log('PDFium library initialized successfully', name: 'main');
+  } catch (e) {
+    developer.log('Failed to initialize PDFium: $e', name: 'main', level: 1000);
+  }
   runApp(const PrintingFfiExampleApp());
 }
 
@@ -101,15 +109,18 @@ class _PrintingFfiExampleAppState extends State<PrintingFfiExampleApp> {
   AppColorScheme _selectedColorScheme = availableColorSchemes.first;
 
   void _toggleTheme() {
+    developer.log('Toggling theme from $_themeMode', name: 'theme');
     setState(() {
       _themeMode = _themeMode == ThemeMode.light
           ? ThemeMode.dark
           : ThemeMode.light;
     });
+    developer.log('Theme changed to $_themeMode', name: 'theme');
   }
 
   void _changeColorScheme(AppColorScheme? newScheme) {
     if (newScheme == null) return;
+    developer.log('Changing color scheme to ${newScheme.name}', name: 'theme');
     setState(() {
       _selectedColorScheme = newScheme;
     });
@@ -241,6 +252,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
   }
 
   Future<void> _refreshPrinters() async {
+    developer.log('Refreshing printer list', name: 'printers');
     setState(() {
       _isLoadingPrinters = true;
       _printers = [];
@@ -261,6 +273,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
     });
     try {
       final printers = PrintingFfi.instance.listPrinters();
+      developer.log('Found ${printers.length} printers', name: 'printers');
       setState(() {
         _printers = printers;
         if (printers.isNotEmpty) {
@@ -268,10 +281,19 @@ class _PrintingScreenState extends State<PrintingScreen> {
             (p) => p.isDefault,
             orElse: () => printers.first,
           );
+          developer.log(
+            'Selected printer: ${_selectedPrinter!.name}',
+            name: 'printers',
+          );
           _onPrinterSelected(_selectedPrinter);
         }
       });
     } catch (e) {
+      developer.log(
+        'Failed to get printers: $e',
+        name: 'printers',
+        level: 1000,
+      );
       _showToast('Failed to get printers: $e', isError: true);
     } finally {
       setState(() {
@@ -282,6 +304,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
 
   void _onPrinterSelected(Printer? printer) {
     if (printer == null) return;
+    developer.log('Printer selected: ${printer.name}', name: 'printers');
     setState(() {
       _jobsSubscription?.cancel();
       _jobs = [];
@@ -294,6 +317,10 @@ class _PrintingScreenState extends State<PrintingScreen> {
 
   void _subscribeToJobs() {
     if (_selectedPrinter == null) return;
+    developer.log(
+      'Subscribing to print jobs for ${_selectedPrinter!.name}',
+      name: 'jobs',
+    );
     _jobsSubscription?.cancel();
     setState(() => _isLoadingJobs = true);
     _jobsSubscription = PrintingFfi.instance
@@ -301,6 +328,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
         .listen(
           (jobs) {
             if (!mounted) return;
+            developer.log('Received ${jobs.length} print jobs', name: 'jobs');
             setState(() {
               _jobs = jobs;
               _isLoadingJobs = false;
@@ -308,6 +336,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
           },
           onError: (e) {
             if (!mounted) return;
+            developer.log('Error fetching jobs: $e', name: 'jobs', level: 1000);
             _showToast('Error fetching jobs: $e', isError: true);
             setState(() => _isLoadingJobs = false);
           },
@@ -316,6 +345,10 @@ class _PrintingScreenState extends State<PrintingScreen> {
 
   Future<void> _fetchCupsOptions() async {
     if (_selectedPrinter == null) return;
+    developer.log(
+      'Fetching CUPS options for ${_selectedPrinter!.name}',
+      name: 'cups',
+    );
     setState(() {
       _isLoadingCupsOptions = true;
       _cupsOptions = null;
@@ -326,6 +359,7 @@ class _PrintingScreenState extends State<PrintingScreen> {
         _selectedPrinter!.name,
       );
       if (!mounted) return;
+      developer.log('Found ${options.length} CUPS options', name: 'cups');
       final defaultOptions = <String, String>{};
       for (final option in options) {
         defaultOptions[option.name] = option.defaultValue;
@@ -335,6 +369,11 @@ class _PrintingScreenState extends State<PrintingScreen> {
         _selectedCupsOptions = defaultOptions;
       });
     } catch (e) {
+      developer.log(
+        'Failed to get CUPS options: $e',
+        name: 'cups',
+        level: 1000,
+      );
       _showToast('Failed to get CUPS options: $e', isError: true);
     } finally {
       if (mounted) setState(() => _isLoadingCupsOptions = false);
@@ -343,24 +382,56 @@ class _PrintingScreenState extends State<PrintingScreen> {
 
   Future<void> _fetchWindowsCapabilities() async {
     if (_selectedPrinter == null || !Platform.isWindows) return;
+    developer.log(
+      'Fetching Windows capabilities for ${_selectedPrinter!.name}',
+      name: 'windows',
+    );
     setState(() => _isLoadingWindowsCaps = true);
     try {
       final caps = await PrintingFfi.instance.getWindowsPrinterCapabilities(
         _selectedPrinter!.name,
       );
+      final defs = await PrintingFfi.instance.getWindowsPrinterDefaults(
+        _selectedPrinter!.name,
+      );
       if (!mounted) return;
+      developer.log(
+        'Windows capabilities: ${caps?.paperSizes.length ?? 0} paper sizes, ${caps?.paperSources.length ?? 0} paper sources',
+        name: 'windows',
+      );
       setState(() {
         _windowsCapabilities = caps;
-        // Set defaults
-        if (caps?.paperSizes.isNotEmpty ?? false) {
-          _selectedPaperSize = caps!.paperSizes.first;
+        // Apply defaults from DEVMODE where available, otherwise fall back
+        if ((caps?.paperSizes.isNotEmpty ?? false)) {
+          final byId = defs?.paperSizeId == null
+              ? null
+              : caps!.paperSizes
+                    .where((s) => s.id == defs!.paperSizeId)
+                    .cast<WindowsPaperSize?>()
+                    .firstOrNull;
+          _selectedPaperSize = byId ?? caps!.paperSizes.first;
         }
-        if (caps?.paperSources.isNotEmpty ?? false) {
-          _selectedPaperSource = caps!.paperSources.first;
+        if ((caps?.paperSources.isNotEmpty ?? false)) {
+          final byId = defs?.paperSourceId == null
+              ? null
+              : caps!.paperSources
+                    .where((s) => s.id == defs!.paperSourceId)
+                    .cast<WindowsPaperSource?>()
+                    .firstOrNull;
+          _selectedPaperSource = byId ?? caps!.paperSources.first;
         }
-        _selectedOrientation = WindowsOrientation.portrait;
+        _selectedOrientation = defs?.orientation ?? WindowsOrientation.portrait;
+        _selectedColorMode = defs?.colorMode ?? _selectedColorMode;
+        _selectedPrintQuality = defs?.printQuality ?? _selectedPrintQuality;
+        _selectedDuplexMode = defs?.duplexMode ?? _selectedDuplexMode;
+        _collate = defs?.collate ?? _collate;
       });
     } catch (e) {
+      developer.log(
+        'Failed to get Windows capabilities: $e',
+        name: 'windows',
+        level: 1000,
+      );
       _showToast('Failed to get Windows capabilities: $e', isError: true);
     } finally {
       if (mounted) setState(() => _isLoadingWindowsCaps = false);
@@ -458,6 +529,11 @@ class _PrintingScreenState extends State<PrintingScreen> {
     required int copies,
   }) async {
     if (_selectedPrinter == null) {
+      developer.log(
+        'No printer selected for PDF printing',
+        name: 'printing',
+        level: 1000,
+      );
       _showToast('No printer selected!', isError: true);
       return;
     }
@@ -468,6 +544,10 @@ class _PrintingScreenState extends State<PrintingScreen> {
     if (path != null) {
       try {
         final options = _buildPrintOptions(cupsOptions: cupsOptions);
+        developer.log(
+          'Printing PDF: $path to ${_selectedPrinter!.name} (${copies} copies)',
+          name: 'printing',
+        );
         _showToast('Printing PDF...');
 
         final success = await PrintingFfi.instance.printPdf(
@@ -481,11 +561,24 @@ class _PrintingScreenState extends State<PrintingScreen> {
         );
         if (!mounted) return;
         if (success) {
+          developer.log('PDF printed successfully', name: 'printing');
           _showToast('PDF sent to printer successfully!');
+        } else {
+          developer.log('PDF printing failed', name: 'printing', level: 1000);
         }
       } on PrintingFfiException catch (e) {
+        developer.log(
+          'PrintingFfiException: ${e.message}',
+          name: 'printing',
+          level: 1000,
+        );
         _showToast('Failed to print PDF: ${e.message}', isError: true);
       } catch (e) {
+        developer.log(
+          'Unexpected error while printing: $e',
+          name: 'printing',
+          level: 1000,
+        );
         _showToast(
           'An unexpected error occurred while printing: $e',
           isError: true,
@@ -559,16 +652,30 @@ class _PrintingScreenState extends State<PrintingScreen> {
 
   Future<void> _printRawData() async {
     if (_selectedPrinter == null) {
+      developer.log(
+        'No printer selected for raw data printing',
+        name: 'printing',
+        level: 1000,
+      );
       _showToast('No printer selected!', isError: true);
       return;
     }
     // Use the raw text from the input field directly.
     final rawCommand = _rawDataController.text;
     if (rawCommand.isEmpty) {
+      developer.log(
+        'No raw data provided for printing',
+        name: 'printing',
+        level: 1000,
+      );
       _showToast('Please enter some raw data to print.', isError: true);
       return;
     }
     final data = Uint8List.fromList(rawCommand.codeUnits);
+    developer.log(
+      'Printing raw data (${data.length} bytes) to ${_selectedPrinter!.name}',
+      name: 'printing',
+    );
 
     final options = _buildPrintOptions(cupsOptions: _selectedCupsOptions);
     _showToast('Sending raw ZPL data...');
@@ -580,14 +687,17 @@ class _PrintingScreenState extends State<PrintingScreen> {
     );
     if (!mounted) return;
     if (success) {
+      developer.log('Raw data sent successfully', name: 'printing');
       _showToast('Raw data sent successfully!');
     } else {
+      developer.log('Failed to send raw data', name: 'printing', level: 1000);
       _showToast('Failed to send raw data.', isError: true);
     }
   }
 
   Future<void> _manageJob(int jobId, String action) async {
     if (_selectedPrinter == null) return;
+    developer.log('Managing job $jobId: $action', name: 'jobs');
     bool success = false;
     try {
       switch (action) {
@@ -611,11 +721,16 @@ class _PrintingScreenState extends State<PrintingScreen> {
           break;
       }
       if (!mounted) return;
+      developer.log(
+        'Job $action ${success ? 'succeeded' : 'failed'}',
+        name: 'jobs',
+      );
       _showToast(
         'Job $action ${success ? 'succeeded' : 'failed'}.',
         isError: !success,
       );
     } catch (e) {
+      developer.log('Error managing job: $e', name: 'jobs', level: 1000);
       _showToast('Error managing job: $e', isError: true);
     }
   }
