@@ -260,6 +260,95 @@ class PrintingFfiBindings {
   late final _free_windows_printer_capabilitiesPtr = _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<WindowsPrinterCapabilities>)>>('free_windows_printer_capabilities');
   late final _free_windows_printer_capabilities = _free_windows_printer_capabilitiesPtr.asFunction<void Function(ffi.Pointer<WindowsPrinterCapabilities>)>();
 
+  ffi.Pointer<PdfPrintJobState> start_pdf_print_job_win(
+    ffi.Pointer<ffi.Char> printer_name,
+    ffi.Pointer<ffi.Char> pdf_file_path,
+    ffi.Pointer<ffi.Char> doc_name,
+    int scaling_mode,
+    int copies,
+    ffi.Pointer<ffi.Char> page_range,
+    ffi.Pointer<ffi.Char> alignment,
+    int num_options,
+    ffi.Pointer<ffi.Pointer<ffi.Char>> option_keys,
+    ffi.Pointer<ffi.Pointer<ffi.Char>> option_values,
+    ffi.Pointer<ffi.Int32> out_job_id,
+  ) {
+    return _start_pdf_print_job_win(
+      printer_name,
+      pdf_file_path,
+      doc_name,
+      scaling_mode,
+      copies,
+      page_range,
+      alignment,
+      num_options,
+      option_keys,
+      option_values,
+      out_job_id,
+    );
+  }
+
+  late final _start_pdf_print_job_winPtr =
+      _lookup<
+        ffi.NativeFunction<
+          ffi.Pointer<PdfPrintJobState> Function(
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Int,
+            ffi.Int,
+            ffi.Pointer<ffi.Char>,
+            ffi.Pointer<ffi.Char>,
+            ffi.Int,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+            ffi.Pointer<ffi.Pointer<ffi.Char>>,
+            ffi.Pointer<ffi.Int32>,
+          )
+        >
+      >('start_pdf_print_job_win');
+  late final _start_pdf_print_job_win = _start_pdf_print_job_winPtr
+      .asFunction<
+        ffi.Pointer<PdfPrintJobState> Function(
+          ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Char>,
+          int,
+          int,
+          ffi.Pointer<ffi.Char>,
+          ffi.Pointer<ffi.Char>,
+          int,
+          ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          ffi.Pointer<ffi.Pointer<ffi.Char>>,
+          ffi.Pointer<ffi.Int32>,
+        )
+      >();
+
+  bool render_pdf_job_page_win(
+    ffi.Pointer<PdfPrintJobState> state,
+    int page_index,
+  ) {
+    return _render_pdf_job_page_win(
+      state,
+      page_index,
+    );
+  }
+
+  late final _render_pdf_job_page_winPtr = _lookup<ffi.NativeFunction<ffi.Bool Function(ffi.Pointer<PdfPrintJobState>, ffi.Int)>>('render_pdf_job_page_win');
+  late final _render_pdf_job_page_win = _render_pdf_job_page_winPtr.asFunction<bool Function(ffi.Pointer<PdfPrintJobState>, int)>();
+
+  void finish_pdf_print_job_win(
+    ffi.Pointer<PdfPrintJobState> state,
+    bool success,
+  ) {
+    return _finish_pdf_print_job_win(
+      state,
+      success,
+    );
+  }
+
+  late final _finish_pdf_print_job_winPtr = _lookup<ffi.NativeFunction<ffi.Void Function(ffi.Pointer<PdfPrintJobState>, ffi.Bool)>>('finish_pdf_print_job_win');
+  late final _finish_pdf_print_job_win = _finish_pdf_print_job_winPtr.asFunction<void Function(ffi.Pointer<PdfPrintJobState>, bool)>();
+
   ffi.Pointer<ffi.Char> get_last_error() {
     return _get_last_error();
   }
@@ -380,11 +469,11 @@ final class PrinterInfo extends ffi.Struct {
 
   external ffi.Pointer<ffi.Char> comment;
 
-  @ffi.Bool()
-  external bool is_default;
+  @ffi.Uint8()
+  external int is_default;
 
-  @ffi.Bool()
-  external bool is_available;
+  @ffi.Uint8()
+  external int is_available;
 }
 
 final class PrinterList extends ffi.Struct {
@@ -401,8 +490,11 @@ final class JobInfo extends ffi.Struct {
 
   external ffi.Pointer<ffi.Char> title;
 
-  @ffi.Uint32()
+  @ffi.Int32()
   external int status;
+
+  @ffi.Uint32()
+  external int pages_printed;
 }
 
 final class JobList extends ffi.Struct {
@@ -551,4 +643,23 @@ final class WindowsPrinterDefaults extends ffi.Struct {
 
   @ffi.Bool()
   external bool collate;
+}
+
+final class PdfPrintJobState extends ffi.Struct {
+  external ffi.Pointer<ffi.Void> hdc;
+  external ffi.Pointer<ffi.Void> doc;
+  external ffi.Pointer<ffi.WChar> doc_name_w;
+  external ffi.Pointer<ffi.Bool> pages_to_print;
+  @ffi.Int()
+  external int page_count;
+  @ffi.Int()
+  external int scaling_mode;
+  @ffi.Double()
+  external double custom_scale;
+  @ffi.Double()
+  external double align_x_factor;
+  @ffi.Double()
+  external double align_y_factor;
+  @ffi.Int()
+  external int pdf_rotation;
 }

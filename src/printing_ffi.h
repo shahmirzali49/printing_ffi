@@ -43,11 +43,17 @@ extern "C"
     {
         uint32_t id;
         char *title;
-        uint32_t status;
+        int32_t status;
+        uint32_t pages_printed;
     } JobInfo;
 
-    typedef struct
-    {
+#ifdef _WIN32
+// Opaque struct to hold the state of an in-progress PDF print job on Windows.
+typedef struct PdfPrintJobState PdfPrintJobState;
+#endif
+
+typedef struct
+{
         int count;
         JobInfo *jobs;
     } JobList;
@@ -177,6 +183,12 @@ extern "C"
     FFI_PLUGIN_EXPORT WindowsPrinterCapabilities *get_windows_printer_capabilities(const char *printer_name);
     FFI_PLUGIN_EXPORT void free_windows_printer_capabilities(WindowsPrinterCapabilities *capabilities);
     FFI_PLUGIN_EXPORT const char *get_last_error();
+
+#ifdef _WIN32
+FFI_PLUGIN_EXPORT PdfPrintJobState *start_pdf_print_job_win(const char *printer_name, const char *pdf_file_path, const char *doc_name, int scaling_mode, int copies, const char *page_range, const char *alignment, int num_options, const char **option_keys, const char **option_values, int32_t *out_job_id);
+FFI_PLUGIN_EXPORT bool render_pdf_job_page_win(PdfPrintJobState *state, int page_index);
+FFI_PLUGIN_EXPORT void finish_pdf_print_job_win(PdfPrintJobState *state, bool success);
+#endif
 
     // Windows defaults (DEVMODE) helpers
     FFI_PLUGIN_EXPORT WindowsPrinterDefaults *get_windows_printer_defaults(const char *printer_name);

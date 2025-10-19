@@ -71,6 +71,22 @@ static struct
     FPDF_DestroyLibrary_t FPDF_DestroyLibrary;
 } g_pdfium = {0};
 
+// Opaque struct to hold the state of an in-progress PDF print job on Windows.
+struct PdfPrintJobState
+{
+    HDC hdc;
+    FPDF_DOCUMENT doc;
+    wchar_t *doc_name_w;
+    bool *pages_to_print;
+    int page_count;
+    // Scaling and alignment info
+    int scaling_mode;
+    double custom_scale;
+    double align_x_factor;
+    double align_y_factor;
+    int pdf_rotation;
+};
+
 // Thread-safe initialization control for PDFium
 static INIT_ONCE g_pdfium_init_once = INIT_ONCE_STATIC_INIT;
 static bool g_pdfium_init_succeeded = false;
@@ -1081,128 +1097,94 @@ static void _scale_to_fit(int src_width, int src_height, int target_width, int t
 
 #ifdef _WIN32
 
-// Common internal function for PDF printing on Windows.
-// Returns a job ID if `submit_job` is true, otherwise returns 1 for success or 0 for failure.
-static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file_path, const char *doc_name, int scaling_mode, int copies, const char *page_range, const char *alignment, int num_options, const char **option_keys, const char **option_values, bool submit_job)
+FFI_PLUGIN_EXPORT PdfPrintJobState *start_pdf_print_job_win(const char *printer_name, const char *pdf_file_path, const char *doc_name, int scaling_mode, int copies, const char *page_range, const char *alignment, int num_options, const char **option_keys, const char **option_values, int32_t *out_job_id)
 {
-    // Ensure the PDFium library is loaded and initialized. This is thread-safe and idempotent.
     if (!ensure_pdfium_initialized())
     {
-        // Error is already set by ensure_pdfium_initialized or its callback.
-        return 0;
+        return NULL;
     }
 
-    // Clear any previous errors at the start of an operation.
     set_last_error("");
     double custom_scale;
     int paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, duplex_mode, pdf_rotation;
-    bool collate = true; // Default to collated (complete copies printed together)
+    bool collate = true;
     parse_windows_options(num_options, option_keys, option_values, &paper_size_id, &paper_source_id, &orientation, &color_mode, &print_quality, &media_type_id, &custom_scale, &collate, &duplex_mode, &pdf_rotation);
+
+    PdfPrintJobState *state = (PdfPrintJobState *)calloc(1, sizeof(PdfPrintJobState));
+    if (!state)
+    {
+        set_last_error("Failed to allocate memory for print job state.");
+        return NULL;
+    }
 
     wchar_t *printer_name_w = to_utf16(printer_name);
     if (!printer_name_w)
     {
         set_last_error("Failed to convert printer name to UTF-16.");
-        LOG("print_pdf_job_win: Failed to convert printer name to UTF-16");
-        return 0;
+        finish_pdf_print_job_win(state, false);
+        return NULL;
     }
 
-    FPDF_DOCUMENT doc = g_pdfium.FPDF_LoadDocument((FPDF_STRING)pdf_file_path, NULL);
-    if (!doc)
+    state->doc = g_pdfium.FPDF_LoadDocument((FPDF_STRING)pdf_file_path, NULL);
+    if (!state->doc)
     {
-        set_last_error("Failed to load PDF document at path '%s'. Error code: %ld. The file may be missing, corrupt, or password-protected.", pdf_file_path, g_pdfium.FPDF_GetLastError());
-        LOG("print_pdf_job_win: FPDF_LoadDocument failed for path: %s. Error: %ld", pdf_file_path, g_pdfium.FPDF_GetLastError());
+        set_last_error("Failed to load PDF document. Error code: %ld.", g_pdfium.FPDF_GetLastError());
         free(printer_name_w);
-        return 0;
+        finish_pdf_print_job_win(state, false);
+        return NULL;
     }
-    LOG("print_pdf_job_win: PDF document loaded successfully.");
 
     DEVMODEW *pDevMode = get_modified_devmode(printer_name_w, paper_size_id, paper_source_id, orientation, color_mode, print_quality, media_type_id, copies, collate, duplex_mode);
-
-    HDC hdc = CreateDCW(L"WINSPOOL", printer_name_w, NULL, pDevMode);
+    state->hdc = CreateDCW(L"WINSPOOL", printer_name_w, NULL, pDevMode);
     if (pDevMode)
-        free(pDevMode); // DEVMODE is copied by CreateDC, so we can free it now.
+        free(pDevMode);
+    free(printer_name_w);
 
-    if (!hdc)
+    if (!state->hdc)
     {
-        set_last_error("Failed to create device context (CreateDCW) for printer '%s'. Error: %lu. This often indicates an invalid printer name or driver issue.", printer_name, GetLastError());
-        LOG("print_pdf_job_win: CreateDCW failed for printer '%s' with error %lu. This often indicates an invalid DEVMODE.", printer_name, GetLastError());
-        g_pdfium.FPDF_CloseDocument(doc);
-        free(printer_name_w);
-        return 0;
+        set_last_error("Failed to create device context (CreateDCW). Error: %lu.", GetLastError());
+        finish_pdf_print_job_win(state, false);
+        return NULL;
     }
 
-    wchar_t *doc_name_w = to_utf16(doc_name);
-    DOCINFOW di;
-    memset(&di, 0, sizeof(DOCINFOW));
-    di.cbSize = sizeof(DOCINFOW);
-    di.lpszDocName = doc_name_w;
-    int job_id = StartDocW(hdc, &di);
+    state->doc_name_w = to_utf16(doc_name);
+    DOCINFOW di = {sizeof(DOCINFOW), state->doc_name_w, NULL, NULL, 0};
+    *out_job_id = StartDocW(state->hdc, &di);
 
-    if (job_id <= 0)
+    if (*out_job_id <= 0)
     {
         set_last_error("Failed to start print document (StartDocW). Error: %lu.", GetLastError());
-        LOG("print_pdf_job_win: StartDocW failed with error %lu", GetLastError());
-        if (doc_name_w)
-            free(doc_name_w);
-        DeleteDC(hdc);
-        g_pdfium.FPDF_CloseDocument(doc);
-        free(printer_name_w);
-        return 0;
+        finish_pdf_print_job_win(state, false);
+        return NULL;
     }
-    // doc_name_w is used by the system, don't free it until EndDoc.
-    LOG("print_pdf_job_win: StartDocW succeeded with Job ID: %d", job_id);
 
-    int page_count = g_pdfium.FPDF_GetPageCount(doc);
-    if (page_count <= 0)
+    state->page_count = g_pdfium.FPDF_GetPageCount(state->doc);
+    if (state->page_count <= 0)
     {
-        set_last_error("Could not get page count from the PDF document. The file may be empty, corrupt, or in an unsupported format. (Page count: %d)", page_count);
-        LOG("print_pdf_job_win: FPDF_GetPageCount returned %d. Aborting.", page_count);
-        if (doc_name_w)
-            free(doc_name_w);
-        AbortDoc(hdc);
-        DeleteDC(hdc);
-        g_pdfium.FPDF_CloseDocument(doc);
-        free(printer_name_w);
-        // We don't need to free pages_to_print as it's not allocated yet.
-        return 0;
+        set_last_error("Could not get page count from PDF. (Page count: %d)", state->page_count);
+        finish_pdf_print_job_win(state, false); // This will call AbortDoc
+        return NULL;
     }
 
-    LOG("print_pdf_job_win: PDF has %d pages.", page_count);
-    bool *pages_to_print = (bool *)malloc(page_count * sizeof(bool));
-    if (!pages_to_print)
+    state->pages_to_print = (bool *)malloc(state->page_count * sizeof(bool));
+    if (!state->pages_to_print)
     {
-        set_last_error("Failed to allocate memory for page range flags.");
-        LOG("print_pdf_job_win: Failed to allocate memory for page range flags.");
-        if (doc_name_w)
-            free(doc_name_w);
-        AbortDoc(hdc);
-        DeleteDC(hdc);
-        g_pdfium.FPDF_CloseDocument(doc);
-        free(printer_name_w);
-        return 0;
+        set_last_error("Failed to allocate memory for page flags.");
+        finish_pdf_print_job_win(state, false);
+        return NULL;
     }
 
-    if (!parse_page_range(page_range, pages_to_print, page_count))
+    if (!parse_page_range(page_range, state->pages_to_print, state->page_count))
     {
-        // If parse_page_range fails, it now sets a specific error. If it's still empty, provide a generic one.
-        if (g_last_error_message == NULL || strlen(g_last_error_message) == 0)
-            set_last_error("Invalid page range format: '%s'. Use a format like '1-3,5,7-9'.", page_range ? page_range : "");
-        LOG("print_pdf_job_win: Invalid page range string provided: %s", page_range ? page_range : "(null)");
-        free(pages_to_print);
-        if (doc_name_w)
-            free(doc_name_w);
-        AbortDoc(hdc);
-        DeleteDC(hdc);
-        g_pdfium.FPDF_CloseDocument(doc);
-        free(printer_name_w);
-        return 0;
+        finish_pdf_print_job_win(state, false);
+        return NULL;
     }
-    LOG("print_pdf_job_win: Page range parsed successfully. Copies: %d.", copies);
 
-    // --- Alignment ---
-    double align_x_factor = 0.5; // Default to center
-    double align_y_factor = 0.5; // Default to center
+    state->scaling_mode = scaling_mode;
+    state->custom_scale = custom_scale;
+    state->pdf_rotation = pdf_rotation;
+    state->align_x_factor = 0.5;
+    state->align_y_factor = 0.5;
 
     if (alignment)
     {
@@ -1210,227 +1192,146 @@ static int32_t _print_pdf_job_win(const char *printer_name, const char *pdf_file
         if (alignment_lower)
         {
             for (int i = 0; alignment_lower[i]; i++)
-            {
                 alignment_lower[i] = tolower(alignment_lower[i]);
-            }
-
             if (strstr(alignment_lower, "left"))
-            {
-                align_x_factor = 0.0;
-            }
+                state->align_x_factor = 0.0;
             else if (strstr(alignment_lower, "right"))
-            {
-                align_x_factor = 1.0;
-            }
-
+                state->align_x_factor = 1.0;
             if (strstr(alignment_lower, "top"))
-            {
-                align_y_factor = 0.0;
-            }
+                state->align_y_factor = 0.0;
             else if (strstr(alignment_lower, "bottom"))
-            {
-                align_y_factor = 1.0;
-            }
-
+                state->align_y_factor = 1.0;
             free(alignment_lower);
         }
     }
 
-    bool success = true;
-    // The outer loop for copies is removed. The driver will handle it via DEVMODE.
-    // for (int c = 0; c < copies && success; c++)
-    // {
-    // LOG("print_pdf_job_win: Starting copy %d of %d.", c + 1, copies);
-    for (int i = 0; i < page_count && success; ++i)
+    return state;
+}
+
+FFI_PLUGIN_EXPORT bool render_pdf_job_page_win(PdfPrintJobState *state, int page_index)
+{
+    if (!state || page_index < 0 || page_index >= state->page_count)
     {
-        if (!pages_to_print[i])
-        {
-            continue;
-        }
-        LOG("print_pdf_job_win: Printing page %d (0-indexed).", i);
+        return false;
+    }
 
-        // Manually pump the Windows message queue. This is CRITICAL for STA threads
-        // that perform long-running operations. It prevents the thread from becoming
-        // unresponsive and causing deadlocks or other COM errors with the printer driver.
-        MSG msg;
-        while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE))
-        {
-            TranslateMessage(&msg);
-            DispatchMessageW(&msg);
-        }
+    FPDF_PAGE page = g_pdfium.FPDF_LoadPage(state->doc, page_index);
+    if (!page)
+    {
+        set_last_error("Failed to load PDF page %d.", page_index + 1);
+        return false;
+    }
 
-        // Declare destination rectangle variables for the current page.
-        int dest_x = 0, dest_y = 0, dest_width = 0, dest_height = 0;
+    if (StartPage(state->hdc) <= 0)
+    {
+        set_last_error("Failed to start page %d. Error: %lu.", page_index + 1, GetLastError());
+        g_pdfium.FPDF_ClosePage(page);
+        return false;
+    }
 
-        FPDF_PAGE page = g_pdfium.FPDF_LoadPage(doc, i);
-        if (!page)
-        {
-            set_last_error("Failed to load PDF page %d.", i + 1);
-            LOG("print_pdf_job_win: FPDF_LoadPage failed for page %d", i);
-            success = false;
-            break;
-        }
+    float pdf_width_pt = g_pdfium.FPDF_GetPageWidthF(page);
+    float pdf_height_pt = g_pdfium.FPDF_GetPageHeightF(page);
+    int rotation = g_pdfium.FPDFPage_GetRotation(page);
+    if (state->pdf_rotation != -1)
+        rotation = state->pdf_rotation;
 
-        if (StartPage(hdc) <= 0)
-        {
-            set_last_error("Failed to start page %d. Error: %lu.", i + 1, GetLastError());
-            LOG("print_pdf_job_win: StartPage failed for page %d with error %lu", i, GetLastError());
-            // Clean up the page resource before breaking from the loop.
-            g_pdfium.FPDF_ClosePage(page);
-            success = false;
-            break;
-        }
+    if (rotation == 1 || rotation == 3)
+    { // 90 or 270 degrees
+        float temp = pdf_width_pt;
+        pdf_width_pt = pdf_height_pt;
+        pdf_height_pt = temp;
+    }
 
-        // --- Get PDF page dimensions and rotation ---
-        float pdf_width_pt = g_pdfium.FPDF_GetPageWidthF(page);
-        float pdf_height_pt = g_pdfium.FPDF_GetPageHeightF(page);
+    int dpi_x = GetDeviceCaps(state->hdc, LOGPIXELSX);
+    int dpi_y = GetDeviceCaps(state->hdc, LOGPIXELSY);
+    int printable_width_pixels = GetDeviceCaps(state->hdc, HORZRES);
+    int printable_height_pixels = GetDeviceCaps(state->hdc, VERTRES);
 
-        int rotation = g_pdfium.FPDFPage_GetRotation(page);
-        if (pdf_rotation != -1)
-        {
-            rotation = pdf_rotation;
-        }
-        if (rotation == 1 || rotation == 3)
-        { // 90 or 270 degrees, swap dimensions
-            float temp = pdf_width_pt;
-            pdf_width_pt = pdf_height_pt;
-            pdf_height_pt = temp;
-        }
+    int pdf_pixel_width = (int)(pdf_width_pt / 72.0f * dpi_x);
+    int pdf_pixel_height = (int)(pdf_height_pt / 72.0f * dpi_y);
 
-        int dpi_x = GetDeviceCaps(hdc, LOGPIXELSX);
-        int dpi_y = GetDeviceCaps(hdc, LOGPIXELSY);
-        int printable_width_pixels = GetDeviceCaps(hdc, HORZRES);
-        int printable_height_pixels = GetDeviceCaps(hdc, VERTRES);
-
-        LOG("print_pdf_job_win: Page %d: PDF Dimensions (pt): %.2f x %.2f", i, pdf_width_pt, pdf_height_pt);
-        LOG("print_pdf_job_win: Page %d: Device DPI: %d x %d", i, dpi_x, dpi_y);
-        LOG("print_pdf_job_win: Page %d: Printable Area (pixels): %d x %d", i, printable_width_pixels, printable_height_pixels);
-
-        // Calculate the PDF page size in device pixels.
-        int pdf_pixel_width = (int)(pdf_width_pt / 72.0f * dpi_x);
-        int pdf_pixel_height = (int)(pdf_height_pt / 72.0f * dpi_y);
-
-        if (scaling_mode == 0)
-        { // Fit to Printable Area (formerly Fit Page)
+    int dest_width, dest_height;
+    if (state->scaling_mode == 0) // Fit to Printable
+        _scale_to_fit(pdf_pixel_width, pdf_pixel_height, printable_width_pixels, printable_height_pixels, &dest_width, &dest_height);
+    else if (state->scaling_mode == 1) // Actual Size
+    {
+        dest_width = pdf_pixel_width;
+        dest_height = pdf_pixel_height;
+    }
+    else if (state->scaling_mode == 2) // Shrink to Fit
+    {
+        if (pdf_pixel_width > printable_width_pixels || pdf_pixel_height > printable_height_pixels)
             _scale_to_fit(pdf_pixel_width, pdf_pixel_height, printable_width_pixels, printable_height_pixels, &dest_width, &dest_height);
-            LOG("print_pdf_job_win: Page %d: ScalingMode=FitToPrintableArea, Dest=(%d,%d)", i, dest_width, dest_height);
-        }
-        else if (scaling_mode == 1)
-        { // Actual Size
-            // Calculate actual size in device pixels
+        else
+        {
             dest_width = pdf_pixel_width;
             dest_height = pdf_pixel_height;
-            LOG("print_pdf_job_win: Page %d: ScalingMode=ActualSize, Dest=(%d,%d)", i, dest_width, dest_height);
-        }
-        else if (scaling_mode == 2)
-        { // Shrink to Fit
-            // If the PDF page is larger than the printable area, scale down to fit.
-            // Otherwise, print at actual size.
-            if (pdf_pixel_width > printable_width_pixels || pdf_pixel_height > printable_height_pixels)
-            {
-                _scale_to_fit(pdf_pixel_width, pdf_pixel_height, printable_width_pixels, printable_height_pixels, &dest_width, &dest_height);
-                LOG("print_pdf_job_win: Page %d: ScalingMode=ShrinkToFit (scaled), Dest=(%d,%d)", i, dest_width, dest_height);
-            }
-            else
-            {
-                dest_width = pdf_pixel_width;
-                dest_height = pdf_pixel_height;
-                LOG("print_pdf_job_win: Page %d: ScalingMode=ShrinkToFit (actual size), Dest=(%d,%d)", i, dest_width, dest_height);
-            }
-        }
-        else if (scaling_mode == 3)
-        { // Fit to Paper
-            int paper_width = GetDeviceCaps(hdc, PHYSICALWIDTH);
-            int paper_height = GetDeviceCaps(hdc, PHYSICALHEIGHT);
-            _scale_to_fit(pdf_pixel_width, pdf_pixel_height, paper_width, paper_height, &dest_width, &dest_height);
-            LOG("print_pdf_job_win: Page %d: ScalingMode=FitToPaper, Dest=(%d,%d)", i, dest_width, dest_height);
-        }
-        else if (scaling_mode == 4)
-        { // Custom Scale
-            // Apply custom scale factor
-            dest_width = (int)(pdf_pixel_width * custom_scale);
-            dest_height = (int)(pdf_pixel_height * custom_scale);
-            LOG("print_pdf_job_win: Page %d: ScalingMode=CustomScale (%.2f), Dest=(%d,%d)", i, custom_scale, dest_width, dest_height);
-        }
-        else
-        { // Default to Fit to Printable Area
-            _scale_to_fit(pdf_pixel_width, pdf_pixel_height, printable_width_pixels, printable_height_pixels, &dest_width, &dest_height);
-            LOG("print_pdf_job_win: Page %d: ScalingMode=Default (FitToPrintableArea), Dest=(%d,%d)", i, dest_width, dest_height);
-        }
-
-        if (scaling_mode == 3)
-        { // Fit to Paper alignment is relative to physical paper
-            int paper_width = GetDeviceCaps(hdc, PHYSICALWIDTH);
-            int paper_height = GetDeviceCaps(hdc, PHYSICALHEIGHT);
-            int offset_x = GetDeviceCaps(hdc, PHYSICALOFFSETX);
-            int offset_y = GetDeviceCaps(hdc, PHYSICALOFFSETY);
-            dest_x = (int)((paper_width - dest_width) * align_x_factor) - offset_x;
-            dest_y = (int)((paper_height - dest_height) * align_y_factor) - offset_y;
-        }
-        else
-        { // All other modes are relative to the printable area
-            dest_x = (int)((printable_width_pixels - dest_width) * align_x_factor);
-            dest_y = (int)((printable_height_pixels - dest_height) * align_y_factor);
-        }
-
-        LOG("print_pdf_job_win: Page %d: Final DestRect=(%d,%d, %dx%d)", i, dest_x, dest_y, dest_width, dest_height);
-
-        // --- Direct Rendering to Printer DC ---
-        // Render the page directly to the printer's device context. This simplifies
-        // the code by avoiding an intermediate bitmap.
-        // NOTE: This is a synchronous, blocking call. While simpler, it prevents
-        // the message pump from running during rendering, which could cause
-        // issues on very complex pages. The previous progressive rendering
-        // implementation was more complex but kept the thread responsive.
-        g_pdfium.FPDF_RenderPage(hdc, page, dest_x, dest_y, dest_width, dest_height, rotation, FPDF_ANNOT | FPDF_PRINTING | FPDF_NO_NATIVETEXT);
-
-        if (EndPage(hdc) <= 0)
-        {
-            set_last_error("Failed to end page %d. Error: %lu.", i + 1, GetLastError());
-            LOG("print_pdf_job_win: EndPage failed for page %d with error %lu", i, GetLastError());
-            success = false;
-        }
-
-        // Now, close the page object itself to prevent memory leaks.
-        g_pdfium.FPDF_ClosePage(page);
-
-        if (!success)
-        {
-            break; // Exit the loop on failure
         }
     }
-    // }
-
-    free(pages_to_print);
-    if (doc_name_w)
-        free(doc_name_w);
-
-    if (success)
+    else if (state->scaling_mode == 3) // Fit to Paper
     {
-        LOG("print_pdf_job_win: All pages processed successfully. Calling EndDoc.");
-        EndDoc(hdc);
+        int paper_width = GetDeviceCaps(state->hdc, PHYSICALWIDTH);
+        int paper_height = GetDeviceCaps(state->hdc, PHYSICALHEIGHT);
+        _scale_to_fit(pdf_pixel_width, pdf_pixel_height, paper_width, paper_height, &dest_width, &dest_height);
+    }
+    else if (state->scaling_mode == 4) // Custom
+    {
+        dest_width = (int)(pdf_pixel_width * state->custom_scale);
+        dest_height = (int)(pdf_pixel_height * state->custom_scale);
     }
     else
-    {
-        LOG("print_pdf_job_win: A failure occurred. Calling AbortDoc.");
-        AbortDoc(hdc);
-    }
+        _scale_to_fit(pdf_pixel_width, pdf_pixel_height, printable_width_pixels, printable_height_pixels, &dest_width, &dest_height);
 
-    DeleteDC(hdc);
-    g_pdfium.FPDF_CloseDocument(doc);
-    free(printer_name_w);
-
-    if (submit_job)
-    {
-        LOG("_print_pdf_job_win (submit) finished with result: %d, job_id: %d", success, job_id);
-        return success ? job_id : 0;
+    int dest_x, dest_y;
+    if (state->scaling_mode == 3)
+    { // Fit to Paper alignment is relative to physical paper
+        int paper_width = GetDeviceCaps(state->hdc, PHYSICALWIDTH);
+        int paper_height = GetDeviceCaps(state->hdc, PHYSICALHEIGHT);
+        int offset_x = GetDeviceCaps(state->hdc, PHYSICALOFFSETX);
+        int offset_y = GetDeviceCaps(state->hdc, PHYSICALOFFSETY);
+        dest_x = (int)((paper_width - dest_width) * state->align_x_factor) - offset_x;
+        dest_y = (int)((paper_height - dest_height) * state->align_y_factor) - offset_y;
     }
     else
-    {
-        LOG("_print_pdf_job_win (print) finished with result: %d", success);
-        return success ? 1 : 0;
+    { // All other modes are relative to the printable area
+        dest_x = (int)((printable_width_pixels - dest_width) * state->align_x_factor);
+        dest_y = (int)((printable_height_pixels - dest_height) * state->align_y_factor);
     }
+
+    g_pdfium.FPDF_RenderPage(state->hdc, page, dest_x, dest_y, dest_width, dest_height, rotation, FPDF_ANNOT | FPDF_PRINTING | FPDF_NO_NATIVETEXT);
+
+    bool success = true;
+    if (EndPage(state->hdc) <= 0)
+    {
+        set_last_error("Failed to end page %d. Error: %lu.", page_index + 1, GetLastError());
+        success = false;
+    }
+
+    g_pdfium.FPDF_ClosePage(page);
+    return success;
 }
+
+FFI_PLUGIN_EXPORT void finish_pdf_print_job_win(PdfPrintJobState *state, bool success)
+{
+    if (!state)
+        return;
+    if (state->hdc)
+    {
+        if (success)
+            EndDoc(state->hdc);
+        else
+            AbortDoc(state->hdc);
+        DeleteDC(state->hdc);
+    }
+    if (state->doc)
+        g_pdfium.FPDF_CloseDocument(state->doc);
+    if (state->doc_name_w)
+        free(state->doc_name_w);
+    if (state->pages_to_print)
+        free(state->pages_to_print);
+    free(state);
+}
+
 #endif
 
 FFI_PLUGIN_EXPORT const char *get_last_error()
@@ -1574,7 +1475,28 @@ FFI_PLUGIN_EXPORT bool print_pdf(const char *printer_name, const char *pdf_file_
     }
 
 #ifdef _WIN32
-    return _print_pdf_job_win(printer_name, pdf_file_path, doc_name, scaling_mode, copies, page_range, alignment, num_options, option_keys, option_values, false) == 1;
+    int32_t job_id;
+    PdfPrintJobState *state = start_pdf_print_job_win(printer_name, pdf_file_path, doc_name, scaling_mode, copies, page_range, alignment, num_options, option_keys, option_values, &job_id);
+    if (!state)
+    {
+        return false;
+    }
+
+    bool success = true;
+    for (int i = 0; i < state->page_count; i++)
+    {
+        if (state->pages_to_print[i])
+        {
+            if (!render_pdf_job_page_win(state, i))
+            {
+                success = false;
+                break;
+            }
+        }
+    }
+
+    finish_pdf_print_job_win(state, success);
+    return success;
 #else // macOS / Linux (CUPS)
     cups_option_t *options = NULL;
     int num_cups_options = 0;
@@ -1667,6 +1589,7 @@ FFI_PLUGIN_EXPORT JobList *get_print_jobs(const char *printer_name)
             list->jobs[i].id = jobs[i].JobId;
             list->jobs[i].title = to_utf8(jobs[i].pDocument);
             list->jobs[i].status = (int)jobs[i].Status;
+            list->jobs[i].pages_printed = jobs[i].PagesPrinted;
         }
     }
     else
@@ -1699,9 +1622,10 @@ FFI_PLUGIN_EXPORT JobList *get_print_jobs(const char *printer_name)
 
     for (int i = 0; i < num_jobs; i++)
     {
-        list->jobs[i].id = (uint32_t)jobs[i].id;
-        list->jobs[i].title = strdup(jobs[i].title ? jobs[i].title : "Unknown");
-        list->jobs[i].status = jobs[i].state;
+        list->jobs[i].id = jobs[i].id;
+        list->jobs[i].title = to_utf8(jobs[i].title);
+        list->jobs[i].status = (int)jobs[i].state;
+        list->jobs[i].pages_printed = 0; // CUPS does not provide this easily.
     }
     cupsFreeJobs(num_jobs, jobs);
     return list;
@@ -2521,17 +2445,12 @@ FFI_PLUGIN_EXPORT int32_t submit_raw_data_job(const char *printer_name, const ui
 
 FFI_PLUGIN_EXPORT int32_t submit_pdf_job(const char *printer_name, const char *pdf_file_path, const char *doc_name, int scaling_mode, int copies, const char *page_range, int num_options, const char **option_keys, const char **option_values, const char *alignment)
 {
-    LOG("submit_pdf_job called for printer: '%s', path: '%s', doc: '%s'", printer_name, pdf_file_path, doc_name);
-
-    // Validate input parameters
-    if (!printer_name || !pdf_file_path || !doc_name || copies <= 0)
-    {
-        LOG("Invalid input parameters");
-        return 0;
-    }
-
+    // This function is now obsolete for Windows and will be removed.
+    // The logic is moved into the Dart isolate using the new async functions.
+    // For now, it will do nothing on Windows.
 #ifdef _WIN32
-    return _print_pdf_job_win(printer_name, pdf_file_path, doc_name, scaling_mode, copies, page_range, alignment, num_options, option_keys, option_values, true);
+    set_last_error("submit_pdf_job is obsolete on Windows. Use the new async API.");
+    return 0;
 #else // macOS / Linux (CUPS)
     cups_option_t *options = NULL;
     int num_cups_options = 0;

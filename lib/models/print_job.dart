@@ -153,33 +153,21 @@ enum PrintJobStatus {
     }
 
     if (Platform.isWindows) {
-      // Windows Job Status bit flags. The order of checks determines priority.
-      // A job can have multiple status flags, so we check from most to least critical.
-      // The values correspond to the JOB_STATUS_* constants in the Windows Spooler API.
+      // These are bitwise flags, so we check them in order of priority from most to least critical.
+      // See: https://learn.microsoft.com/en-us/windows/win32/printdocs/job-info-2
+      if ((status & 0x00000002) != 0) return PrintJobStatus.error; // JOB_STATUS_ERROR
+      if ((status & 0x00000400) != 0) return PrintJobStatus.userIntervention; // JOB_STATUS_USER_INTERVENTION
+      if ((status & 0x00000020) != 0) return PrintJobStatus.offline; // JOB_STATUS_OFFLINE
+      if ((status & 0x00000040) != 0) return PrintJobStatus.paperOut; // JOB_STATUS_PAPEROUT
+      if ((status & 0x00000001) != 0) return PrintJobStatus.paused; // JOB_STATUS_PAUSED
+      if ((status & 0x00000100) != 0) return PrintJobStatus.canceled; // JOB_STATUS_DELETED
+      if ((status & 0x00000004) != 0) return PrintJobStatus.deleting; // JOB_STATUS_DELETING
+      if ((status & 0x00000008) != 0) return PrintJobStatus.spooling; // JOB_STATUS_SPOOLING
+      if ((status & 0x00000010) != 0) return PrintJobStatus.processing; // JOB_STATUS_PRINTING
+      if ((status & 0x00000080) != 0) return PrintJobStatus.printed; // JOB_STATUS_PRINTED
+      if ((status & 0x00000200) != 0) return PrintJobStatus.retained; // JOB_STATUS_RETAINED
 
-      // 1. Critical error states that halt the job.
-      if ((status & 2) != 0) return PrintJobStatus.error; // JOB_STATUS_ERROR (2)
-      if ((status & 1024) != 0) return PrintJobStatus.userIntervention; // JOB_STATUS_USER_INTERVENTION (1024)
-      if ((status & 64) != 0) return PrintJobStatus.paperOut; // JOB_STATUS_PAPEROUT (64)
-      if ((status & 32) != 0) return PrintJobStatus.offline; // JOB_STATUS_OFFLINE (32)
-      if ((status & 512) != 0) return PrintJobStatus.blocked; // JOB_STATUS_BLOCKED_DEVQ (512)
-
-      // 2. Terminal states (job is finished). These have priority over active states.
-      if ((status & 8192) != 0) return PrintJobStatus.retained; // JOB_STATUS_RETAINED (8192)
-      // JOB_STATUS_COMPLETE is a more definitive state than PRINTED, so check it first.
-      if ((status & 4096) != 0) return PrintJobStatus.completed; // JOB_STATUS_COMPLETE (4096)
-      if ((status & 128) != 0) return PrintJobStatus.printed; // JOB_STATUS_PRINTED (128)
-      if ((status & 256) != 0) return PrintJobStatus.canceled; // JOB_STATUS_DELETED (256)
-
-      // 3. Active/transient states (job is in progress, paused, or being managed).
-      if ((status & 4) != 0) return PrintJobStatus.deleting; // JOB_STATUS_DELETING (4)
-      if ((status & 2048) != 0) return PrintJobStatus.restarting; // JOB_STATUS_RESTART (2048)
-      if ((status & 1) != 0) return PrintJobStatus.paused; // JOB_STATUS_PAUSED (1)
-      if ((status & 16) != 0) return PrintJobStatus.processing; // JOB_STATUS_PRINTING (16)
-      if ((status & 8) != 0) return PrintJobStatus.spooling; // JOB_STATUS_SPOOLING (8)
-
-      // 4. Default pending state if no other flags are set.
-      if (status == 0) return PrintJobStatus.pending; // No flags, likely queued.
+      if (status == 0) return PrintJobStatus.pending; // No status flags usually means pending/queued
 
       return PrintJobStatus.unknown;
     }
@@ -191,15 +179,17 @@ enum PrintJobStatus {
 class PrintJob {
   final int id;
   final String title;
-
-  /// The raw platform-specific status value.
   final int rawStatus;
-
-  /// The parsed, cross-platform status.
   final PrintJobStatus status;
+  final int pagesPrinted;
 
-  PrintJob(this.id, this.title, this.rawStatus) : status = PrintJobStatus.fromRaw(rawStatus);
+  PrintJob(
+    this.id,
+    this.title,
+    this.rawStatus,
+    this.pagesPrinted,
+  ) : status = PrintJobStatus.fromRaw(rawStatus);
 
-  /// A user-friendly description of the status.
+  /// A descriptive string for the job status, suitable for display in the UI.
   String get statusDescription => status.description;
 }

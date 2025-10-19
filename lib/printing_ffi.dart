@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:ffi';
 import 'dart:io';
 import 'dart:isolate';
+import 'dart:developer' as developer;
 import 'package:ffi/ffi.dart';
 import 'package:flutter/foundation.dart';
 import 'package:printing_ffi/printing_ffi_bindings_generated.dart';
@@ -242,8 +243,8 @@ class PrintingFfi {
       model: model.isEmpty ? null : model,
       location: location.isEmpty ? null : location,
       comment: comment.isEmpty ? null : comment,
-      isDefault: info.is_default,
-      isAvailable: info.is_available,
+      isDefault: info.is_default != 0,
+      isAvailable: info.is_available != 0,
     );
   }
 
@@ -298,7 +299,7 @@ class PrintingFfi {
     }
 
     final request = kDebugMode
-        ? PrintPdfRequest(requestId, printerName, pdfFilePath, docName, finalOptions, scaling.nativeValue, copies ?? 1, pageRangeValue, alignment)
+        ? PrintPdfRequest(requestId, printerName, pdfFilePath, docName, finalOptions, scaling.nativeValue, copies ?? 1, pageRangeValue, alignment, null)
         : _PrintPdfRequest(
             requestId,
             printerName,
@@ -309,6 +310,7 @@ class PrintingFfi {
             copies ?? 1,
             pageRangeValue,
             alignment,
+            null,
           );
     final Completer<bool> completer = Completer<bool>();
     _printPdfRequests[requestId] = completer;
@@ -320,13 +322,13 @@ class PrintingFfi {
     String printerName,
     Uint8List data, {
     String docName = 'Flutter Raw Data',
-    Duration pollInterval = const Duration(seconds: 2),
+    Duration pollInterval = const Duration(milliseconds: 500),
     List<PrintOption> options = const [],
   }) {
     return _streamJobStatus(
       printerName: printerName,
       pollInterval: pollInterval,
-      submitJob: () => _sendRawDataJobRequest(
+      submitJob: (_) => _sendRawDataJobRequest(
         printerName,
         data,
         docName: docName,
@@ -343,12 +345,12 @@ class PrintingFfi {
     int? copies,
     PageRange? pageRange,
     List<PrintOption> options = const [],
-    Duration pollInterval = const Duration(seconds: 2),
+    Duration pollInterval = const Duration(milliseconds: 500),
   }) {
     return _streamJobStatus(
       printerName: printerName,
       pollInterval: pollInterval,
-      submitJob: () {
+      submitJob: (SendPort? progressPort) {
         final optionsMap = buildOptions(options);
         final alignment = optionsMap.remove('alignment') ?? 'center';
         final finalOptions = {...optionsMap};
@@ -364,6 +366,7 @@ class PrintingFfi {
           pageRange: pageRange,
           options: finalOptions,
           alignment: alignment,
+          progressPort: progressPort,
         );
       },
     );
@@ -403,11 +406,25 @@ class PrintingFfi {
   Stream<PrintJob> _streamJobStatus({
     required String printerName,
     required Duration pollInterval,
-    required Future<int> Function() submitJob,
+    required Future<int> Function(SendPort? progressPort) submitJob,
   }) {
     late StreamController<PrintJob> controller;
     Timer? poller;
-    PrintJob? lastJobState;
+    ReceivePort? progressReceivePort;
+    StreamSubscription? progressSubscription;
+
+    // This holds the latest state, which we'll merge and emit
+    PrintJob? synthesizedJobState;
+
+    void updateAndEmit(PrintJob newJob) {
+      // Only emit if status or pagesPrinted has actually changed
+      if (synthesizedJobState == null || newJob.rawStatus != synthesizedJobState!.rawStatus || newJob.pagesPrinted != synthesizedJobState!.pagesPrinted) {
+        synthesizedJobState = newJob;
+        if (!controller.isClosed) {
+          controller.add(synthesizedJobState!);
+        }
+      }
+    }
 
     PrintJob? findJobById(List<PrintJob> jobs, int jobId) {
       for (final job in jobs) {
@@ -421,18 +438,21 @@ class PrintingFfi {
         poller?.cancel();
         return;
       }
-
+      developer.log('Polling for job ID: $jobId', name: 'PrintingFfi');
       try {
         final jobs = await listPrintJobs(printerName);
+        developer.log('Found ${jobs.length} jobs in queue.', name: 'PrintingFfi');
         final currentJob = findJobById(jobs, jobId);
 
         if (currentJob != null) {
-          // Job is still in the queue.
-          // Only emit an update if the status has changed.
-          if (currentJob.rawStatus != lastJobState?.rawStatus) {
-            controller.add(currentJob);
-          }
-          lastJobState = currentJob;
+          // We got an update from the spooler. Merge it.
+          final newJob = PrintJob(
+            currentJob.id,
+            currentJob.title,
+            currentJob.rawStatus,
+            synthesizedJobState?.pagesPrinted ?? currentJob.pagesPrinted,
+          );
+          updateAndEmit(newJob);
 
           // If the job has reached a terminal state, stop polling.
           final status = currentJob.status;
@@ -441,9 +461,7 @@ class PrintingFfi {
             await controller.close();
           }
         } else {
-          // Job is no longer in the queue. This usually means it has completed.
-          // If we have a last known state and it wasn't already in a terminal state,
-          // we can emit a final "printed" or "completed" status before closing the stream.
+          // Job is no longer in the queue.
           const terminalStates = {
             PrintJobStatus.completed,
             PrintJobStatus.printed,
@@ -451,19 +469,24 @@ class PrintingFfi {
             PrintJobStatus.aborted,
             PrintJobStatus.error,
           };
-          if (lastJobState != null && !terminalStates.contains(lastJobState!.status)) {
-            // Create a synthetic 'printed'/'completed' job status.
-            // We use the most common success state for each platform.
-            final finalRawStatus = Platform.isWindows
-                ? 128 // JOB_STATUS_PRINTED
-                : 9; // IPP_JOB_COMPLETED
-            final finalJob = PrintJob(lastJobState!.id, lastJobState!.title, finalRawStatus);
 
-            // Only add if the status is actually different.
-            if (finalJob.rawStatus != lastJobState!.rawStatus) {
-              controller.add(finalJob);
+          if (synthesizedJobState != null && !terminalStates.contains(synthesizedJobState!.status)) {
+            // Job vanished without reaching a terminal state.
+            // Treat as canceled (external or user-initiated) to mirror the print queue behavior.
+            _cancelRequestedJobIds.remove(jobId); // Best-effort cleanup
+
+            final int canceledRaw = Platform.isWindows ? 256 : 7; // JOB_STATUS_DELETED or IPP_JOB_CANCELED
+            final canceledJob = PrintJob(
+              synthesizedJobState!.id,
+              synthesizedJobState!.title,
+              canceledRaw,
+              synthesizedJobState!.pagesPrinted,
+            );
+            if (canceledJob.rawStatus != synthesizedJobState!.rawStatus) {
+              updateAndEmit(canceledJob);
             }
           }
+
           // The job is gone, so we stop polling and close the stream.
           poller?.cancel();
           await controller.close();
@@ -479,7 +502,19 @@ class PrintingFfi {
 
     controller = StreamController<PrintJob>(
       onListen: () async {
-        submitJob()
+        progressReceivePort = ReceivePort();
+        progressSubscription = progressReceivePort!.listen((message) {
+          if (message is _ProgressMessage && synthesizedJobState != null) {
+            final newJob = PrintJob(
+              synthesizedJobState!.id,
+              synthesizedJobState!.title,
+              synthesizedJobState!.rawStatus,
+              message.pagesPrinted, // This is the new progress
+            );
+            updateAndEmit(newJob);
+          }
+        });
+        submitJob(progressReceivePort!.sendPort)
             .then((jobId) {
               // Got a job ID, start polling.
               // An initial poll is done right away to get the first status.
@@ -496,6 +531,8 @@ class PrintingFfi {
       },
       onCancel: () {
         poller?.cancel();
+        progressSubscription?.cancel();
+        progressReceivePort?.close();
       },
     );
 
@@ -529,6 +566,22 @@ class PrintingFfi {
     return completer.future;
   }
 
+  /// Gets the default printer settings (duplex, color mode, orientation, etc.) for a Windows printer.
+  ///
+  /// This method retrieves the current default settings from the printer's DEVMODE structure,
+  /// which reflects how the printer is configured in Windows. These defaults are useful for
+  /// initializing the UI with the printer's native settings.
+  ///
+  /// Returns `null` on non-Windows platforms or if the printer settings cannot be retrieved.
+  ///
+  /// Example:
+  /// ```dart
+  /// final defaults = await PrintingFfi.instance.getWindowsPrinterDefaults('My Printer');
+  /// if (defaults != null) {
+  ///   print('Default duplex mode: ${defaults.duplexMode}');
+  ///   print('Default color mode: ${defaults.colorMode}');
+  /// }
+  /// ```
   Future<WindowsPrinterDefaultsModel?> getWindowsPrinterDefaults(String printerName) async {
     if (!_isWindows) {
       return null;
@@ -634,7 +687,13 @@ class PrintingFfi {
     final Completer<bool> completer = Completer<bool>();
     _printJobActionRequests[requestId] = completer;
     helperIsolateSendPort.send(request);
-    return completer.future;
+    // Mark as cancel-requested immediately; if it fails, we'll revert.
+    _cancelRequestedJobIds.add(jobId);
+    final bool success = await completer.future.catchError((_) => false);
+    if (!success) {
+      _cancelRequestedJobIds.remove(jobId);
+    }
+    return success;
   }
 
   Future<int> _sendRawDataJobRequest(
@@ -661,12 +720,13 @@ class PrintingFfi {
     PageRange? pageRange,
     Map<String, String> options = const {},
     String alignment = 'center',
+    SendPort? progressPort,
   }) async {
     final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
     final int requestId = _nextSubmitPdfJobRequestId++;
     final pageRangeValue = pageRange?.toValue();
     final request = kDebugMode
-        ? SubmitPdfJobRequest(requestId, printerName, pdfFilePath, docName, options, scalingMode, copies ?? 1, pageRangeValue, alignment)
+        ? SubmitPdfJobRequest(requestId, printerName, pdfFilePath, docName, options, scalingMode, copies ?? 1, pageRangeValue, alignment, progressPort)
         : _SubmitPdfJobRequest(
             requestId,
             printerName,
@@ -677,6 +737,7 @@ class PrintingFfi {
             copies ?? 1,
             pageRangeValue,
             alignment,
+            progressPort,
           );
     final completer = Completer<int>();
     _submitPdfJobRequests[requestId] = completer;
@@ -706,6 +767,9 @@ class PrintingFfi {
   final Map<int, Completer<int>> _submitRawDataJobRequests = <int, Completer<int>>{};
   final Map<int, Completer<int>> _submitPdfJobRequests = <int, Completer<int>>{};
 
+  // Track jobs for which the user explicitly requested cancellation.
+  final Set<int> _cancelRequestedJobIds = <int>{};
+
   Future<SendPort>? _helperIsolateSendPortFuture;
 
   void _failAllPendingRequests(Object error, [StackTrace? stackTrace]) {
@@ -716,6 +780,7 @@ class PrintingFfi {
       ..._printPdfRequests.values,
       ..._getCupsOptionsRequests.values,
       ..._getWindowsCapsRequests.values,
+      ..._getWindowsDefaultsRequests.values,
       ..._openPrinterPropertiesRequests.values,
       ..._submitRawDataJobRequests.values,
       ..._submitPdfJobRequests.values,
@@ -733,6 +798,7 @@ class PrintingFfi {
     _printPdfRequests.clear();
     _getCupsOptionsRequests.clear();
     _getWindowsCapsRequests.clear();
+    _getWindowsDefaultsRequests.clear();
     _openPrinterPropertiesRequests.clear();
     _submitRawDataJobRequests.clear();
     _submitPdfJobRequests.clear();
@@ -840,12 +906,6 @@ class PrintingFfi {
       completer.complete(data.defaults);
       return;
     }
-    if (data is _GetWindowsDefaultsResponse) {
-      final Completer<WindowsPrinterDefaultsModel?> completer = _getWindowsDefaultsRequests[data.id]!;
-      _getWindowsDefaultsRequests.remove(data.id);
-      completer.complete(data.defaults);
-      return;
-    }
     if (data is _OpenPrinterPropertiesResponse) {
       final Completer<PrinterPropertiesResult> completer = _openPrinterPropertiesRequests[data.id]!;
       _openPrinterPropertiesRequests.remove(data.id);
@@ -869,6 +929,7 @@ class PrintingFfi {
         _printPdfRequests,
         _getCupsOptionsRequests,
         _getWindowsCapsRequests,
+        _getWindowsDefaultsRequests,
         _openPrinterPropertiesRequests,
         _submitRawDataJobRequests,
         _submitPdfJobRequests,
@@ -924,8 +985,9 @@ class _PrintPdfRequest {
   final int copies;
   final String? pageRange;
   final String alignment;
+  final SendPort? progressPort;
 
-  const _PrintPdfRequest(this.id, this.printerName, this.pdfFilePath, this.docName, this.options, this.scalingMode, this.copies, this.pageRange, this.alignment);
+  const _PrintPdfRequest(this.id, this.printerName, this.pdfFilePath, this.docName, this.options, this.scalingMode, this.copies, this.pageRange, this.alignment, this.progressPort);
 }
 
 class _GetCupsOptionsRequest {
@@ -977,8 +1039,9 @@ class _SubmitPdfJobRequest {
   final int copies;
   final String? pageRange;
   final String alignment;
+  final SendPort? progressPort;
 
-  const _SubmitPdfJobRequest(this.id, this.printerName, this.pdfFilePath, this.docName, this.options, this.scalingMode, this.copies, this.pageRange, this.alignment);
+  const _SubmitPdfJobRequest(this.id, this.printerName, this.pdfFilePath, this.docName, this.options, this.scalingMode, this.copies, this.pageRange, this.alignment, this.progressPort);
 }
 
 class _PrintResponse {
@@ -1056,10 +1119,148 @@ class _DisposeRequest {
   const _DisposeRequest();
 }
 
+// --- Singleton Render Worker Implementation ---
+
+// Global state for the singleton render worker, managed by the helper isolate.
+// These are top-level variables to maintain state across calls within the helper isolate.
+Isolate? _renderWorkerIsolate;
+SendPort? _renderWorkerSendPort;
+bool _isSpawningRenderWorker = false;
+final List<_RenderWorkerData> _pendingRenderJobs = [];
+Completer<void>? _renderWorkerReadyCompleter;
+
+/// The entry point for the single, long-lived rendering isolate.
+/// It sets up a port to receive [_RenderWorkerData] messages and processes
+/// them sequentially, ensuring that large print jobs don't cause resource exhaustion.
+void _renderQueueWorkerEntryPoint(SendPort sendPort) {
+  final receivePort = ReceivePort();
+  sendPort.send(receivePort.sendPort);
+
+  DynamicLibrary? dylib;
+  PrintingFfiBindings? bindings;
+
+  receivePort.listen((dynamic data) {
+    if (data is _RenderWorkerData) {
+      try {
+        // Lazy load dylib and bindings on the first job to avoid unnecessary work.
+        dylib ??= DynamicLibrary.open(data.dylibPath);
+        bindings ??= PrintingFfiBindings(dylib!);
+
+        final jobStatePtr = Pointer<PdfPrintJobState>.fromAddress(data.jobStatePtrAddress);
+        final progressPort = data.progressPort;
+        var success = true;
+
+        final pageCount = jobStatePtr.ref.page_count;
+        for (var i = 0; i < pageCount; i++) {
+          if (jobStatePtr.ref.pages_to_print[i]) {
+            // Send 1-based page number for progress UI.
+            progressPort?.send(_ProgressMessage(data.requestId, i + 1));
+            if (!bindings!.render_pdf_job_page_win(jobStatePtr, i)) {
+              success = false;
+              break;
+            }
+          }
+        }
+        bindings!.finish_pdf_print_job_win(jobStatePtr, success);
+      } catch (_) {
+        // In case of a Dart exception within the rendering logic,
+        // ensure we still try to clean up the native resources to prevent leaks.
+        if (bindings != null && data.jobStatePtrAddress != 0) {
+          final jobStatePtr = Pointer<PdfPrintJobState>.fromAddress(data.jobStatePtrAddress);
+          bindings!.finish_pdf_print_job_win(jobStatePtr, false);
+        }
+      }
+    }
+  });
+}
+
+/// Ensures that the singleton render worker isolate is running. If not, it spawns it.
+/// This function is designed to be called from the helper isolate and handles
+/// concurrent requests to spawn by using a completer, ensuring it's only spawned once.
+Future<void> _ensureRenderWorkerIsRunning() async {
+  // If the worker is already running, there's nothing to do.
+  if (_renderWorkerSendPort != null) {
+    return;
+  }
+  // If another request is already in the process of spawning the worker,
+  // just wait for it to complete instead of trying to spawn a second one.
+  if (_isSpawningRenderWorker) {
+    await _renderWorkerReadyCompleter?.future;
+    return;
+  }
+
+  _isSpawningRenderWorker = true;
+  _renderWorkerReadyCompleter = Completer<void>();
+
+  final setupPort = ReceivePort();
+  try {
+    _renderWorkerIsolate = await Isolate.spawn(_renderQueueWorkerEntryPoint, setupPort.sendPort);
+    // Wait for the new isolate to send back its SendPort.
+    final sendPort = await setupPort.first as SendPort;
+    _renderWorkerSendPort = sendPort;
+
+    // Now that the worker is ready, process any jobs that were queued up
+    // while it was being created.
+    for (final job in _pendingRenderJobs) {
+      _renderWorkerSendPort!.send(job);
+    }
+    _pendingRenderJobs.clear();
+  } finally {
+    // Mark spawning as complete, allowing subsequent calls to proceed.
+    _isSpawningRenderWorker = false;
+    _renderWorkerReadyCompleter?.complete();
+  }
+}
+
+/*
+/// The entry point for the dedicated rendering isolate.
+void _renderWorkerEntryPoint(_RenderWorkerData data) {
+  // This isolate's only job is to perform the slow, blocking page rendering.
+  final dylib = DynamicLibrary.open(data.dylibPath);
+  final bindings = PrintingFfiBindings(dylib);
+  final jobStatePtr = Pointer<PdfPrintJobState>.fromAddress(data.jobStatePtrAddress);
+  final progressPort = data.progressPort;
+
+  try {
+    final pageCount = jobStatePtr.ref.page_count;
+    var success = true;
+    for (var i = 0; i < pageCount; i++) {
+      if (jobStatePtr.ref.pages_to_print[i]) {
+        progressPort?.send(_ProgressMessage(data.requestId, i + 1)); // Send page index (1-based)
+        if (!bindings.render_pdf_job_page_win(jobStatePtr, i)) {
+          success = false;
+          // Don't log here, as we are in a different isolate.
+          // The main error handling is based on job status polling.
+          break;
+        }
+      }
+    }
+    bindings.finish_pdf_print_job_win(jobStatePtr, success);
+  } catch (_) {
+    // Ensure cleanup happens even if rendering fails with a Dart exception.
+    bindings.finish_pdf_print_job_win(jobStatePtr, false);
+  }
+}
+*/
+class _RenderWorkerData {
+  final int jobStatePtrAddress;
+  final String dylibPath;
+  final int requestId;
+  final SendPort? progressPort;
+  const _RenderWorkerData(this.jobStatePtrAddress, this.dylibPath, this.requestId, this.progressPort);
+}
+
+class _ProgressMessage {
+  final int id;
+  final int pagesPrinted;
+  const _ProgressMessage(this.id, this.pagesPrinted);
+}
+
 /// The entry point for the helper isolate.
 void _helperIsolateEntryPoint(SendPort sendPort) {
   runZonedGuarded(
-    () {
+    () async {
+      // Make the entry point async
       if (Platform.isWindows) {
         // Initialize COM for the current thread. This is crucial for some Windows APIs,
         // especially those related to printing and shell services, which may be
@@ -1097,8 +1298,11 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
       final getLastError = dylib.lookup<NativeFunction<Pointer<Utf8> Function()>>('get_last_error').asFunction<Pointer<Utf8> Function()>();
 
       final helperReceivePort = ReceivePort();
-      helperReceivePort.listen((dynamic data) {
+      helperReceivePort.listen((dynamic data) async {
         if (data is _DisposeRequest) {
+          _renderWorkerIsolate?.kill(priority: Isolate.immediate);
+          _renderWorkerIsolate = null;
+          _renderWorkerSendPort = null;
           if (Platform.isWindows) {
             // Clean up the PDFium library before the isolate exits.
             bindings.shutdown_pdfium_library();
@@ -1180,6 +1384,7 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
                         jobInfo.id,
                         jobInfo.title.cast<Utf8>().toDartString(),
                         jobInfo.status,
+                        jobInfo.pages_printed,
                       ),
                     );
                   }
@@ -1335,53 +1540,13 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
               } else {
                 try {
                   final d = defsPtr.ref;
-
-                  WindowsOrientation? orientation;
-                  if (d.orientation == 1) orientation = WindowsOrientation.portrait; // DMORIENT_PORTRAIT
-                  if (d.orientation == 2) orientation = WindowsOrientation.landscape; // DMORIENT_LANDSCAPE
-
-                  ColorMode? colorMode;
-                  if (d.color_mode == 1) colorMode = ColorMode.monochrome;
-                  if (d.color_mode == 2) colorMode = ColorMode.color;
-
-                  PrintQuality? quality;
-                  // mapping draft=0, low=1, normal=2, high=3
-                  switch (d.print_quality) {
-                    case 0:
-                      quality = PrintQuality.draft;
-                      break;
-                    case 1:
-                      quality = PrintQuality.low;
-                      break;
-                    case 3:
-                      quality = PrintQuality.high;
-                      break;
-                    case 2:
-                    default:
-                      quality = PrintQuality.normal;
-                  }
-
-                  DuplexMode? duplex;
-                  // 1=Simplex, 2=Vertical(long edge)=duplexLongEdge, 3=Horizontal(short edge)=duplexShortEdge
-                  switch (d.duplex_mode) {
-                    case 1:
-                      duplex = DuplexMode.singleSided;
-                      break;
-                    case 2:
-                      duplex = DuplexMode.duplexLongEdge;
-                      break;
-                    case 3:
-                      duplex = DuplexMode.duplexShortEdge;
-                      break;
-                  }
-
                   final model = WindowsPrinterDefaultsModel(
                     paperSizeId: d.paper_size_id == 0 ? null : d.paper_size_id,
                     paperSourceId: d.paper_source_id == 0 ? null : d.paper_source_id,
-                    orientation: orientation,
-                    colorMode: colorMode,
-                    printQuality: quality,
-                    duplexMode: duplex,
+                    orientation: _mapOrientation(d.orientation),
+                    colorMode: _mapColorMode(d.color_mode),
+                    printQuality: _mapPrintQuality(d.print_quality),
+                    duplexMode: _mapDuplexMode(d.duplex_mode),
                     collate: d.collate,
                   );
                   sendPort.send(_GetWindowsDefaultsResponse(data.id, model));
@@ -1539,36 +1704,74 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
             sendPort.send(_ErrorResponse(data.id, e, s));
           }
         } else if (data is _SubmitPdfJobRequest) {
+          // This handler must be fast. It starts the job, gets the job ID,
+          // sends it back to the main isolate, and then queues the slow
+          // page rendering work in the singleton render worker.
+          final namePtr = data.printerName.toNativeUtf8();
+          final pathPtr = data.pdfFilePath.toNativeUtf8();
+          final docNamePtr = data.docName.toNativeUtf8();
+          final pageRangeValue = data.pageRange;
+          final alignmentPtr = data.alignment.toNativeUtf8();
+          final pageRangePtr = pageRangeValue?.toNativeUtf8() ?? nullptr;
+          final jobIdPtr = malloc<Int32>();
+
+          final options = {...?data.options};
+          _remapCupsOptions(options);
+          final int numOptions = options.length;
+          Pointer<Pointer<Utf8>> keysPtr = nullptr;
+          Pointer<Pointer<Utf8>> valuesPtr = nullptr;
+
           try {
-            final namePtr = data.printerName.toNativeUtf8();
-            final pathPtr = data.pdfFilePath.toNativeUtf8();
-            final docNamePtr = data.docName.toNativeUtf8();
-            final pageRangeValue = data.pageRange;
-            final alignmentPtr = data.alignment.toNativeUtf8();
-            final pageRangePtr = pageRangeValue?.toNativeUtf8() ?? nullptr;
-            try {
-              final options = {...?data.options};
-              if (Platform.isMacOS || Platform.isLinux) {
-                if (data.copies > 1) options['copies'] = data.copies.toString();
-                if (pageRangeValue != null && pageRangeValue.isNotEmpty) options['page-ranges'] = pageRangeValue;
+            if (numOptions > 0) {
+              keysPtr = malloc<Pointer<Utf8>>(numOptions);
+              valuesPtr = malloc<Pointer<Utf8>>(numOptions);
+              int i = 0;
+              for (var entry in options.entries) {
+                keysPtr[i] = entry.key.toNativeUtf8();
+                valuesPtr[i] = entry.value.toNativeUtf8();
+                i++;
               }
-              _remapCupsOptions(options);
+            }
 
-              final int numOptions = options.length;
-              Pointer<Pointer<Utf8>> keysPtr = nullptr;
-              Pointer<Pointer<Utf8>> valuesPtr = nullptr;
+            if (Platform.isWindows) {
+              final jobStatePtr = bindings.start_pdf_print_job_win(
+                namePtr.cast(),
+                pathPtr.cast(),
+                docNamePtr.cast(),
+                data.scalingMode,
+                data.copies,
+                pageRangePtr.cast(),
+                alignmentPtr.cast(),
+                numOptions,
+                keysPtr.cast(),
+                valuesPtr.cast(),
+                jobIdPtr,
+              );
 
-              if (numOptions > 0) {
-                keysPtr = malloc<Pointer<Utf8>>(numOptions);
-                valuesPtr = malloc<Pointer<Utf8>>(numOptions);
-                int i = 0;
-                for (var entry in options.entries) {
-                  keysPtr[i] = entry.key.toNativeUtf8();
-                  valuesPtr[i] = entry.value.toNativeUtf8();
-                  i++;
-                }
+              if (jobStatePtr == nullptr) {
+                final errorMsg = getLastError().toDartString();
+                sendPort.send(_ErrorResponse(data.id, PrintingFfiException(errorMsg), StackTrace.current));
+                return; // Stop processing
               }
 
+              // Got the job ID, send it back immediately.
+              final jobId = jobIdPtr.value;
+              sendPort.send(_SubmitJobResponse(data.id, jobId));
+
+              // Ensure the singleton render worker is running and then queue the job.
+              await _ensureRenderWorkerIsRunning();
+              const dylibPath = '${PrintingFfi._libName}.dll';
+              final workerData = _RenderWorkerData(jobStatePtr.address, dylibPath, data.id, data.progressPort);
+
+              if (_renderWorkerSendPort != null) {
+                _renderWorkerSendPort!.send(workerData);
+              } else {
+                // This case should be rare, as we awaited the worker at startup.
+                // But as a fallback, we queue it.
+                _pendingRenderJobs.add(workerData);
+              }
+            } else {
+              // CUPS platforms still use the synchronous submit_pdf_job
               final int jobId = bindings.submit_pdf_job(
                 namePtr.cast(),
                 pathPtr.cast(),
@@ -1587,24 +1790,26 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
                 final errorMsg = getLastError().toDartString();
                 sendPort.send(_ErrorResponse(data.id, PrintingFfiException(errorMsg), StackTrace.current));
               }
-
-              if (numOptions > 0) {
-                for (var i = 0; i < numOptions; i++) {
-                  malloc.free(keysPtr[i]);
-                  malloc.free(valuesPtr[i]);
-                }
-                malloc.free(keysPtr);
-                malloc.free(valuesPtr);
-              }
-            } finally {
-              malloc.free(namePtr);
-              malloc.free(pathPtr);
-              malloc.free(docNamePtr);
-              if (pageRangePtr != nullptr) malloc.free(pageRangePtr);
-              malloc.free(alignmentPtr);
             }
           } catch (e, s) {
             sendPort.send(_ErrorResponse(data.id, e, s));
+          } finally {
+            // Free all memory allocated for the initial call.
+            // The memory inside jobStatePtr is managed by finish_pdf_print_job_win.
+            malloc.free(namePtr);
+            malloc.free(pathPtr);
+            malloc.free(docNamePtr);
+            if (pageRangePtr != nullptr) malloc.free(pageRangePtr);
+            malloc.free(alignmentPtr);
+            malloc.free(jobIdPtr);
+            if (numOptions > 0) {
+              for (var i = 0; i < numOptions; i++) {
+                malloc.free(keysPtr[i]);
+                malloc.free(valuesPtr[i]);
+              }
+              malloc.free(keysPtr);
+              malloc.free(valuesPtr);
+            }
           }
         }
       });
@@ -1615,6 +1820,61 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
       sendPort.send([error.toString(), stack.toString()]);
     },
   );
+}
+
+// Helper functions to map native values to Dart enums
+WindowsOrientation? _mapOrientation(int value) {
+  // DMORIENT_PORTRAIT=1, DMORIENT_LANDSCAPE=2
+  switch (value) {
+    case 1:
+      return WindowsOrientation.portrait;
+    case 2:
+      return WindowsOrientation.landscape;
+    default:
+      return null;
+  }
+}
+
+ColorMode? _mapColorMode(int value) {
+  // 1=monochrome, 2=color
+  switch (value) {
+    case 1:
+      return ColorMode.monochrome;
+    case 2:
+      return ColorMode.color;
+    default:
+      return null;
+  }
+}
+
+PrintQuality? _mapPrintQuality(int value) {
+  // draft=0, low=1, normal=2, high=3
+  switch (value) {
+    case 0:
+      return PrintQuality.draft;
+    case 1:
+      return PrintQuality.low;
+    case 2:
+      return PrintQuality.normal;
+    case 3:
+      return PrintQuality.high;
+    default:
+      return PrintQuality.normal;
+  }
+}
+
+DuplexMode? _mapDuplexMode(int value) {
+  // DMDUP_SIMPLEX=1, DMDUP_VERTICAL=2(long edge), DMDUP_HORIZONTAL=3(short edge)
+  switch (value) {
+    case 1:
+      return DuplexMode.singleSided;
+    case 2:
+      return DuplexMode.duplexLongEdge;
+    case 3:
+      return DuplexMode.duplexShortEdge;
+    default:
+      return null;
+  }
 }
 
 /// These classes are not part of the public API but need to be accessible
@@ -1641,6 +1901,7 @@ class PrintPdfRequest extends _PrintPdfRequest {
     super.copies,
     super.pageRange,
     super.alignment,
+    super.progressPort,
   );
 }
 
@@ -1696,7 +1957,7 @@ class SubmitRawDataJobRequest extends _SubmitRawDataJobRequest {
 
 @visibleForTesting
 class SubmitPdfJobRequest extends _SubmitPdfJobRequest {
-  const SubmitPdfJobRequest(super.id, super.printerName, super.pdfFilePath, super.docName, super.options, super.scalingMode, super.copies, super.pageRange, super.alignment);
+  const SubmitPdfJobRequest(super.id, super.printerName, super.pdfFilePath, super.docName, super.options, super.scalingMode, super.copies, super.pageRange, super.alignment, super.progressPort);
 }
 
 @visibleForTesting
