@@ -153,19 +153,19 @@ enum PrintJobStatus {
     }
 
     if (Platform.isWindows) {
-      // These are bitwise flags, so we check them in order of priority from most to least critical.
+      // These are bitwise flags, so we check them in order of priority.
       // See: https://learn.microsoft.com/en-us/windows/win32/printdocs/job-info-2
       if ((status & 0x00000002) != 0) return PrintJobStatus.error; // JOB_STATUS_ERROR
-      if ((status & 0x00000400) != 0) return PrintJobStatus.userIntervention; // JOB_STATUS_USER_INTERVENTION
-      if ((status & 0x00000020) != 0) return PrintJobStatus.offline; // JOB_STATUS_OFFLINE
-      if ((status & 0x00000040) != 0) return PrintJobStatus.paperOut; // JOB_STATUS_PAPEROUT
       if ((status & 0x00000001) != 0) return PrintJobStatus.paused; // JOB_STATUS_PAUSED
-      if ((status & 0x00000100) != 0) return PrintJobStatus.canceled; // JOB_STATUS_DELETED
-      if ((status & 0x00000004) != 0) return PrintJobStatus.deleting; // JOB_STATUS_DELETING
+      if ((status & 0x00000400) != 0) return PrintJobStatus.deleting; // JOB_STATUS_DELETING
       if ((status & 0x00000008) != 0) return PrintJobStatus.spooling; // JOB_STATUS_SPOOLING
       if ((status & 0x00000010) != 0) return PrintJobStatus.processing; // JOB_STATUS_PRINTING
       if ((status & 0x00000080) != 0) return PrintJobStatus.printed; // JOB_STATUS_PRINTED
       if ((status & 0x00000200) != 0) return PrintJobStatus.retained; // JOB_STATUS_RETAINED
+
+      // Less common/actionable states
+      if ((status & 0x00000020) != 0) return PrintJobStatus.offline; // JOB_STATUS_OFFLINE
+      if ((status & 0x00000040) != 0) return PrintJobStatus.paperOut; // JOB_STATUS_PAPEROUT
 
       if (status == 0) return PrintJobStatus.pending; // No status flags usually means pending/queued
 

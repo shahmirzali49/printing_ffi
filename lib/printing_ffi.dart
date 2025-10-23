@@ -461,7 +461,9 @@ class PrintingFfi {
             await controller.close();
           }
         } else {
-          // Job is no longer in the queue.
+          // Job is no longer in the queue. This usually means it has completed.
+          // If we have a last known state and it wasn't already in a terminal state,
+          // we can emit a final "printed" or "completed" status before closing the stream.
           const terminalStates = {
             PrintJobStatus.completed,
             PrintJobStatus.printed,
@@ -469,24 +471,24 @@ class PrintingFfi {
             PrintJobStatus.aborted,
             PrintJobStatus.error,
           };
-
           if (synthesizedJobState != null && !terminalStates.contains(synthesizedJobState!.status)) {
-            // Job vanished without reaching a terminal state.
-            // Treat as canceled (external or user-initiated) to mirror the print queue behavior.
-            _cancelRequestedJobIds.remove(jobId); // Best-effort cleanup
-
-            final int canceledRaw = Platform.isWindows ? 256 : 7; // JOB_STATUS_DELETED or IPP_JOB_CANCELED
-            final canceledJob = PrintJob(
+            // Create a synthetic 'printed'/'completed' job status.
+            // We use the most common success state for each platform.
+            final finalRawStatus = Platform.isWindows
+                ? 128 // JOB_STATUS_PRINTED
+                : 9; // IPP_JOB_COMPLETED
+            final finalJob = PrintJob(
               synthesizedJobState!.id,
               synthesizedJobState!.title,
-              canceledRaw,
-              synthesizedJobState!.pagesPrinted,
+              finalRawStatus,
+              synthesizedJobState!.pagesPrinted, // Assume all pages were printed
             );
-            if (canceledJob.rawStatus != synthesizedJobState!.rawStatus) {
-              updateAndEmit(canceledJob);
+
+            // Only add if the status is actually different.
+            if (finalJob.rawStatus != synthesizedJobState!.rawStatus) {
+              updateAndEmit(finalJob);
             }
           }
-
           // The job is gone, so we stop polling and close the stream.
           poller?.cancel();
           await controller.close();
@@ -687,13 +689,7 @@ class PrintingFfi {
     final Completer<bool> completer = Completer<bool>();
     _printJobActionRequests[requestId] = completer;
     helperIsolateSendPort.send(request);
-    // Mark as cancel-requested immediately; if it fails, we'll revert.
-    _cancelRequestedJobIds.add(jobId);
-    final bool success = await completer.future.catchError((_) => false);
-    if (!success) {
-      _cancelRequestedJobIds.remove(jobId);
-    }
-    return success;
+    return completer.future;
   }
 
   Future<int> _sendRawDataJobRequest(
@@ -766,9 +762,6 @@ class PrintingFfi {
   final Map<int, Completer<PrinterPropertiesResult>> _openPrinterPropertiesRequests = <int, Completer<PrinterPropertiesResult>>{};
   final Map<int, Completer<int>> _submitRawDataJobRequests = <int, Completer<int>>{};
   final Map<int, Completer<int>> _submitPdfJobRequests = <int, Completer<int>>{};
-
-  // Track jobs for which the user explicitly requested cancellation.
-  final Set<int> _cancelRequestedJobIds = <int>{};
 
   Future<SendPort>? _helperIsolateSendPortFuture;
 
@@ -1119,100 +1112,6 @@ class _DisposeRequest {
   const _DisposeRequest();
 }
 
-// --- Singleton Render Worker Implementation ---
-
-// Global state for the singleton render worker, managed by the helper isolate.
-// These are top-level variables to maintain state across calls within the helper isolate.
-Isolate? _renderWorkerIsolate;
-SendPort? _renderWorkerSendPort;
-bool _isSpawningRenderWorker = false;
-final List<_RenderWorkerData> _pendingRenderJobs = [];
-Completer<void>? _renderWorkerReadyCompleter;
-
-/// The entry point for the single, long-lived rendering isolate.
-/// It sets up a port to receive [_RenderWorkerData] messages and processes
-/// them sequentially, ensuring that large print jobs don't cause resource exhaustion.
-void _renderQueueWorkerEntryPoint(SendPort sendPort) {
-  final receivePort = ReceivePort();
-  sendPort.send(receivePort.sendPort);
-
-  DynamicLibrary? dylib;
-  PrintingFfiBindings? bindings;
-
-  receivePort.listen((dynamic data) {
-    if (data is _RenderWorkerData) {
-      try {
-        // Lazy load dylib and bindings on the first job to avoid unnecessary work.
-        dylib ??= DynamicLibrary.open(data.dylibPath);
-        bindings ??= PrintingFfiBindings(dylib!);
-
-        final jobStatePtr = Pointer<PdfPrintJobState>.fromAddress(data.jobStatePtrAddress);
-        final progressPort = data.progressPort;
-        var success = true;
-
-        final pageCount = jobStatePtr.ref.page_count;
-        for (var i = 0; i < pageCount; i++) {
-          if (jobStatePtr.ref.pages_to_print[i]) {
-            // Send 1-based page number for progress UI.
-            progressPort?.send(_ProgressMessage(data.requestId, i + 1));
-            if (!bindings!.render_pdf_job_page_win(jobStatePtr, i)) {
-              success = false;
-              break;
-            }
-          }
-        }
-        bindings!.finish_pdf_print_job_win(jobStatePtr, success);
-      } catch (_) {
-        // In case of a Dart exception within the rendering logic,
-        // ensure we still try to clean up the native resources to prevent leaks.
-        if (bindings != null && data.jobStatePtrAddress != 0) {
-          final jobStatePtr = Pointer<PdfPrintJobState>.fromAddress(data.jobStatePtrAddress);
-          bindings!.finish_pdf_print_job_win(jobStatePtr, false);
-        }
-      }
-    }
-  });
-}
-
-/// Ensures that the singleton render worker isolate is running. If not, it spawns it.
-/// This function is designed to be called from the helper isolate and handles
-/// concurrent requests to spawn by using a completer, ensuring it's only spawned once.
-Future<void> _ensureRenderWorkerIsRunning() async {
-  // If the worker is already running, there's nothing to do.
-  if (_renderWorkerSendPort != null) {
-    return;
-  }
-  // If another request is already in the process of spawning the worker,
-  // just wait for it to complete instead of trying to spawn a second one.
-  if (_isSpawningRenderWorker) {
-    await _renderWorkerReadyCompleter?.future;
-    return;
-  }
-
-  _isSpawningRenderWorker = true;
-  _renderWorkerReadyCompleter = Completer<void>();
-
-  final setupPort = ReceivePort();
-  try {
-    _renderWorkerIsolate = await Isolate.spawn(_renderQueueWorkerEntryPoint, setupPort.sendPort);
-    // Wait for the new isolate to send back its SendPort.
-    final sendPort = await setupPort.first as SendPort;
-    _renderWorkerSendPort = sendPort;
-
-    // Now that the worker is ready, process any jobs that were queued up
-    // while it was being created.
-    for (final job in _pendingRenderJobs) {
-      _renderWorkerSendPort!.send(job);
-    }
-    _pendingRenderJobs.clear();
-  } finally {
-    // Mark spawning as complete, allowing subsequent calls to proceed.
-    _isSpawningRenderWorker = false;
-    _renderWorkerReadyCompleter?.complete();
-  }
-}
-
-/*
 /// The entry point for the dedicated rendering isolate.
 void _renderWorkerEntryPoint(_RenderWorkerData data) {
   // This isolate's only job is to perform the slow, blocking page rendering.
@@ -1226,7 +1125,7 @@ void _renderWorkerEntryPoint(_RenderWorkerData data) {
     var success = true;
     for (var i = 0; i < pageCount; i++) {
       if (jobStatePtr.ref.pages_to_print[i]) {
-        progressPort?.send(_ProgressMessage(data.requestId, i + 1)); // Send page index (1-based)
+        progressPort?.send(_ProgressMessage(data.requestId, i)); // Send page index (0-based)
         if (!bindings.render_pdf_job_page_win(jobStatePtr, i)) {
           success = false;
           // Don't log here, as we are in a different isolate.
@@ -1235,13 +1134,14 @@ void _renderWorkerEntryPoint(_RenderWorkerData data) {
         }
       }
     }
+    progressPort?.send(_ProgressMessage(data.requestId, jobStatePtr.ref.page_count));
     bindings.finish_pdf_print_job_win(jobStatePtr, success);
   } catch (_) {
     // Ensure cleanup happens even if rendering fails with a Dart exception.
     bindings.finish_pdf_print_job_win(jobStatePtr, false);
   }
 }
-*/
+
 class _RenderWorkerData {
   final int jobStatePtrAddress;
   final String dylibPath;
@@ -1259,8 +1159,7 @@ class _ProgressMessage {
 /// The entry point for the helper isolate.
 void _helperIsolateEntryPoint(SendPort sendPort) {
   runZonedGuarded(
-    () async {
-      // Make the entry point async
+    () {
       if (Platform.isWindows) {
         // Initialize COM for the current thread. This is crucial for some Windows APIs,
         // especially those related to printing and shell services, which may be
@@ -1298,11 +1197,8 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
       final getLastError = dylib.lookup<NativeFunction<Pointer<Utf8> Function()>>('get_last_error').asFunction<Pointer<Utf8> Function()>();
 
       final helperReceivePort = ReceivePort();
-      helperReceivePort.listen((dynamic data) async {
+      helperReceivePort.listen((dynamic data) {
         if (data is _DisposeRequest) {
-          _renderWorkerIsolate?.kill(priority: Isolate.immediate);
-          _renderWorkerIsolate = null;
-          _renderWorkerSendPort = null;
           if (Platform.isWindows) {
             // Clean up the PDFium library before the isolate exits.
             bindings.shutdown_pdfium_library();
@@ -1705,8 +1601,8 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
           }
         } else if (data is _SubmitPdfJobRequest) {
           // This handler must be fast. It starts the job, gets the job ID,
-          // sends it back to the main isolate, and then queues the slow
-          // page rendering work in the singleton render worker.
+          // sends it back to the main isolate, and then schedules the slow
+          // page rendering work in a separate async task.
           final namePtr = data.printerName.toNativeUtf8();
           final pathPtr = data.pdfFilePath.toNativeUtf8();
           final docNamePtr = data.docName.toNativeUtf8();
@@ -1758,18 +1654,11 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
               final jobId = jobIdPtr.value;
               sendPort.send(_SubmitJobResponse(data.id, jobId));
 
-              // Ensure the singleton render worker is running and then queue the job.
-              await _ensureRenderWorkerIsRunning();
+              // Schedule the slow page rendering in a new, separate isolate
+              // to avoid blocking this helper isolate.
               const dylibPath = '${PrintingFfi._libName}.dll';
               final workerData = _RenderWorkerData(jobStatePtr.address, dylibPath, data.id, data.progressPort);
-
-              if (_renderWorkerSendPort != null) {
-                _renderWorkerSendPort!.send(workerData);
-              } else {
-                // This case should be rare, as we awaited the worker at startup.
-                // But as a fallback, we queue it.
-                _pendingRenderJobs.add(workerData);
-              }
+              Isolate.spawn(_renderWorkerEntryPoint, workerData);
             } else {
               // CUPS platforms still use the synchronous submit_pdf_job
               final int jobId = bindings.submit_pdf_job(

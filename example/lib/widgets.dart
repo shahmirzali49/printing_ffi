@@ -818,10 +818,9 @@ class _PrintStatusDialogState extends State<PrintStatusDialog> {
             setState(() {
               _isDone = true;
               // If the stream closes and the last known state wasn't terminal,
-              // and we weren't in the middle of cancelling, assume success.
+              // we can assume it completed successfully.
               if (_currentJob != null &&
-                  !_isTerminalStatus(_currentJob!.status) &&
-                  !_isCancelling) {
+                  !_isTerminalStatus(_currentJob!.status)) {
                 _previousJob = _currentJob;
                 // Create a synthetic 'completed' or 'printed' job status.
                 final finalRawStatus = Platform.isWindows
@@ -1038,11 +1037,7 @@ class _PrintStatusDialogState extends State<PrintStatusDialog> {
             child: const Text('Close'),
             onPressed: () => Navigator.of(context).pop(),
           )
-        else ...[
-          ShadButton.ghost(
-            child: const Text('Hide'),
-            onPressed: () => Navigator.of(context).pop(),
-          ),
+        else
           ShadButton.outline(
             onPressed: canCancel ? _cancelJob : null,
             child: _isCancelling
@@ -1052,7 +1047,6 @@ class _PrintStatusDialogState extends State<PrintStatusDialog> {
                   )
                 : const Text('Cancel'),
           ),
-        ],
       ],
       child: SizedBox(width: 280, height: 150, child: Center(child: content)),
     );

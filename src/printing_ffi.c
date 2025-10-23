@@ -1215,9 +1215,16 @@ FFI_PLUGIN_EXPORT bool render_pdf_job_page_win(PdfPrintJobState *state, int page
         return false;
     }
 
+        MSG msg;
+        while (PeekMessageW(&msg, NULL, 0, 0, PM_REMOVE))
+        {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+
     FPDF_PAGE page = g_pdfium.FPDF_LoadPage(state->doc, page_index);
-    if (!page)
-    {
+        if (!page)
+        {
         set_last_error("Failed to load PDF page %d.", page_index + 1);
         return false;
     }
@@ -1225,75 +1232,75 @@ FFI_PLUGIN_EXPORT bool render_pdf_job_page_win(PdfPrintJobState *state, int page
     if (StartPage(state->hdc) <= 0)
     {
         set_last_error("Failed to start page %d. Error: %lu.", page_index + 1, GetLastError());
-        g_pdfium.FPDF_ClosePage(page);
+            g_pdfium.FPDF_ClosePage(page);
         return false;
-    }
+        }
 
-    float pdf_width_pt = g_pdfium.FPDF_GetPageWidthF(page);
-    float pdf_height_pt = g_pdfium.FPDF_GetPageHeightF(page);
-    int rotation = g_pdfium.FPDFPage_GetRotation(page);
+        float pdf_width_pt = g_pdfium.FPDF_GetPageWidthF(page);
+        float pdf_height_pt = g_pdfium.FPDF_GetPageHeightF(page);
+        int rotation = g_pdfium.FPDFPage_GetRotation(page);
     if (state->pdf_rotation != -1)
         rotation = state->pdf_rotation;
 
-    if (rotation == 1 || rotation == 3)
+        if (rotation == 1 || rotation == 3)
     { // 90 or 270 degrees
-        float temp = pdf_width_pt;
-        pdf_width_pt = pdf_height_pt;
-        pdf_height_pt = temp;
-    }
+            float temp = pdf_width_pt;
+            pdf_width_pt = pdf_height_pt;
+            pdf_height_pt = temp;
+        }
 
     int dpi_x = GetDeviceCaps(state->hdc, LOGPIXELSX);
     int dpi_y = GetDeviceCaps(state->hdc, LOGPIXELSY);
     int printable_width_pixels = GetDeviceCaps(state->hdc, HORZRES);
     int printable_height_pixels = GetDeviceCaps(state->hdc, VERTRES);
 
-    int pdf_pixel_width = (int)(pdf_width_pt / 72.0f * dpi_x);
-    int pdf_pixel_height = (int)(pdf_height_pt / 72.0f * dpi_y);
+        int pdf_pixel_width = (int)(pdf_width_pt / 72.0f * dpi_x);
+        int pdf_pixel_height = (int)(pdf_height_pt / 72.0f * dpi_y);
 
     int dest_width, dest_height;
     if (state->scaling_mode == 0) // Fit to Printable
-        _scale_to_fit(pdf_pixel_width, pdf_pixel_height, printable_width_pixels, printable_height_pixels, &dest_width, &dest_height);
+            _scale_to_fit(pdf_pixel_width, pdf_pixel_height, printable_width_pixels, printable_height_pixels, &dest_width, &dest_height);
     else if (state->scaling_mode == 1) // Actual Size
     {
-        dest_width = pdf_pixel_width;
-        dest_height = pdf_pixel_height;
+            dest_width = pdf_pixel_width;
+            dest_height = pdf_pixel_height;
     }
     else if (state->scaling_mode == 2) // Shrink to Fit
     {
         if (pdf_pixel_width > printable_width_pixels || pdf_pixel_height > printable_height_pixels)
-            _scale_to_fit(pdf_pixel_width, pdf_pixel_height, printable_width_pixels, printable_height_pixels, &dest_width, &dest_height);
-        else
-        {
-            dest_width = pdf_pixel_width;
-            dest_height = pdf_pixel_height;
+                _scale_to_fit(pdf_pixel_width, pdf_pixel_height, printable_width_pixels, printable_height_pixels, &dest_width, &dest_height);
+            else
+            {
+                dest_width = pdf_pixel_width;
+                dest_height = pdf_pixel_height;
         }
     }
     else if (state->scaling_mode == 3) // Fit to Paper
     {
         int paper_width = GetDeviceCaps(state->hdc, PHYSICALWIDTH);
         int paper_height = GetDeviceCaps(state->hdc, PHYSICALHEIGHT);
-        _scale_to_fit(pdf_pixel_width, pdf_pixel_height, paper_width, paper_height, &dest_width, &dest_height);
+            _scale_to_fit(pdf_pixel_width, pdf_pixel_height, paper_width, paper_height, &dest_width, &dest_height);
     }
     else if (state->scaling_mode == 4) // Custom
     {
         dest_width = (int)(pdf_pixel_width * state->custom_scale);
         dest_height = (int)(pdf_pixel_height * state->custom_scale);
-    }
-    else
-        _scale_to_fit(pdf_pixel_width, pdf_pixel_height, printable_width_pixels, printable_height_pixels, &dest_width, &dest_height);
+        }
+        else
+            _scale_to_fit(pdf_pixel_width, pdf_pixel_height, printable_width_pixels, printable_height_pixels, &dest_width, &dest_height);
 
     int dest_x, dest_y;
     if (state->scaling_mode == 3)
-    { // Fit to Paper alignment is relative to physical paper
+        { // Fit to Paper alignment is relative to physical paper
         int paper_width = GetDeviceCaps(state->hdc, PHYSICALWIDTH);
         int paper_height = GetDeviceCaps(state->hdc, PHYSICALHEIGHT);
         int offset_x = GetDeviceCaps(state->hdc, PHYSICALOFFSETX);
         int offset_y = GetDeviceCaps(state->hdc, PHYSICALOFFSETY);
         dest_x = (int)((paper_width - dest_width) * state->align_x_factor) - offset_x;
         dest_y = (int)((paper_height - dest_height) * state->align_y_factor) - offset_y;
-    }
-    else
-    { // All other modes are relative to the printable area
+        }
+        else
+        { // All other modes are relative to the printable area
         dest_x = (int)((printable_width_pixels - dest_width) * state->align_x_factor);
         dest_y = (int)((printable_height_pixels - dest_height) * state->align_y_factor);
     }
@@ -1304,10 +1311,10 @@ FFI_PLUGIN_EXPORT bool render_pdf_job_page_win(PdfPrintJobState *state, int page
     if (EndPage(state->hdc) <= 0)
     {
         set_last_error("Failed to end page %d. Error: %lu.", page_index + 1, GetLastError());
-        success = false;
-    }
+            success = false;
+        }
 
-    g_pdfium.FPDF_ClosePage(page);
+        g_pdfium.FPDF_ClosePage(page);
     return success;
 }
 
