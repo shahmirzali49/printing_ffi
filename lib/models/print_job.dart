@@ -158,6 +158,7 @@ enum PrintJobStatus {
       if ((status & 0x00000002) != 0) return PrintJobStatus.error; // JOB_STATUS_ERROR
       if ((status & 0x00000001) != 0) return PrintJobStatus.paused; // JOB_STATUS_PAUSED
       if ((status & 0x00000400) != 0) return PrintJobStatus.deleting; // JOB_STATUS_DELETING
+      if ((status & 0x00000100) != 0) return PrintJobStatus.canceled; // JOB_STATUS_DELETED
       if ((status & 0x00000008) != 0) return PrintJobStatus.spooling; // JOB_STATUS_SPOOLING
       if ((status & 0x00000010) != 0) return PrintJobStatus.processing; // JOB_STATUS_PRINTING
       if ((status & 0x00000080) != 0) return PrintJobStatus.printed; // JOB_STATUS_PRINTED

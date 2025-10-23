@@ -322,7 +322,7 @@ class PrintingFfi {
     String printerName,
     Uint8List data, {
     String docName = 'Flutter Raw Data',
-    Duration pollInterval = const Duration(milliseconds: 500),
+    Duration pollInterval = const Duration(milliseconds: 100),
     List<PrintOption> options = const [],
   }) {
     return _streamJobStatus(
@@ -345,7 +345,7 @@ class PrintingFfi {
     int? copies,
     PageRange? pageRange,
     List<PrintOption> options = const [],
-    Duration pollInterval = const Duration(milliseconds: 500),
+    Duration pollInterval = const Duration(milliseconds: 100),
   }) {
     return _streamJobStatus(
       printerName: printerName,
@@ -407,6 +407,7 @@ class PrintingFfi {
     required String printerName,
     required Duration pollInterval,
     required Future<int> Function(SendPort? progressPort) submitJob,
+    Future<bool> Function(String printerName, int jobId)? cancelJob,
   }) {
     late StreamController<PrintJob> controller;
     Timer? poller;
@@ -415,6 +416,7 @@ class PrintingFfi {
 
     // This holds the latest state, which we'll merge and emit
     PrintJob? synthesizedJobState;
+    bool isCanceled = false;
 
     void updateAndEmit(PrintJob newJob) {
       // Only emit if status or pagesPrinted has actually changed
@@ -454,6 +456,12 @@ class PrintingFfi {
           );
           updateAndEmit(newJob);
 
+          // Check if the job was canceled or is being deleted
+          if (currentJob.status == PrintJobStatus.canceled || currentJob.status == PrintJobStatus.deleting || _canceledJobIds.contains(currentJob.id)) {
+            isCanceled = true;
+            developer.log('Job marked as canceled due to status: ${currentJob.status} or manual cancel', name: 'PrintingFfi');
+          }
+
           // If the job has reached a terminal state, stop polling.
           final status = currentJob.status;
           if (status == PrintJobStatus.completed || status == PrintJobStatus.printed || status == PrintJobStatus.canceled || status == PrintJobStatus.aborted || status == PrintJobStatus.error) {
@@ -472,16 +480,29 @@ class PrintingFfi {
             PrintJobStatus.error,
           };
           if (synthesizedJobState != null && !terminalStates.contains(synthesizedJobState!.status)) {
-            // Create a synthetic 'printed'/'completed' job status.
-            // We use the most common success state for each platform.
-            final finalRawStatus = Platform.isWindows
-                ? 128 // JOB_STATUS_PRINTED
-                : 9; // IPP_JOB_COMPLETED
+            // Job disappeared from queue. Check if it was canceled by looking at the last known status.
+            // If the job was in a canceled state when it disappeared, keep it as canceled.
+            // Otherwise, assume it completed successfully.
+            final lastStatus = synthesizedJobState!.status;
+            final int finalRawStatus;
+
+            if (lastStatus == PrintJobStatus.canceled || isCanceled) {
+              // Job was already canceled or we marked it as canceled, keep it as canceled
+              finalRawStatus = Platform.isWindows
+                  ? 256 // JOB_STATUS_DELETED (canceled)
+                  : 7; // IPP_JOB_CANCELED
+            } else {
+              // Job completed normally
+              finalRawStatus = Platform.isWindows
+                  ? 128 // JOB_STATUS_PRINTED
+                  : 9; // IPP_JOB_COMPLETED
+            }
+
             final finalJob = PrintJob(
               synthesizedJobState!.id,
               synthesizedJobState!.title,
               finalRawStatus,
-              synthesizedJobState!.pagesPrinted, // Assume all pages were printed
+              synthesizedJobState!.pagesPrinted,
             );
 
             // Only add if the status is actually different.
@@ -522,6 +543,13 @@ class PrintingFfi {
               // An initial poll is done right away to get the first status.
               poll(jobId);
               poller = Timer.periodic(pollInterval, (_) => poll(jobId));
+
+              // If cancelJob callback is provided, set up cancellation tracking
+              if (cancelJob != null) {
+                // Store the cancelJob callback for later use
+                // This will be called when the user presses cancel
+                // For now, we'll rely on the native cancel status detection.
+              }
             })
             .catchError((Object e, StackTrace s) {
               // The job submission failed.
@@ -682,12 +710,19 @@ class PrintingFfi {
     return completer.future;
   }
 
+  // Track canceled jobs
+  static final Set<int> _canceledJobIds = <int>{};
+
   Future<bool> cancelPrintJob(String printerName, int jobId) async {
     final SendPort helperIsolateSendPort = await _helperIsolateSendPort;
     final int requestId = _nextPrintJobActionRequestId++;
     final request = kDebugMode ? PrintJobActionRequest(requestId, printerName, jobId, 'cancel') : _PrintJobActionRequest(requestId, printerName, jobId, 'cancel');
     final Completer<bool> completer = Completer<bool>();
     _printJobActionRequests[requestId] = completer;
+
+    // Mark this job as canceled
+    _canceledJobIds.add(jobId);
+
     helperIsolateSendPort.send(request);
     return completer.future;
   }

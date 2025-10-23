@@ -799,7 +799,7 @@ class _PrintStatusDialogState extends State<PrintStatusDialog> {
           if (mounted) {
             developer.log(
               'Job Update Received: ID=${job.id}, Status=${job.statusDescription}, '
-              'Pages=${job.pagesPrinted}',
+              'RawStatus=${job.rawStatus}, Pages=${job.pagesPrinted}',
               name: 'PrintStatusDialog',
             );
             setState(() {
