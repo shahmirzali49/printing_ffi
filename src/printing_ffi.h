@@ -182,7 +182,7 @@ typedef struct
     FFI_PLUGIN_EXPORT void free_cups_option_list(CupsOptionList *option_list);
     FFI_PLUGIN_EXPORT WindowsPrinterCapabilities *get_windows_printer_capabilities(const char *printer_name);
     FFI_PLUGIN_EXPORT void free_windows_printer_capabilities(WindowsPrinterCapabilities *capabilities);
-    FFI_PLUGIN_EXPORT const char *get_last_error();
+    FFI_PLUGIN_EXPORT const char *get_last_error(void);
 
 #ifdef _WIN32
 FFI_PLUGIN_EXPORT PdfPrintJobState *start_pdf_print_job_win(const char *printer_name, const char *pdf_file_path, const char *doc_name, int scaling_mode, int copies, const char *page_range, const char *alignment, int num_options, const char **option_keys, const char **option_values, int32_t *out_job_id);

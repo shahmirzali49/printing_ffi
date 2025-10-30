@@ -242,12 +242,15 @@ static wchar_t *to_utf16(const char *utf8_str)
     return utf16_str;
 }
 
-// Helper to convert wchar_t* to UTF-8 char*
+// Helper to convert wchar_t* to UTF-8 char* (cross-platform)
 // The caller is responsible for freeing the returned string.
 static char *to_utf8(const wchar_t *utf16_str)
 {
     if (!utf16_str)
         return strdup("");
+    
+#ifdef _WIN32
+    // Windows: Use WideCharToMultiByte
     int len = WideCharToMultiByte(CP_UTF8, 0, utf16_str, -1, NULL, 0, NULL, NULL);
     if (len == 0)
         return strdup("");
@@ -256,6 +259,17 @@ static char *to_utf8(const wchar_t *utf16_str)
         return strdup(""); // Should not happen
     WideCharToMultiByte(CP_UTF8, 0, utf16_str, -1, utf8_str, len, NULL, NULL);
     return utf8_str;
+#else
+    // macOS/Linux: wchar_t is already UTF-32, convert to UTF-8
+    size_t len = wcstombs(NULL, utf16_str, 0);
+    if (len == (size_t)-1)
+        return strdup("");
+    char *utf8_str = (char *)malloc(len + 1);
+    if (!utf8_str)
+        return strdup("");
+    wcstombs(utf8_str, utf16_str, len + 1);
+    return utf8_str;
+#endif
 }
 
 // Helper function to parse page ranges.
@@ -603,7 +617,7 @@ static DEVMODEW *get_modified_devmode(wchar_t *printer_name_w, int paper_size_id
 }
 #endif
 
-FFI_PLUGIN_EXPORT void shutdown_pdfium_library()
+FFI_PLUGIN_EXPORT void shutdown_pdfium_library(void)
 {
 #ifdef _WIN32
     if (g_pdfium_init_succeeded && g_pdfium.module && g_pdfium.FPDF_DestroyLibrary)
@@ -616,7 +630,7 @@ FFI_PLUGIN_EXPORT void shutdown_pdfium_library()
 #endif
 }
 
-FFI_PLUGIN_EXPORT void init_pdfium_library()
+FFI_PLUGIN_EXPORT void init_pdfium_library(void)
 {
 #ifdef _WIN32
     // This function now just ensures initialization. It's safe to call multiple times
@@ -1341,7 +1355,7 @@ FFI_PLUGIN_EXPORT void finish_pdf_print_job_win(PdfPrintJobState *state, bool su
 
 #endif
 
-FFI_PLUGIN_EXPORT const char *get_last_error()
+FFI_PLUGIN_EXPORT const char *get_last_error(void)
 {
     return g_last_error_message ? g_last_error_message : "";
 }
@@ -1630,7 +1644,7 @@ FFI_PLUGIN_EXPORT JobList *get_print_jobs(const char *printer_name)
     for (int i = 0; i < num_jobs; i++)
     {
         list->jobs[i].id = jobs[i].id;
-        list->jobs[i].title = to_utf8(jobs[i].title);
+        list->jobs[i].title = strdup(jobs[i].title ? jobs[i].title : "");
         list->jobs[i].status = (int)jobs[i].state;
         list->jobs[i].pages_printed = 0; // CUPS does not provide this easily.
     }
