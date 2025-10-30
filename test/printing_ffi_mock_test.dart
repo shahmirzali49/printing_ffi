@@ -1,5 +1,6 @@
 import 'dart:ffi';
 import 'dart:isolate';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:ffi/ffi.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -31,8 +32,7 @@ void main() {
       helperIsolateSendPortFuture: Future.value(mockSendPort),
     );
 
-    // Register fallback values for functions that return void.
-    registerFallbackValue(nullptr);
+    // No fallback registrations needed.
   });
 
   group('PrintingFfi Mocked Tests', () {
@@ -57,7 +57,7 @@ void main() {
       printerArray[0].url = ''.toNativeUtf8().cast();
       printerArray[0].location = ''.toNativeUtf8().cast();
       printerArray[0].comment = ''.toNativeUtf8().cast();
-      printerArray[0].is_default = true;
+      printerArray[0].is_default = 1;
 
       final printerList = calloc<PrinterList>();
       printerList.ref.count = 1;
@@ -109,10 +109,10 @@ void main() {
       printerInfo.ref.url = ''.toNativeUtf8().cast();
       printerInfo.ref.location = ''.toNativeUtf8().cast();
       printerInfo.ref.comment = ''.toNativeUtf8().cast();
-      printerInfo.ref.is_default = true;
+      printerInfo.ref.is_default = 1;
 
       when(() => mockBindings.get_default_printer()).thenReturn(printerInfo);
-      when(() => mockBindings.free_printer_info(any())).thenAnswer((_) {});
+      when(() => mockBindings.free_printer_info(printerInfo)).thenAnswer((_) {});
 
       // Act
       final printer = printingFfi.getDefaultPrinter();
@@ -279,7 +279,7 @@ void main() {
     test('listPrintJobs returns a list of print jobs', () async {
       // Arrange
       when(() => mockSendPort.send(any())).thenAnswer((_) {});
-      final mockJob = PrintJob(123, 'Test Document', 4); // Status: PROCESSING
+      final mockJob = PrintJob(123, 'Test Document', 4, 0); // Status: PROCESSING
 
       // Act
       final future = printingFfi.listPrintJobs('Test Printer');
@@ -456,8 +456,8 @@ void main() {
         // Arrange
         final testData = Uint8List.fromList([1, 2, 3]);
         const jobId = 999;
-        final processingJob = PrintJob(jobId, 'My Tracked ZPL Label', 5); // CUPS: IPP_JOB_PROCESSING
-        final completedJob = PrintJob(jobId, 'My Tracked ZPL Label', 9); // CUPS: IPP_JOB_COMPLETED
+        final processingJob = PrintJob(jobId, 'My Tracked ZPL Label', 5, 0); // CUPS: IPP_JOB_PROCESSING
+        final completedJob = PrintJob(jobId, 'My Tracked ZPL Label', 9, 0); // CUPS: IPP_JOB_COMPLETED
         bool firstPollDone = false;
 
         // Use thenAnswer to simulate the isolate's response based on the request type.
@@ -526,8 +526,8 @@ void main() {
         // Arrange
         const pdfPath = '/path/to/test.pdf';
         const jobId = 1000;
-        final processingJob = PrintJob(jobId, 'My Tracked PDF', 5); // CUPS: IPP_JOB_PROCESSING
-        final completedJob = PrintJob(jobId, 'My Tracked PDF', 9); // CUPS: IPP_JOB_COMPLETED
+        final processingJob = PrintJob(jobId, 'My Tracked PDF', 5, 0); // CUPS: IPP_JOB_PROCESSING
+        final completedJob = PrintJob(jobId, 'My Tracked PDF', 9, 0); // CUPS: IPP_JOB_COMPLETED
         bool firstPollDone = false;
 
         // Use thenAnswer to simulate the isolate's response based on the request type.
@@ -567,9 +567,9 @@ void main() {
 
       test('listPrintJobsStream polls for and streams job lists', () async {
         // Arrange
-        final job1 = PrintJob(1, 'Job 1', 5); // Processing
-        final job2 = PrintJob(2, 'Job 2', 3); // Pending
-        final job3 = PrintJob(3, 'Job 3', 9); // Completed
+        final job1 = PrintJob(1, 'Job 1', 5, 0); // Processing
+        final job2 = PrintJob(2, 'Job 2', 3, 0); // Pending
+        final job3 = PrintJob(3, 'Job 3', 9, 0); // Completed
 
         final firstResponse = [job1, job2];
         final secondResponse = [job2, job3]; // job1 finished, job3 appeared
