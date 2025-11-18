@@ -1156,17 +1156,17 @@ void _renderWorkerEntryPoint(_RenderWorkerData data) {
   final progressPort = data.progressPort;
 
   try {
-    final pageCount = jobStatePtr.ref.page_count;
+    final printOrderCount = jobStatePtr.ref.print_order_count;
     var success = true;
-    for (var i = 0; i < pageCount; i++) {
-      if (jobStatePtr.ref.pages_to_print[i]) {
-        progressPort?.send(_ProgressMessage(data.requestId, i)); // Send page index (0-based)
-        if (!bindings.render_pdf_job_page_win(jobStatePtr, i)) {
-          success = false;
-          // Don't log here, as we are in a different isolate.
-          // The main error handling is based on job status polling.
-          break;
-        }
+    // Print pages in the specified order
+    for (var i = 0; i < printOrderCount; i++) {
+      final pageIndex = jobStatePtr.ref.print_order[i];
+      progressPort?.send(_ProgressMessage(data.requestId, pageIndex)); // Send page index (0-based)
+      if (!bindings.render_pdf_job_page_win(jobStatePtr, pageIndex)) {
+        success = false;
+        // Don't log here, as we are in a different isolate.
+        // The main error handling is based on job status polling.
+        break;
       }
     }
     progressPort?.send(_ProgressMessage(data.requestId, jobStatePtr.ref.page_count));
@@ -1479,6 +1479,7 @@ void _helperIsolateEntryPoint(SendPort sendPort) {
                     printQuality: _mapPrintQuality(d.print_quality),
                     duplexMode: _mapDuplexMode(d.duplex_mode),
                     collate: d.collate,
+                    copies: d.copies,
                   );
                   sendPort.send(_GetWindowsDefaultsResponse(data.id, model));
                 } finally {

@@ -162,6 +162,7 @@ typedef struct
         int print_quality;   // 0=draft,1=low,2=normal,3=high
         int duplex_mode;     // 1=Simplex, 2=Vertical(long edge), 3=Horizontal(short edge), 0=unknown
         bool collate;        // true if DMCOLLATE_TRUE
+        int copies;          // dmCopies (WORD), number of copies, default is 1
     } WindowsPrinterDefaults;
 
     FFI_PLUGIN_EXPORT int sum(int a, int b);

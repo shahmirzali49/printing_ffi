@@ -266,16 +266,25 @@ class _PrintingScreenState extends State<PrintingScreen> {
     });
     try {
       final printers = PrintingFfi.instance.listPrinters();
+      if (printers.isEmpty) {
+        setState(() {
+          _printers = printers;
+          _isLoadingPrinters = false;
+        });
+        return;
+      }
+
+      // Try to get the system default printer first (most reliable method)
+      final defaultPrinter = PrintingFfi.instance.getDefaultPrinter();
+      final selectedPrinter = _selectDefaultPrinter(printers, defaultPrinter);
+
       setState(() {
         _printers = printers;
-        if (printers.isNotEmpty) {
-          _selectedPrinter = printers.firstWhere(
-            (p) => p.isDefault,
-            orElse: () => printers.first,
-          );
-          _onPrinterSelected(_selectedPrinter);
-        }
+        _selectedPrinter = selectedPrinter;
       });
+
+      // Load printer capabilities and defaults after selection
+      _onPrinterSelected(selectedPrinter);
     } catch (e) {
       developer.log(
         'Failed to get printers: $e',
@@ -287,6 +296,30 @@ class _PrintingScreenState extends State<PrintingScreen> {
       setState(() {
         _isLoadingPrinters = false;
       });
+    }
+  }
+
+  /// Selects the default printer from the list.
+  /// Priority: 1) System default printer by name, 2) Printer with isDefault flag, 3) First printer
+  Printer _selectDefaultPrinter(
+    List<Printer> printers,
+    Printer? systemDefault,
+  ) {
+    if (systemDefault != null) {
+      // Try to find the system default printer in the list by name
+      try {
+        return printers.firstWhere((p) => p.name == systemDefault.name);
+      } catch (_) {
+        // System default not found in list, fall through to next method
+      }
+    }
+
+    // Fallback: find printer with isDefault flag
+    try {
+      return printers.firstWhere((p) => p.isDefault);
+    } catch (_) {
+      // No default flag found, use first printer
+      return printers.first;
     }
   }
 
@@ -410,6 +443,11 @@ class _PrintingScreenState extends State<PrintingScreen> {
     _selectedPrintQuality = defs?.printQuality ?? _selectedPrintQuality;
     _selectedDuplexMode = defs?.duplexMode ?? _selectedDuplexMode;
     _collate = defs?.collate ?? _collate;
+
+    // Set copies from printer defaults if available and valid
+    if (defs != null && defs.copies > 0) {
+      _copiesController.text = defs.copies.toString();
+    }
   }
 
   /// Finds a paper size by its ID in the capabilities list.

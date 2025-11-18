@@ -643,13 +643,19 @@ final class WindowsPrinterDefaults extends ffi.Struct {
 
   @ffi.Bool()
   external bool collate;
+
+  @ffi.Int()
+  external int copies;
 }
 
 final class PdfPrintJobState extends ffi.Struct {
   external ffi.Pointer<ffi.Void> hdc;
   external ffi.Pointer<ffi.Void> doc;
   external ffi.Pointer<ffi.WChar> doc_name_w;
-  external ffi.Pointer<ffi.Bool> pages_to_print;
+  external ffi.Pointer<ffi.Uint32> pages_to_print;
+  external ffi.Pointer<ffi.Int32> print_order;
+  @ffi.Int()
+  external int print_order_count;
   @ffi.Int()
   external int page_count;
   @ffi.Int()

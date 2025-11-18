@@ -50,7 +50,7 @@ String _getPdfRotationDisplayName(PdfRotation rotation) {
   }
 }
 
-class PrinterSelector extends StatelessWidget {
+class PrinterSelector extends StatefulWidget {
   const PrinterSelector({
     super.key,
     required this.printers,
@@ -63,6 +63,37 @@ class PrinterSelector extends StatelessWidget {
   final ValueChanged<Printer?> onChanged;
 
   @override
+  State<PrinterSelector> createState() => _PrinterSelectorState();
+}
+
+class _PrinterSelectorState extends State<PrinterSelector> {
+  Printer? _currentSelectedPrinter;
+
+  @override
+  void initState() {
+    super.initState();
+    _currentSelectedPrinter = widget.selectedPrinter;
+  }
+
+  @override
+  void didUpdateWidget(PrinterSelector oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Update internal state when selected printer changes from parent
+    if (widget.selectedPrinter != oldWidget.selectedPrinter) {
+      setState(() {
+        _currentSelectedPrinter = widget.selectedPrinter;
+      });
+    }
+  }
+
+  String _getSelectKey() {
+    // Create a unique key based on selected printer and list length
+    // This ensures ShadSelect rebuilds when printer selection changes
+    final printerName = _currentSelectedPrinter?.name ?? 'none';
+    return 'printer-$printerName-${widget.printers.length}';
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.center,
@@ -71,13 +102,17 @@ class PrinterSelector extends StatelessWidget {
         const SizedBox(width: 10),
         Expanded(
           child: ShadSelect<Printer>(
+            key: ValueKey(_getSelectKey()),
             placeholder: const Text('Select a printer'),
             selectedOptionBuilder: (context, value) => Text(value.name),
-            initialValue: selectedPrinter,
+            initialValue: _currentSelectedPrinter,
             onChanged: (printer) {
-              onChanged(printer);
+              setState(() {
+                _currentSelectedPrinter = printer;
+              });
+              widget.onChanged(printer);
             },
-            options: printers.map(
+            options: widget.printers.map(
               (p) => ShadOption(value: p, child: Text(p.name)),
             ),
           ),

@@ -127,6 +127,8 @@ enum PdfRotation {
 ///
 /// // Parse from a string
 /// final fromString = PageRange.parse("1-3,5,7-9");
+/// // Also supports: "5-" (from page 5 to end) and "-10" (from start to page 10)
+/// final extendedRange = PageRange.parse("1,2,3,5,7,17-25,30-");
 /// ```
 class PageRange {
   final String _value;
@@ -165,7 +167,14 @@ class PageRange {
     return PageRange._(ranges.map((r) => r.toValue()).join(','));
   }
 
-  /// Parses a page range string (e.g., "1-3,5,7-9") into a [PageRange] object.
+  /// Parses a page range string into a [PageRange] object.
+  ///
+  /// Supported formats:
+  /// - Single page: "5"
+  /// - Range: "1-10"
+  /// - From start: "-10" (pages 1 to 10)
+  /// - To end: "5-" (pages 5 to last page)
+  /// - Multiple: "1,2,3,5,7,17-25,30-"
   ///
   /// Throws an [ArgumentError] if the format is invalid.
   factory PageRange.parse(String rangeString) {
@@ -173,10 +182,13 @@ class PageRange {
     if (trimmed.isEmpty) {
       throw ArgumentError('Page range string cannot be empty.');
     }
-    // A simple regex to validate the overall structure. It's not exhaustive but catches most common errors.
-    final RegExp validPageRange = RegExp(r'^\s*\d+(-\d+)?(\s*,\s*\d+(-\d+)?)*\s*$');
+    // Regex to validate the overall structure:
+    // - \d+(-\d+)? : normal format like "5" or "5-10"
+    // - -\d+ : from start like "-10"
+    // - \d+- : to end like "5-"
+    final RegExp validPageRange = RegExp(r'^\s*(\d+(-\d+)?|-\d+|\d+-)(\s*,\s*(\d+(-\d+)?|-\d+|\d+-))*\s*$');
     if (!validPageRange.hasMatch(trimmed)) {
-      throw ArgumentError('Invalid page range format: "$rangeString". Use a format like "1-3,5,7-9".');
+      throw ArgumentError('Invalid page range format: "$rangeString". Use a format like "1-3,5,7-9" or "5-,-10".');
     }
     // Further validation could be added here (e.g., check if end > start in all sub-ranges).
     return PageRange._(trimmed);

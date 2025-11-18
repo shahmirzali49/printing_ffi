@@ -108,6 +108,7 @@ class WindowsPrinterDefaultsModel {
   final PrintQuality? printQuality;
   final DuplexMode? duplexMode;
   final bool collate;
+  final int copies;
 
   const WindowsPrinterDefaultsModel({
     this.paperSizeId,
@@ -117,5 +118,6 @@ class WindowsPrinterDefaultsModel {
     this.printQuality,
     this.duplexMode,
     this.collate = true,
+    this.copies = 1,
   });
 }

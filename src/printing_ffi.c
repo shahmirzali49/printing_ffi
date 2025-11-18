@@ -77,7 +77,9 @@ struct PdfPrintJobState
     HDC hdc;
     FPDF_DOCUMENT doc;
     wchar_t *doc_name_w;
-    bool *pages_to_print;
+    unsigned int *pages_to_print; // Count of how many times each page should be printed
+    int *print_order; // Array of page indices (0-based) in the order they should be printed
+    int print_order_count; // Number of pages in the print order
     int page_count;
     // Scaling and alignment info
     int scaling_mode;
@@ -272,31 +274,48 @@ static char *to_utf8(const wchar_t *utf16_str)
 #endif
 }
 
-// Helper function to parse page ranges.
-// `range_str`: e.g., "1-3,5,8-10"
-// `page_flags`: A pre-allocated array of bools of size `total_pages`.
+// Helper function to parse page ranges and build print order.
+// `range_str`: e.g., "1-3,5,8-10" or "1,2,3,5,7,17-25,19,20" (allows duplicates)
+// `page_counts`: A pre-allocated array of unsigned ints of size `total_pages`.
+//                Each element stores how many times that page should be printed.
+// `print_order`: Output array that will be allocated and filled with page indices in print order.
+// `print_order_count`: Output parameter for the number of pages in print_order.
 // `total_pages`: Total number of pages in the document.
 // Returns true on success, false on parsing error.
-static bool parse_page_range(const char *range_str, bool *page_flags, int total_pages)
+// Note: Caller is responsible for freeing print_order.
+static bool parse_page_range(const char *range_str, unsigned int *page_counts, int **print_order, int *print_order_count, int total_pages)
 {
-    // If range is empty or null, mark all pages for printing.
+    // Initialize output parameters
+    *print_order = NULL;
+    *print_order_count = 0;
+    
+    // If range is empty or null, mark all pages for printing once.
     if (!range_str || strlen(range_str) == 0)
     {
         for (int i = 0; i < total_pages; i++)
-            page_flags[i] = true;
+            page_counts[i] = 1;
+        
+        // Create print order for all pages
+        *print_order_count = total_pages;
+        *print_order = (int *)malloc(total_pages * sizeof(int));
+        if (!*print_order)
+            return false;
+        for (int i = 0; i < total_pages; i++)
+            (*print_order)[i] = i;
         return true;
     }
 
-    // Otherwise, first mark all as false.
+    // Otherwise, first set all counts to zero.
     for (int i = 0; i < total_pages; i++)
-        page_flags[i] = false;
+        page_counts[i] = 0;
 
+    // First pass: count total pages needed for print_order allocation
     char *str = strdup(range_str);
     if (!str)
         return false;
     char *to_free = str;
-
-    // Use strtok for non-Windows, strtok_s for Windows
+    
+    int total_print_pages = 0;
     char *token;
     char *context = NULL;
 
@@ -316,9 +335,8 @@ static bool parse_page_range(const char *range_str, bool *page_flags, int total_
             *end-- = '\0';
 
         if (strlen(token) == 0)
-            goto next_token;
+            goto next_token1;
 
-        // Make a copy of the token for parsing, so we can use the original for error messages.
         char *token_copy = strdup(token);
         if (!token_copy)
         {
@@ -330,39 +348,148 @@ static bool parse_page_range(const char *range_str, bool *page_flags, int total_
         char *dash = strchr(token_copy, '-');
 
         if (dash)
-        { // It's a range like "3-5"
+        {
             *dash = '\0';
-            start_page = atoi(token_copy);
-            end_page = atoi(dash + 1);
+            char *start_str = token_copy;
+            char *end_str = dash + 1;
+            
+            if (strlen(start_str) == 0)
+            {
+                start_page = 1;
+                end_page = atoi(end_str);
+            }
+            else if (strlen(end_str) == 0)
+            {
+                start_page = atoi(start_str);
+                end_page = total_pages;
+            }
+            else
+            {
+                start_page = atoi(start_str);
+                end_page = atoi(end_str);
+            }
         }
         else
-        { // It's a single page like "7"
+        {
             start_page = end_page = atoi(token_copy);
         }
 
-        free(token_copy); // Clean up the copy
+        free(token_copy);
 
-        // Validate input
-        // The page count must be positive.
-        // The start page must be at least 1.
-        // The end page must not be less than the start page.
-        // The end page must not exceed the total number of pages in the document.
         if (total_pages <= 0 || start_page < 1 || end_page < start_page || end_page > total_pages)
         {
-            // Use the original, unmodified token for the error message.
+            free(to_free);
+            return false;
+        }
+
+        total_print_pages += (end_page - start_page + 1);
+
+    next_token1:
+#ifdef _WIN32
+        token = strtok_s(NULL, ",", &context);
+#else
+        token = strtok(NULL, ",");
+#endif
+    }
+    free(to_free);
+
+    // Allocate print_order array
+    *print_order = (int *)malloc(total_print_pages * sizeof(int));
+    if (!*print_order)
+        return false;
+    *print_order_count = 0;
+
+    // Second pass: parse and build print_order
+    str = strdup(range_str);
+    if (!str)
+    {
+        free(*print_order);
+        *print_order = NULL;
+        return false;
+    }
+    to_free = str;
+    context = NULL;
+
+#ifdef _WIN32
+    token = strtok_s(str, ",", &context);
+#else
+    token = strtok(str, ",");
+#endif
+
+    while (token)
+    {
+        // Trim whitespace
+        while (isspace((unsigned char)*token))
+            token++;
+        char *end = token + strlen(token) - 1;
+        while (end > token && isspace((unsigned char)*end))
+            *end-- = '\0';
+
+        if (strlen(token) == 0)
+            goto next_token2;
+
+        char *token_copy = strdup(token);
+        if (!token_copy)
+        {
+            free(to_free);
+            free(*print_order);
+            *print_order = NULL;
+            return false;
+        }
+
+        int start_page, end_page;
+        char *dash = strchr(token_copy, '-');
+
+        if (dash)
+        {
+            *dash = '\0';
+            char *start_str = token_copy;
+            char *end_str = dash + 1;
+            
+            if (strlen(start_str) == 0)
+            {
+                start_page = 1;
+                end_page = atoi(end_str);
+            }
+            else if (strlen(end_str) == 0)
+            {
+                start_page = atoi(start_str);
+                end_page = total_pages;
+            }
+            else
+            {
+                start_page = atoi(start_str);
+                end_page = atoi(end_str);
+            }
+        }
+        else
+        {
+            start_page = end_page = atoi(token_copy);
+        }
+
+        free(token_copy);
+
+        // Validate input
+        if (total_pages <= 0 || start_page < 1 || end_page < start_page || end_page > total_pages)
+        {
             set_last_error("Page range '%s' is invalid for a document with %d pages.", token, total_pages);
             LOG("Invalid page range value: '%s' for a document with %d pages.", token, total_pages);
             free(to_free);
-            return false; // Invalid range
+            free(*print_order);
+            *print_order = NULL;
+            return false;
         }
 
-        // Mark pages to be printed (adjusting for 0-based index)
+        // Add pages to print_order and increment counts (adjusting for 0-based index)
         for (int i = start_page; i <= end_page; i++)
         {
-            page_flags[i - 1] = true;
+            int page_index = i - 1;
+            (*print_order)[*print_order_count] = page_index;
+            (*print_order_count)++;
+            page_counts[page_index]++;
         }
 
-    next_token:
+    next_token2:
 #ifdef _WIN32
         token = strtok_s(NULL, ",", &context);
 #else
@@ -1180,19 +1307,23 @@ FFI_PLUGIN_EXPORT PdfPrintJobState *start_pdf_print_job_win(const char *printer_
         return NULL;
     }
 
-    state->pages_to_print = (bool *)malloc(state->page_count * sizeof(bool));
+    state->pages_to_print = (unsigned int *)malloc(state->page_count * sizeof(unsigned int));
     if (!state->pages_to_print)
     {
-        set_last_error("Failed to allocate memory for page flags.");
+        set_last_error("Failed to allocate memory for page counts.");
         finish_pdf_print_job_win(state, false);
         return NULL;
     }
 
-    if (!parse_page_range(page_range, state->pages_to_print, state->page_count))
+    int *print_order = NULL;
+    int print_order_count = 0;
+    if (!parse_page_range(page_range, state->pages_to_print, &print_order, &print_order_count, state->page_count))
     {
         finish_pdf_print_job_win(state, false);
         return NULL;
     }
+    state->print_order = print_order;
+    state->print_order_count = print_order_count;
 
     state->scaling_mode = scaling_mode;
     state->custom_scale = custom_scale;
@@ -1350,6 +1481,8 @@ FFI_PLUGIN_EXPORT void finish_pdf_print_job_win(PdfPrintJobState *state, bool su
         free(state->doc_name_w);
     if (state->pages_to_print)
         free(state->pages_to_print);
+    if (state->print_order)
+        free(state->print_order);
     free(state);
 }
 
@@ -1470,6 +1603,15 @@ FFI_PLUGIN_EXPORT WindowsPrinterDefaults *get_windows_printer_defaults(const cha
         defaults->collate = true; // common default
     }
 
+    if (pDevMode->dmFields & DM_COPIES)
+    {
+        defaults->copies = pDevMode->dmCopies;
+    }
+    else
+    {
+        defaults->copies = 1; // default is 1 copy
+    }
+
     free(pDevMode);
     ClosePrinter(hPrinter);
     free(printer_name_w);
@@ -1504,15 +1646,14 @@ FFI_PLUGIN_EXPORT bool print_pdf(const char *printer_name, const char *pdf_file_
     }
 
     bool success = true;
-    for (int i = 0; i < state->page_count; i++)
+    // Print pages in the specified order
+    for (int i = 0; i < state->print_order_count; i++)
     {
-        if (state->pages_to_print[i])
+        int page_index = state->print_order[i];
+        if (!render_pdf_job_page_win(state, page_index))
         {
-            if (!render_pdf_job_page_win(state, i))
-            {
-                success = false;
-                break;
-            }
+            success = false;
+            break;
         }
     }
 
